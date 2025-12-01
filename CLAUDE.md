@@ -2,211 +2,291 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Project Overview
+
+Rusty-Safe is a Rust-native desktop GUI application for Safe{Wallet} transaction verification and management. It eliminates npm dependencies to reduce supply chain attack surface.
+
+**Key Goals:**
+- Pure Rust implementation (no JavaScript/npm)
+- egui-based native GUI
+- Safe transaction hash verification
+- Hardware wallet support (Ledger/Trezor)
+
 ## Build and Development Commands
 
 ### Building
-- `make build` - Build release binary with profiling profile
-- `make build-debug` - Build debug binary
-- `cargo build` - Standard cargo build
-- `make maxperf` - Build with maximum optimization
-- `make install` - Install to ~/.cargo/bin
+- `cargo build` - Debug build
+- `cargo build --release` - Release build
+- `cargo run` - Run the application
 
 ### Testing
-- `cargo test` or `make test` - Run all tests
-- `make test-unit` - Run unit tests with cargo-nextest
-- `make cov-unit` - Run unit tests with coverage
-- `make cov-report-html` - Generate HTML coverage report
-- Run e2e tests:
-  ```bash
-  cd tests/account
-  forge build && forge build lib/solady/test/utils/mocks/MockERC20.sol && forge build lib/solady/test/utils/mocks/MockERC721.sol
-  TEST_CONTRACTS=$(pwd)/out cargo test -- e2e
-  ```
+- `cargo test` - Run all tests
+- `cargo test --lib` - Run unit tests only
+- `cargo nextest run` - Run tests with nextest (faster)
 
 ### Code Quality
-- `make fmt` - Format code (uses nightly)
-- `make lint` - Run clippy linting
-- `make fix-lint` - Fix linting issues
-- `make pr` - Run both lint and tests (for PR checks)
-- `make check-features` - Check feature combinations
+- `cargo +nightly fmt --all` - Format code
+- `cargo clippy --all-features` - Run linting
+- `cargo clippy --fix --allow-dirty` - Auto-fix lint issues
 
-### Running the Relay
-```bash
-cargo run --bin relay -- \
-    --endpoint $RPC_URL \
-    --fee-token $FEE_TOKEN_ADDR \
-    --signers-mnemonic $SIGNING_KEY_MNEMONIC \
-    --orchestrator $ORCHESTRATOR_ADDR \
-    --delegation-proxy $DELEGATION_PROXY_ADDR \
-    --simulator $SIMULATOR_ADDR
-```
-
-## Contributing
-
-### Opening PRs against <https://github.com/ithacaxyz/relay/>
-
-* Do not update submodules (tests/account) when making changes unrelated to those submodules.
-* Before opening a PR, ensure code is properly formatted.
-* Write clear, specific pull request descriptions that focus on essential information and avoid redundancy.
+### Checking
+- `cargo check` - Quick compilation check
+- `cargo doc --open` - Generate and view documentation
 
 ## Architecture Overview
 
-The Ithaca Relay is a transparent cross-chain transaction router for EIP-7702 accounts. It sponsors transactions and provides fee abstraction services.
+```
+rusty-safe/
+├── Cargo.toml              # Workspace root
+├── crates/
+│   ├── rusty-safe/         # Main GUI application
+│   │   └── src/
+│   │       ├── main.rs     # Entry point (eframe + tokio)
+│   │       ├── app.rs      # Main App struct
+│   │       └── ui/         # UI components
+│   │
+│   └── safe-core/          # Core logic library
+│       └── src/
+│           ├── lib.rs
+│           ├── api.rs      # Safe Transaction Service client
+│           ├── chains.rs   # Supported chains
+│           └── decoder.rs  # Calldata decoding
+```
 
-### Core Components
+### Key Dependencies
 
-1. **RPC Server** (`src/rpc/`): JSON-RPC endpoints
-   - `account.rs`: Account management endpoints
-   - `relay.rs`: Main relay endpoints
+| Crate | Purpose |
+|-------|---------|
+| `eframe/egui` | Native GUI framework |
+| `alloy-*` | Ethereum primitives and ABI |
+| `safe-utils` | Safe hash computation (from Cyfrin) |
+| `tokio` | Async runtime |
+| `reqwest` | HTTP client |
 
-2. **Transaction Processing** (`src/transactions/`):
-   - `service.rs`: Core transaction service logic
-   - `fees.rs`: Fee calculation and management
-   - `monitor.rs`: Transaction monitoring
-   - `signer.rs`: Transaction signing coordination
+## Code Style Preferences
 
-3. **Storage Layer** (`src/storage/`):
-   - `pg.rs`: PostgreSQL implementation
-   - `memory.rs`: In-memory storage for testing
-   - `api.rs`: Storage trait definitions
-   - Database migrations in `migrations/`
+### General Principles
 
-4. **Signers** (`src/signers/`):
-   - `p256.rs`: P256 elliptic curve signing
-   - `webauthn.rs`: WebAuthn authentication
-   - `dyn.rs`: Dynamic signer selection
+1. **Keep it simple** - Avoid over-engineering
+2. **Explicit over implicit** - Clear variable names, no magic
+3. **Fail fast** - Validate inputs early, return errors promptly
 
-5. **Price Oracle** (`src/price/`):
-   - `oracle.rs`: Price oracle coordination
-   - `fetchers/coingecko.rs`: CoinGecko price fetcher
+### Error Handling
 
-6. **Types** (`src/types/`):
-   - Core domain types and structures
-   - Contract interfaces
-   - RPC request/response types
+Use `thiserror` for library errors, provide user-friendly messages:
 
-### Key Patterns
-
-- **Error Handling**: Comprehensive error types in `src/error/`
-- **Metrics**: Prometheus metrics throughout, periodic jobs in `src/metrics/periodic/`
-- **Configuration**: YAML config with CLI overrides via `src/config.rs`
-- **Async Runtime**: Tokio-based async throughout
-- **Chain Interaction**: Uses Alloy for Ethereum interaction
-
-### Development Notes
-
-- MSRV: 1.88
-- Rust Edition: 2024
-- Uses SQLx for compile-time checked SQL queries
-- Strict clippy linting with warnings as errors
-- OpenTelemetry tracing for observability
-- WebSocket and HTTP provider support for chain connections
-
-### Testing Guidelines
-
-When creating tests that require a provider or chain interaction:
-- **Always use the test environment from `tests/e2e/environment.rs`**
-- Do not create standalone provider instances or custom test setups
-- The e2e environment provides:
-  - Pre-configured Anvil instance (or external node support)
-  - Deployed test contracts (orchestrator, delegation, simulator, ERC20s, ERC721)
-  - Funded test accounts and signers
-  - Relay service integration
-  - Proper chain configuration
-
-Example:
 ```rust
-use crate::e2e::Environment;
+// GOOD: Descriptive error with context
+#[derive(thiserror::Error, Debug)]
+pub enum SafeError {
+    #[error("Failed to fetch transaction from Safe API: {0}")]
+    ApiFetch(#[from] reqwest::Error),
+    
+    #[error("Invalid Safe address: {address}")]
+    InvalidAddress { address: String },
+}
 
-#[tokio::test]
-async fn test_with_provider() {
-    let env = Environment::setup().await.unwrap();
-    // Use env.provider for chain interactions
-    // Use env.relay_endpoint for relay RPC calls
-    // Access deployed contracts via env.orchestrator, env.delegation, etc.
+// BAD: Generic errors
+Err("something went wrong")
+```
+
+### Serialization
+
+1. **Always use derive macros** for JSON serialization:
+   - Prefer `#[derive(Serialize, Deserialize)]` over manual JSON construction
+   - Use serde's attribute macros for field customization
+
+2. **Use Alloy's built-in types**:
+   - Don't manually serialize Ethereum types (Address, U256, B256)
+   - Let alloy handle hex encoding/decoding
+
+```rust
+// GOOD: Using derives and Alloy types
+#[derive(Serialize, Deserialize)]
+struct SafeTransaction {
+    to: Address,
+    value: U256,
+    data: Bytes,
+    nonce: u64,
+}
+
+// BAD: Manual JSON with string conversion
+let json = json!({
+    "to": to.to_string(),
+    "value": format!("{}", value),
+});
+```
+
+### Async Patterns
+
+For egui + tokio integration:
+
+```rust
+// Spawn async tasks, communicate via channels or shared state
+fn spawn_fetch(&mut self, ctx: &egui::Context) {
+    let ctx = ctx.clone();
+    let (tx, rx) = oneshot::channel();
+    
+    self.pending_result = Some(rx);
+    
+    tokio::spawn(async move {
+        let result = fetch_from_api().await;
+        let _ = tx.send(result);
+        ctx.request_repaint();
+    });
+}
+
+// Check result in update loop
+fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+    if let Some(rx) = &mut self.pending_result {
+        if let Ok(result) = rx.try_recv() {
+            self.data = Some(result);
+            self.pending_result = None;
+        }
+    }
 }
 ```
 
-## GitHub Integration
+### UI Components
 
-When you need to fetch information from GitHub (issues, pull requests, releases, etc.), always prefer using the GitHub CLI (`gh`) over web fetching. The `gh` command provides direct access to GitHub's API and is more reliable than web scraping.
+Keep UI code clean and modular:
 
-Examples:
-- `gh pr list` - List pull requests
-- `gh issue view <number>` - View a specific issue
-- `gh api repos/ithacaxyz/relay/pulls/<number>/comments` - Get PR comments
-- `gh release list` - List releases
+```rust
+// GOOD: Separate rendering logic
+impl TxVerifyTab {
+    pub fn ui(&mut self, ui: &mut egui::Ui) {
+        self.render_inputs(ui);
+        self.render_results(ui);
+        self.render_warnings(ui);
+    }
+    
+    fn render_inputs(&mut self, ui: &mut egui::Ui) {
+        // Input fields
+    }
+}
+
+// BAD: Monolithic update function
+fn update(&mut self, ctx: &egui::Context) {
+    // 500 lines of mixed logic and UI
+}
+```
+
+### Function Documentation
+
+- Keep docstrings concise, focused on "what" and "why"
+- Avoid verbose `# Arguments` sections unless truly complex
+- Document public API, skip obvious internal functions
+
+```rust
+/// Computes the Safe transaction hash for the given parameters.
+/// 
+/// Uses EIP-712 structured hashing with the Safe domain separator.
+pub fn compute_safe_tx_hash(tx: &SafeTransaction, chain_id: u64) -> B256 {
+    // ...
+}
+```
+
+## Testing Guidelines
+
+### Unit Tests
+
+```rust
+#[cfg(test)]
+mod tests {
+    use super::*;
+    
+    #[test]
+    fn test_hash_computation_matches_known_vector() {
+        // Test against known Safe transaction hash
+        let expected = b256!("ad06b099...");
+        let actual = compute_hash(&tx);
+        assert_eq!(actual, expected);
+    }
+}
+```
+
+### Integration Tests
+
+For API interactions, use mock servers:
+
+```rust
+#[tokio::test]
+async fn test_api_fetch() {
+    let mock_server = MockServer::start().await;
+    
+    Mock::given(method("GET"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(&mock_response))
+        .mount(&mock_server)
+        .await;
+    
+    let client = SafeApiClient::new(&mock_server.uri());
+    let result = client.fetch_transaction(...).await;
+    
+    assert!(result.is_ok());
+}
+```
 
 ## Commit Convention
 
-This project follows [Conventional Commits](https://www.conventionalcommits.org/) for commit messages. Use the following format:
+Follow [Conventional Commits](https://www.conventionalcommits.org/):
 
 ```
 <type>(<scope>): <subject>
-
-<body>
-
-<footer>
 ```
 
 ### Types
 - `feat`: New feature
 - `fix`: Bug fix
-- `docs`: Documentation changes
-- `style`: Code style changes (formatting, missing semicolons, etc.)
-- `refactor`: Code refactoring without changing functionality
-- `perf`: Performance improvements
-- `test`: Adding or updating tests
-- `build`: Changes to build system or dependencies
-- `ci`: CI/CD configuration changes
-- `chore`: Other changes that don't modify src or test files
-- `revert`: Reverting a previous commit
+- `docs`: Documentation
+- `style`: Formatting
+- `refactor`: Code refactoring
+- `test`: Tests
+- `chore`: Maintenance
 
 ### Examples
-- `feat(rpc): add new relay endpoint for batch transactions`
-- `fix(storage): handle null values in transaction queries`
-- `docs: update README with new configuration options`
-- `chore(deps): bump alloy from 0.1.0 to 0.2.0`
-- `refactor(transactions): simplify fee calculation logic`
+- `feat(ui): add transaction verification tab`
+- `fix(api): handle rate limiting from Safe service`
+- `refactor(hash): simplify domain hash computation`
+- `chore(deps): update egui to 0.29`
 
-## Code Style Preferences
+## Security Considerations
 
-### Function Documentation
+This is a wallet-adjacent application. Follow these principles:
 
-- Avoid using `# Arguments` sections in docstrings unless the arguments are very complex
-- Keep function documentation concise and focused on the "what" and "why", not the "how"
+1. **Never log sensitive data** - No private keys, signatures in logs
+2. **Validate all inputs** - Address formats, hex strings, nonces
+3. **Verify before display** - Compute hashes locally, don't trust API blindly
+4. **Clear sensitive memory** - Use zeroize for any key material (Phase 2)
 
-### Serialization and Deserialization
+## Development Workflow
 
-1. **Always use derive macros** for JSON serialization:
-   - Prefer `#[derive(Serialize, Deserialize)]` over manual JSON construction
-   - Use serde's attribute macros for field customization when needed
-   - Never manually build JSON objects when structs with derives can handle it
+1. Check spec: `SPEC.md` for current phase and tasks
+2. Implement feature in smallest working increment
+3. Write tests for new functionality
+4. Format and lint: `cargo +nightly fmt && cargo clippy`
+5. Commit with conventional message
+6. Update `SPEC.md` task status if applicable
 
-2. **Use Alloy's built-in helpers**:
-   - Don't manually implement serialization/deserialization for Ethereum types
-   - The `alloy` crate provides helpers for common Ethereum data types
-   - Use Alloy's serialization traits and derives whenever working with chain data
+## External Dependencies
 
-3. **Struct-based APIs**:
-   - Define proper request/response structs for all RPC methods
-   - Use type-safe representations instead of raw JSON values
-   - Leverage serde's powerful derive system for automatic conversion
+### safe-utils (git dependency)
 
-Example of preferred style:
-```rust
-// GOOD: Using derives and structs
-#[derive(Serialize, Deserialize)]
-struct TransactionRequest {
-    from: Address,
-    to: Address,
-    value: U256,
-}
+From Cyfrin's safe-hash-rs. Provides:
+- `DomainHasher`, `TxMessageHasher`, `SafeHasher`
+- Chain ID mappings
+- EIP-712 hashing
 
-// BAD: Manual JSON construction
-let json = json!({
-    "from": from.to_string(),
-    "to": to.to_string(),
-    "value": value.to_string(),
-});
-```
+If it causes issues, we can vendor at a specific commit.
+
+### egui/eframe
+
+GUI framework. Key patterns:
+- Immediate mode rendering
+- `ctx.request_repaint()` for async updates
+- Use `egui_extras` for tables, images
+
+## Minimum Supported Rust Version
+
+- MSRV: 1.80.0
+- Edition: 2021
+- Use nightly only for `rustfmt`
