@@ -1,11 +1,27 @@
-//! Hash computation - direct use of safe_utils hashers
+//! Hash computation - uses safe_hash library
 
-use crate::api::SafeTransaction;
-use crate::state::{ComputedHashes, Warning};
-use alloy::primitives::{Address, ChainId, U256};
-use safe_utils::{CallDataHasher, DomainHasher, Of, SafeHasher, SafeWalletVersion, TxMessageHasher};
+use crate::api::{SafeTransaction, TxInput, tx_signing_hashes, check_suspicious_content, get_safe_transaction_async};
+use crate::state::ComputedHashes;
+use alloy::primitives::{Address, ChainId, U256, hex};
+use safe_hash::{SafeHashes, SafeWarnings};
+use safe_utils::{Of, SafeWalletVersion};
 
-/// Compute hashes for a transaction using safe_utils (offline mode)
+/// Fetch transaction from Safe API (async - works on WASM)
+pub async fn fetch_transaction(
+    chain_name: &str,
+    safe_address: &str,
+    nonce: u64,
+) -> Result<SafeTransaction, String> {
+    let chain_id = ChainId::of(chain_name)
+        .map_err(|e| format!("Invalid chain '{}': {}", chain_name, e))?;
+    
+    let addr: Address = safe_address.trim().parse()
+        .map_err(|e| format!("Invalid Safe address: {}", e))?;
+    
+    get_safe_transaction_async(chain_id, addr, nonce).await
+}
+
+/// Compute hashes for a transaction using safe_hash::tx_signing_hashes
 pub fn compute_hashes(
     chain_name: &str,
     safe_address: &str,
@@ -41,7 +57,7 @@ pub fn compute_hashes(
     let safe_tx_gas_u256 = parse_u256(safe_tx_gas)?;
     let base_gas_u256 = parse_u256(base_gas)?;
     let gas_price_u256 = parse_u256(gas_price)?;
-    let nonce_u256 = parse_u256(nonce)?;
+    let nonce_u64: u64 = nonce.trim().parse().map_err(|e| format!("Invalid nonce: {}", e))?;
 
     let gas_token_addr: Address = gas_token
         .trim()
@@ -53,40 +69,41 @@ pub fn compute_hashes(
         .parse()
         .map_err(|e| format!("Invalid refund receiver address: {}", e))?;
 
-    // Use safe_utils::CallDataHasher
-    let data_clean = data.strip_prefix("0x").unwrap_or(data);
-    let data_hash = CallDataHasher::new(data_clean.to_string())
-        .hash()
-        .map_err(|e| format!("Failed to hash data: {}", e))?;
+    // Normalize data - remove 0x prefix if present
+    let data_normalized = data.strip_prefix("0x").unwrap_or(data);
+    let data_with_prefix = if data_normalized.is_empty() {
+        "0x".to_string()
+    } else {
+        format!("0x{}", data_normalized)
+    };
 
-    // Use safe_utils::DomainHasher
-    let domain_hasher = DomainHasher::new(safe_version.clone(), chain_id, safe_addr);
-    let domain_hash = domain_hasher.hash();
-
-    // Use safe_utils::TxMessageHasher
-    let msg_hasher = TxMessageHasher::new(
-        safe_version,
+    // Create TxInput for safe_hash::tx_signing_hashes
+    let tx_input = TxInput::new(
         to_addr,
         value_u256,
-        data_hash,
+        data_with_prefix,
         operation,
         safe_tx_gas_u256,
         base_gas_u256,
         gas_price_u256,
         gas_token_addr,
         refund_receiver_addr,
-        nonce_u256,
+        String::new(), // signatures not needed for hash computation
     );
-    let message_hash = msg_hasher.hash();
 
-    // Use safe_utils::SafeHasher
-    let safe_hasher = SafeHasher::new(domain_hash, message_hash);
-    let safe_tx_hash = safe_hasher.hash();
+    // Use safe_hash::tx_signing_hashes
+    let hashes: SafeHashes = tx_signing_hashes(
+        &tx_input,
+        safe_addr,
+        nonce_u64,
+        chain_id,
+        safe_version,
+    );
 
     Ok(ComputedHashes {
-        domain_hash: format!("{:?}", domain_hash),
-        message_hash: format!("{:?}", message_hash),
-        safe_tx_hash: format!("{:?}", safe_tx_hash),
+        domain_hash: format!("0x{}", hex::encode(hashes.domain_hash)),
+        message_hash: format!("0x{}", hex::encode(hashes.message_hash)),
+        safe_tx_hash: format!("0x{}", hex::encode(hashes.safe_tx_hash)),
         matches_api: None,
     })
 }
@@ -98,15 +115,13 @@ pub fn compute_hashes_from_api_tx(
     version: &str,
     tx: &SafeTransaction,
 ) -> Result<ComputedHashes, String> {
-    let data = tx.data.as_deref().unwrap_or("");
-    
     let mut hashes = compute_hashes(
         chain_name,
         safe_address,
         version,
         &format!("{}", tx.to),
         &tx.value,
-        data,
+        &tx.data,
         tx.operation,
         &tx.safe_tx_gas.to_string(),
         &tx.base_gas.to_string(),
@@ -139,57 +154,71 @@ fn parse_u256(value: &str) -> Result<U256, String> {
     }
 }
 
-/// Generate warnings for a transaction (from strings - offline mode)
-pub fn check_warnings(
-    _to: &str,
-    _value: &str,
-    _data: &str,
+/// Generate warnings using safe_hash::check_suspicious_content
+pub fn get_warnings_for_tx(
+    to: &str,
+    value: &str,
+    data: &str,
     operation: u8,
+    safe_tx_gas: &str,
+    base_gas: &str,
+    gas_price: &str,
     gas_token: &str,
     refund_receiver: &str,
-) -> Vec<Warning> {
-    let mut warnings = Vec::new();
-    let zero_addr = "0x0000000000000000000000000000000000000000";
+) -> SafeWarnings {
+    let to_addr: Address = to.trim().parse().unwrap_or(Address::ZERO);
+    let value_u256 = parse_u256(value).unwrap_or(U256::ZERO);
+    let safe_tx_gas_u256 = parse_u256(safe_tx_gas).unwrap_or(U256::ZERO);
+    let base_gas_u256 = parse_u256(base_gas).unwrap_or(U256::ZERO);
+    let gas_price_u256 = parse_u256(gas_price).unwrap_or(U256::ZERO);
+    let gas_token_addr: Address = gas_token.trim().parse().unwrap_or(Address::ZERO);
+    let refund_receiver_addr: Address = refund_receiver.trim().parse().unwrap_or(Address::ZERO);
 
-    if operation == 1 {
-        warnings.push(Warning::DelegateCall);
-    }
+    let data_normalized = data.strip_prefix("0x").unwrap_or(data);
+    let data_with_prefix = if data_normalized.is_empty() {
+        "0x".to_string()
+    } else {
+        format!("0x{}", data_normalized)
+    };
 
-    if gas_token != zero_addr && !gas_token.is_empty() {
-        warnings.push(Warning::NonZeroGasToken);
-    }
+    let tx_input = TxInput::new(
+        to_addr,
+        value_u256,
+        data_with_prefix,
+        operation,
+        safe_tx_gas_u256,
+        base_gas_u256,
+        gas_price_u256,
+        gas_token_addr,
+        refund_receiver_addr,
+        String::new(),
+    );
 
-    if refund_receiver != zero_addr && !refund_receiver.is_empty() {
-        warnings.push(Warning::NonZeroRefundReceiver);
-    }
-
-    warnings
+    check_suspicious_content(&tx_input, None)
 }
 
 /// Generate warnings from a SafeTransaction (from API)
-pub fn check_warnings_from_api_tx(tx: &SafeTransaction) -> Vec<Warning> {
-    let mut warnings = Vec::new();
+pub fn get_warnings_from_api_tx(tx: &SafeTransaction, chain_id: Option<ChainId>) -> SafeWarnings {
+    let tx_input = TxInput::new(
+        tx.to,
+        U256::from_str_radix(&tx.value, 10).unwrap_or(U256::ZERO),
+        tx.data.clone(),
+        tx.operation,
+        U256::from(tx.safe_tx_gas),
+        U256::from(tx.base_gas),
+        U256::from_str_radix(&tx.gas_price, 10).unwrap_or(U256::ZERO),
+        tx.gas_token,
+        tx.refund_receiver,
+        String::new(),
+    );
 
-    if tx.operation == 1 {
-        warnings.push(Warning::DelegateCall);
-    }
-
-    if tx.gas_token != Address::ZERO {
-        warnings.push(Warning::NonZeroGasToken);
-    }
-
-    if tx.refund_receiver != Address::ZERO {
-        warnings.push(Warning::NonZeroRefundReceiver);
-    }
+    let mut warnings = check_suspicious_content(&tx_input, chain_id);
 
     // Check for dangerous methods from decoded data
     if let Some(decoded) = &tx.data_decoded {
-        let method = decoded.method.as_str();
-        if matches!(
-            method,
-            "addOwnerWithThreshold" | "removeOwner" | "swapOwner" | "changeThreshold"
-        ) {
-            warnings.push(Warning::DangerousMethod(method.to_string()));
+        let dangerous_methods = ["addOwnerWithThreshold", "removeOwner", "swapOwner", "changeThreshold"];
+        if dangerous_methods.iter().any(|m| *m == decoded.method) {
+            warnings.dangerous_methods = true;
         }
     }
 

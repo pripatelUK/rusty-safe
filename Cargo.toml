@@ -19,8 +19,9 @@ eframe = { version = "0.29", default-features = false, features = [
 egui = "0.29"
 egui_extras = { version = "0.29", features = ["image"] }
 
-# Safe hash computation (brings alloy as transitive dependency)
-safe-utils = { git = "https://github.com/Cyfrin/safe-hash-rs" }
+# Safe hash computation from safe-hash-rs (local path)
+safe-utils = { path = "../safe-hash-rs/crates/safe-utils" }
+safe-hash = { path = "../safe-hash-rs/crates/safe-hash", default-features = false }
 
 # Ethereum types (match safe-utils version)
 alloy = "0.11"

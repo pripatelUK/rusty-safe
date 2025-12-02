@@ -2,11 +2,21 @@
 
 use alloy::primitives::ChainId;
 use eframe::egui;
+use safe_hash::SafeWarnings;
 use safe_utils::{get_all_supported_chain_names, DomainHasher, MessageHasher, Of, SafeHasher, SafeWalletVersion};
+use std::sync::{Arc, Mutex};
 
-use crate::hasher::{check_warnings, compute_hashes};
+use crate::api::SafeTransaction;
+use crate::hasher::{get_warnings_for_tx, get_warnings_from_api_tx, compute_hashes, compute_hashes_from_api_tx, fetch_transaction};
 use crate::state::{Eip712State, MsgVerifyState, TxVerifyState, SAFE_VERSIONS};
 use crate::ui;
+
+/// Result from async fetch operation
+#[derive(Clone)]
+pub enum FetchResult {
+    Success(SafeTransaction),
+    Error(String),
+}
 
 /// The main application state
 pub struct App {
@@ -20,6 +30,8 @@ pub struct App {
     eip712_state: Eip712State,
     /// Cached chain names from safe_utils
     chain_names: Vec<String>,
+    /// Async fetch result receiver
+    fetch_result: Arc<Mutex<Option<FetchResult>>>,
 }
 
 /// Available tabs in the application
@@ -40,6 +52,7 @@ impl App {
             msg_state: MsgVerifyState::default(),
             eip712_state: Eip712State::default(),
             chain_names: get_all_supported_chain_names(),
+            fetch_result: Arc::new(Mutex::new(None)),
         }
     }
 }
@@ -47,6 +60,9 @@ impl App {
 impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         ctx.set_visuals(egui::Visuals::dark());
+
+        // Check for async fetch results
+        self.check_fetch_result();
 
         egui::TopBottomPanel::top("header").show(ctx, |ui| {
             ui.add_space(8.0);
@@ -81,7 +97,7 @@ impl eframe::App for App {
 }
 
 impl App {
-    fn render_transaction_tab(&mut self, ui: &mut egui::Ui, _ctx: &egui::Context) {
+    fn render_transaction_tab(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
         ui::styled_heading(ui, "Transaction Verification");
         ui.label("Verify Safe transaction hashes before signing.");
         ui.add_space(15.0);
@@ -201,7 +217,7 @@ impl App {
                 }
             } else {
                 if ui.button("🔍 Fetch & Verify").clicked() && can_compute {
-                    self.fetch_and_verify();
+                    self.fetch_and_verify(ctx);
                 }
             }
 
@@ -237,13 +253,13 @@ impl App {
                     ui.end_row();
 
                     ui.label("Data:");
-                    let data = tx.data.as_deref().unwrap_or("");
+                    let data = &tx.data;
                     let data_display = if data.len() > 66 {
                         format!("{}...", &data[..66])
-                    } else if data.is_empty() {
+                    } else if data.is_empty() || data == "0x" {
                         "0x (empty)".to_string()
                     } else {
-                        data.to_string()
+                        data.clone()
                     };
                     ui.label(egui::RichText::new(data_display).monospace());
                     ui.end_row();
@@ -269,12 +285,29 @@ impl App {
                 });
         }
 
-        if !self.tx_state.warnings.is_empty() {
+        if self.tx_state.warnings.has_warnings() {
             ui.add_space(15.0);
             ui::section_header(ui, "⚠️ Warnings");
 
-            for warning in &self.tx_state.warnings {
-                ui::warning_message(ui, &warning.message(), warning.severity().color());
+            let w = &self.tx_state.warnings;
+            if w.delegatecall {
+                ui::warning_message(ui, "⚠️ DELEGATECALL - can modify Safe state!", egui::Color32::from_rgb(220, 50, 50));
+            }
+            if w.non_zero_gas_token {
+                ui::warning_message(ui, "Non-zero gas token", egui::Color32::from_rgb(220, 180, 50));
+            }
+            if w.non_zero_refund_receiver {
+                ui::warning_message(ui, "Non-zero refund receiver", egui::Color32::from_rgb(220, 180, 50));
+            }
+            if w.dangerous_methods {
+                ui::warning_message(ui, "⚠️ Dangerous method (owner/threshold change)", egui::Color32::from_rgb(220, 120, 50));
+            }
+            for mismatch in &w.argument_mismatches {
+                ui::warning_message(
+                    ui,
+                    &format!("Mismatch in {}: API={}, computed={}", mismatch.field, mismatch.api_value, mismatch.user_value),
+                    egui::Color32::from_rgb(220, 50, 50),
+                );
             }
         }
 
@@ -491,19 +524,22 @@ impl App {
 
     fn compute_offline_hashes(&mut self) {
         self.tx_state.error = None;
-        self.tx_state.warnings.clear();
+        self.tx_state.warnings = SafeWarnings::new();
 
-        // Check warnings
-        self.tx_state.warnings = check_warnings(
+        // Check warnings using safe_hash::check_suspicious_content
+        self.tx_state.warnings = get_warnings_for_tx(
             &self.tx_state.to,
             &self.tx_state.value,
             &self.tx_state.data,
             self.tx_state.operation,
+            &self.tx_state.safe_tx_gas,
+            &self.tx_state.base_gas,
+            &self.tx_state.gas_price,
             &self.tx_state.gas_token,
             &self.tx_state.refund_receiver,
         );
 
-        // Compute hashes using safe_utils
+        // Compute hashes using safe_hash::tx_signing_hashes
         match compute_hashes(
             &self.tx_state.chain_name,
             &self.tx_state.safe_address,
@@ -577,10 +613,102 @@ impl App {
         });
     }
 
-    fn fetch_and_verify(&mut self) {
-        // For now, show a message - async fetch will be wired up next
-        self.tx_state.error = Some(
-            "Async fetch not yet wired. Use Offline Mode and manually enter tx details.".to_string(),
-        );
+    fn fetch_and_verify(&mut self, ctx: &egui::Context) {
+        self.tx_state.is_loading = true;
+        self.tx_state.error = None;
+        self.tx_state.warnings = SafeWarnings::new();
+        self.tx_state.hashes = None;
+        self.tx_state.fetched_tx = None;
+
+        let chain_name = self.tx_state.chain_name.clone();
+        let safe_address = self.tx_state.safe_address.clone();
+        let nonce: u64 = match self.tx_state.nonce.trim().parse() {
+            Ok(n) => n,
+            Err(_) => {
+                self.tx_state.error = Some("Invalid nonce".to_string());
+                self.tx_state.is_loading = false;
+                return;
+            }
+        };
+
+        let result = Arc::clone(&self.fetch_result);
+        let ctx = ctx.clone();
+
+        // Spawn async task
+        #[cfg(target_arch = "wasm32")]
+        {
+            wasm_bindgen_futures::spawn_local(async move {
+                let fetch_result = fetch_transaction(&chain_name, &safe_address, nonce).await;
+                let mut result_guard = result.lock().unwrap();
+                *result_guard = Some(match fetch_result {
+                    Ok(tx) => FetchResult::Success(tx),
+                    Err(e) => FetchResult::Error(e),
+                });
+                ctx.request_repaint();
+            });
+        }
+
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            std::thread::spawn(move || {
+                let rt = tokio::runtime::Runtime::new().unwrap();
+                let fetch_result = rt.block_on(fetch_transaction(&chain_name, &safe_address, nonce));
+                let mut result_guard = result.lock().unwrap();
+                *result_guard = Some(match fetch_result {
+                    Ok(tx) => FetchResult::Success(tx),
+                    Err(e) => FetchResult::Error(e),
+                });
+                ctx.request_repaint();
+            });
+        }
+    }
+
+    fn check_fetch_result(&mut self) {
+        let result = {
+            let mut guard = self.fetch_result.lock().unwrap();
+            guard.take()
+        };
+
+        if let Some(result) = result {
+            self.tx_state.is_loading = false;
+
+            match result {
+                FetchResult::Success(tx) => {
+                    // Compute hashes from the fetched transaction
+                    match compute_hashes_from_api_tx(
+                        &self.tx_state.chain_name,
+                        &self.tx_state.safe_address,
+                        &self.tx_state.safe_version,
+                        &tx,
+                    ) {
+                        Ok(hashes) => {
+                            // Check if hash matches
+                            if hashes.matches_api == Some(false) {
+                                self.tx_state.warnings.argument_mismatches.push(
+                                    safe_hash::Mismatch {
+                                        field: "safe_tx_hash".to_string(),
+                                        api_value: tx.safe_tx_hash.clone(),
+                                        user_value: hashes.safe_tx_hash.clone(),
+                                    }
+                                );
+                            }
+                            self.tx_state.hashes = Some(hashes);
+                        }
+                        Err(e) => {
+                            self.tx_state.error = Some(format!("Hash computation failed: {}", e));
+                        }
+                    }
+
+                    // Get warnings
+                    let chain_id = ChainId::of(&self.tx_state.chain_name).ok();
+                    self.tx_state.warnings.union(get_warnings_from_api_tx(&tx, chain_id));
+                    
+                    self.tx_state.fetched_tx = Some(tx);
+                }
+                FetchResult::Error(e) => {
+                    self.tx_state.error = Some(e);
+                }
+            }
+        }
     }
 }

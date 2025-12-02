@@ -18,6 +18,7 @@ egui.workspace = true
 
 # Safe hash computation
 safe-utils.workspace = true
+safe-hash.workspace = true
 
 # Ethereum primitives
 alloy.workspace = true

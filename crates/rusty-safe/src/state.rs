@@ -1,9 +1,10 @@
 //! Application state types
 //!
+//! Uses types from safe-hash library where possible.
 //! UI state structs are rusty-safe specific.
-//! API types are in api.rs (mirroring safe-hash which is a binary).
 
 use crate::api::SafeTransaction;
+use safe_hash::SafeWarnings;
 use safe_utils::get_all_supported_chain_names;
 
 /// Safe versions supported
@@ -12,7 +13,6 @@ pub const SAFE_VERSIONS: &[&str] = &[
 ];
 
 /// Transaction verification UI state
-#[derive(Debug)]
 pub struct TxVerifyState {
     /// Selected chain name (from safe_utils)
     pub chain_name: String,
@@ -36,14 +36,14 @@ pub struct TxVerifyState {
     pub gas_token: String,
     pub refund_receiver: String,
 
-    // Fetched from API (uses api::SafeTransaction)
+    // Fetched from API
     pub fetched_tx: Option<SafeTransaction>,
 
-    // Computed hashes
+    // Computed hashes (display strings)
     pub hashes: Option<ComputedHashes>,
 
-    // Warnings
-    pub warnings: Vec<Warning>,
+    // Warnings from safe_hash
+    pub warnings: SafeWarnings,
 
     // Loading state
     pub is_loading: bool,
@@ -52,64 +52,13 @@ pub struct TxVerifyState {
     pub error: Option<String>,
 }
 
-/// Computed hash results
+/// Computed hash results (display strings)
 #[derive(Debug, Clone)]
 pub struct ComputedHashes {
     pub domain_hash: String,
     pub message_hash: String,
     pub safe_tx_hash: String,
     pub matches_api: Option<bool>,
-}
-
-/// Security warnings (rusty-safe specific)
-#[derive(Debug, Clone)]
-pub enum Warning {
-    DelegateCall,
-    DangerousMethod(String),
-    HashMismatch,
-    NonceMismatch { expected: u64, actual: u64 },
-    NonZeroGasToken,
-    NonZeroRefundReceiver,
-}
-
-impl Warning {
-    pub fn message(&self) -> String {
-        match self {
-            Warning::DelegateCall => "⚠️ DELEGATECALL - can modify Safe state!".to_string(),
-            Warning::DangerousMethod(m) => format!("⚠️ Dangerous method: {}", m),
-            Warning::HashMismatch => "⚠️ Computed hash doesn't match API!".to_string(),
-            Warning::NonceMismatch { expected, actual } => {
-                format!("Nonce mismatch: expected {}, got {}", expected, actual)
-            }
-            Warning::NonZeroGasToken => "Non-zero gas token".to_string(),
-            Warning::NonZeroRefundReceiver => "Non-zero refund receiver".to_string(),
-        }
-    }
-
-    pub fn severity(&self) -> Severity {
-        match self {
-            Warning::DelegateCall | Warning::HashMismatch => Severity::Critical,
-            Warning::DangerousMethod(_) | Warning::NonceMismatch { .. } => Severity::High,
-            Warning::NonZeroGasToken | Warning::NonZeroRefundReceiver => Severity::Medium,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Severity {
-    Medium,
-    High,
-    Critical,
-}
-
-impl Severity {
-    pub fn color(&self) -> egui::Color32 {
-        match self {
-            Severity::Medium => egui::Color32::from_rgb(220, 180, 50),
-            Severity::High => egui::Color32::from_rgb(220, 120, 50),
-            Severity::Critical => egui::Color32::from_rgb(220, 50, 50),
-        }
-    }
 }
 
 impl Default for TxVerifyState {
@@ -138,7 +87,7 @@ impl Default for TxVerifyState {
             refund_receiver: "0x0000000000000000000000000000000000000000".to_string(),
             fetched_tx: None,
             hashes: None,
-            warnings: Vec::new(),
+            warnings: SafeWarnings::new(),
             is_loading: false,
             error: None,
         }
@@ -149,7 +98,7 @@ impl TxVerifyState {
     pub fn clear_results(&mut self) {
         self.fetched_tx = None;
         self.hashes = None;
-        self.warnings.clear();
+        self.warnings = SafeWarnings::new();
         self.error = None;
     }
 }
