@@ -22,6 +22,9 @@ egui_extras = { version = "0.29", features = ["image"] }
 # Safe hash computation (brings alloy as transitive dependency)
 safe-utils = { git = "https://github.com/Cyfrin/safe-hash-rs" }
 
+# Ethereum types (match safe-utils version)
+alloy = "0.11"
+
 # Async + HTTP - match safe-hash-rs
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync"] }
 reqwest = { version = "0.12.2", default-features = false, features = ["json", "rustls-tls"] }
