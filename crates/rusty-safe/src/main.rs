@@ -4,6 +4,7 @@
 
 mod api;
 mod app;
+mod decode;
 mod expected;
 mod hasher;
 mod state;

@@ -7,6 +7,7 @@ use safe_utils::{get_all_supported_chain_names, DomainHasher, MessageHasher, Of,
 use std::sync::{Arc, Mutex};
 
 use crate::api::SafeTransaction;
+use crate::decode::{self, SignatureLookup, TransactionKind, SingleDecode, ComparisonResult, get_selector};
 use crate::expected;
 use crate::hasher::{get_warnings_for_tx, get_warnings_from_api_tx, compute_hashes, compute_hashes_from_api_tx, fetch_transaction};
 use crate::state::{Eip712State, MsgVerifyState, TxVerifyState, SAFE_VERSIONS};
@@ -17,6 +18,19 @@ use crate::ui;
 pub enum FetchResult {
     Success(SafeTransaction),
     Error(String),
+}
+
+/// Result from async decode operation
+#[derive(Clone)]
+pub enum DecodeResult {
+    Single {
+        selector: String,
+        local_decode: Result<decode::LocalDecode, String>,
+    },
+    MultiSendTx {
+        index: usize,
+        local_decode: Result<decode::LocalDecode, String>,
+    },
 }
 
 /// The main application state
@@ -33,6 +47,10 @@ pub struct App {
     chain_names: Vec<String>,
     /// Async fetch result receiver
     fetch_result: Arc<Mutex<Option<FetchResult>>>,
+    /// Signature lookup client (with cache)
+    signature_lookup: SignatureLookup,
+    /// Async decode result receiver
+    decode_result: Arc<Mutex<Option<DecodeResult>>>,
 }
 
 /// Available tabs in the application
@@ -54,6 +72,8 @@ impl App {
             eip712_state: Eip712State::default(),
             chain_names: get_all_supported_chain_names(),
             fetch_result: Arc::new(Mutex::new(None)),
+            signature_lookup: SignatureLookup::new(),
+            decode_result: Arc::new(Mutex::new(None)),
         }
     }
 }
@@ -64,6 +84,9 @@ impl eframe::App for App {
 
         // Check for async fetch results
         self.check_fetch_result();
+
+        // Check for async decode results
+        self.check_decode_result();
 
         egui::TopBottomPanel::top("header").show(ctx, |ui| {
             ui.add_space(8.0);
@@ -282,14 +305,23 @@ impl App {
                     ui.label("Confirmations:");
                     ui.label(format!("{} / {}", tx.confirmations.len(), tx.confirmations_required));
                     ui.end_row();
-
-                    // Show decoded data if available
-                    if let Some(decoded) = &tx.data_decoded {
-                        ui.label("Method:");
-                        ui.label(egui::RichText::new(&decoded.method).strong());
-                        ui.end_row();
-                    }
                 });
+
+            // Calldata decode section
+            if let Some(decode_state) = &mut self.tx_state.decode {
+                ui.add_space(15.0);
+                ui::section_header(ui, "Calldata Verification");
+
+                let mut expand_index = None;
+                decode::render_decode_section(ui, decode_state, &mut |idx| {
+                    expand_index = Some(idx);
+                });
+
+                // Handle expand request for MultiSend
+                if let Some(idx) = expand_index {
+                    self.trigger_multisend_decode(idx, ctx);
+                }
+            }
         }
 
         // Expected values validation result (before other warnings)
@@ -713,6 +745,17 @@ impl App {
                             Some(expected::validate_against_api(&tx, &self.tx_state.expected));
                     }
 
+                    // Initialize calldata decode
+                    let decode_state = decode::parse_initial(&tx.data, tx.data_decoded.as_ref());
+                    self.tx_state.decode = Some(decode_state);
+
+                    // Trigger 4byte lookup for single calls
+                    if let Some(ref decode) = self.tx_state.decode {
+                        if matches!(&decode.kind, TransactionKind::Single(_)) && !decode.selector.is_empty() {
+                            self.trigger_decode_lookup(&decode.selector, &tx.data);
+                        }
+                    }
+
                     self.tx_state.fetched_tx = Some(tx);
                 }
                 FetchResult::Error(e) => {
@@ -720,5 +763,195 @@ impl App {
                 }
             }
         }
+    }
+
+    fn check_decode_result(&mut self) {
+        let result = {
+            let mut guard = self.decode_result.lock().unwrap();
+            guard.take()
+        };
+
+        if let Some(result) = result {
+            match result {
+                DecodeResult::Single { selector: _, local_decode } => {
+                    if let Some(ref mut decode) = self.tx_state.decode {
+                        if let TransactionKind::Single(ref mut single) = decode.kind {
+                            match local_decode {
+                                Ok(local) => {
+                                    single.local = Some(local);
+                                    single.comparison = decode::compare_decodes(
+                                        single.api.as_ref(),
+                                        single.local.as_ref(),
+                                    );
+                                }
+                                Err(e) => {
+                                    single.comparison = ComparisonResult::Failed(e);
+                                }
+                            }
+
+                            // Update overall status
+                            decode.status = match &single.comparison {
+                                ComparisonResult::Match => decode::OverallStatus::AllMatch,
+                                ComparisonResult::MethodMismatch { .. }
+                                | ComparisonResult::ParamMismatch(_) => decode::OverallStatus::HasMismatches,
+                                _ => decode::OverallStatus::PartiallyVerified,
+                            };
+                        }
+                    }
+                }
+                DecodeResult::MultiSendTx { index, local_decode } => {
+                    if let Some(ref mut decode) = self.tx_state.decode {
+                        if let TransactionKind::MultiSend(ref mut multi) = decode.kind {
+                            if let Some(tx) = multi.transactions.get_mut(index) {
+                                tx.is_loading = false;
+
+                                let api_decode = self.tx_state.fetched_tx.as_ref()
+                                    .and_then(|t| t.data_decoded.as_ref())
+                                    .and_then(|d| d.parameters.first())
+                                    .and_then(|p| p.value_decoded.as_ref())
+                                    .and_then(|v| v.as_array())
+                                    .and_then(|arr| arr.get(index))
+                                    .and_then(|item| item.get("dataDecoded"))
+                                    .and_then(|dd| serde_json::from_value::<crate::api::DataDecoded>(dd.clone()).ok())
+                                    .map(|dd| decode::ApiDecode {
+                                        method: dd.method,
+                                        params: dd.parameters.iter().map(|p| decode::ApiParam {
+                                            name: p.name.clone(),
+                                            typ: p.r#type.clone(),
+                                            value: p.value.clone(),
+                                        }).collect(),
+                                    });
+
+                                let local = local_decode.ok();
+                                let comparison = decode::compare_decodes(
+                                    api_decode.as_ref(),
+                                    local.as_ref(),
+                                );
+
+                                tx.decode = Some(SingleDecode {
+                                    api: api_decode,
+                                    local,
+                                    comparison,
+                                });
+
+                                // Update summary
+                                multi.summary.update(&multi.transactions);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    fn trigger_decode_lookup(&self, selector: &str, data: &str) {
+        let lookup = self.signature_lookup.clone();
+        let selector = selector.to_string();
+        let data = data.to_string();
+        let result = Arc::clone(&self.decode_result);
+
+        #[cfg(target_arch = "wasm32")]
+        {
+            use wasm_bindgen_futures::spawn_local;
+            spawn_local(async move {
+                let local_decode = Self::do_decode_lookup(&lookup, &selector, &data).await;
+                let mut guard = result.lock().unwrap();
+                *guard = Some(DecodeResult::Single { selector, local_decode });
+            });
+        }
+
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            std::thread::spawn(move || {
+                let rt = tokio::runtime::Runtime::new().unwrap();
+                let local_decode = rt.block_on(Self::do_decode_lookup(&lookup, &selector, &data));
+                let mut guard = result.lock().unwrap();
+                *guard = Some(DecodeResult::Single { selector, local_decode });
+            });
+        }
+    }
+
+    fn trigger_multisend_decode(&mut self, index: usize, ctx: &egui::Context) {
+        // Mark as loading
+        if let Some(ref mut decode) = self.tx_state.decode {
+            if let TransactionKind::MultiSend(ref mut multi) = decode.kind {
+                if let Some(tx) = multi.transactions.get_mut(index) {
+                    if tx.decode.is_some() || tx.is_loading || tx.data == "0x" || tx.data.is_empty() {
+                        return;
+                    }
+                    tx.is_loading = true;
+                }
+            }
+        }
+
+        // Get the data for this transaction
+        let data = if let Some(ref decode) = self.tx_state.decode {
+            if let TransactionKind::MultiSend(ref multi) = decode.kind {
+                multi.transactions.get(index).map(|tx| tx.data.clone())
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        if let Some(data) = data {
+            let selector = get_selector(&data);
+            if selector.is_empty() {
+                return;
+            }
+
+            let lookup = self.signature_lookup.clone();
+            let result = Arc::clone(&self.decode_result);
+            let ctx = ctx.clone();
+
+            #[cfg(target_arch = "wasm32")]
+            {
+                use wasm_bindgen_futures::spawn_local;
+                spawn_local(async move {
+                    let local_decode = Self::do_decode_lookup(&lookup, &selector, &data).await;
+                    let mut guard = result.lock().unwrap();
+                    *guard = Some(DecodeResult::MultiSendTx { index, local_decode });
+                    ctx.request_repaint();
+                });
+            }
+
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                std::thread::spawn(move || {
+                    let rt = tokio::runtime::Runtime::new().unwrap();
+                    let local_decode = rt.block_on(Self::do_decode_lookup(&lookup, &selector, &data));
+                    let mut guard = result.lock().unwrap();
+                    *guard = Some(DecodeResult::MultiSendTx { index, local_decode });
+                    ctx.request_repaint();
+                });
+            }
+        }
+    }
+
+    async fn do_decode_lookup(
+        lookup: &SignatureLookup,
+        selector: &str,
+        data: &str,
+    ) -> Result<decode::LocalDecode, String> {
+        // Lookup signatures for selector
+        let signatures = lookup.lookup(selector).await?;
+
+        if signatures.is_empty() {
+            return Err("No signatures found for selector".into());
+        }
+
+        // Try each signature until one decodes successfully
+        for sig in &signatures {
+            match decode::decode_with_signature(data, sig) {
+                Ok(decoded) => return Ok(decoded),
+                Err(_) => continue,
+            }
+        }
+
+        Err(format!(
+            "None of {} signatures decoded successfully",
+            signatures.len()
+        ))
     }
 }

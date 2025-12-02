@@ -1,0 +1,196 @@
+//! Calldata decoding types
+
+use std::collections::HashMap;
+
+/// Top-level decoded transaction
+#[derive(Debug, Clone, Default)]
+pub struct DecodedTransaction {
+    pub raw_data: String,
+    pub selector: String,
+    pub kind: TransactionKind,
+    pub status: OverallStatus,
+}
+
+/// Type of transaction calldata
+#[derive(Debug, Clone, Default)]
+pub enum TransactionKind {
+    #[default]
+    Empty,
+    Single(SingleDecode),
+    MultiSend(MultiSendDecode),
+    Unknown,
+}
+
+/// Single function call decode (both sources)
+#[derive(Debug, Clone, Default)]
+pub struct SingleDecode {
+    pub api: Option<ApiDecode>,
+    pub local: Option<LocalDecode>,
+    pub comparison: ComparisonResult,
+}
+
+/// MultiSend batch decode
+#[derive(Debug, Clone, Default)]
+pub struct MultiSendDecode {
+    pub transactions: Vec<MultiSendTx>,
+    pub summary: MultiSendSummary,
+}
+
+/// Single transaction within a MultiSend batch
+#[derive(Debug, Clone)]
+pub struct MultiSendTx {
+    pub index: usize,
+    pub operation: u8,
+    pub to: String,
+    pub value: String,
+    pub data: String,
+    pub decode: Option<SingleDecode>,
+    pub is_expanded: bool,
+    pub is_loading: bool,
+}
+
+/// Summary counts for MultiSend
+#[derive(Debug, Clone, Default)]
+pub struct MultiSendSummary {
+    pub total: usize,
+    pub verified: usize,
+    pub mismatched: usize,
+    pub pending: usize,
+}
+
+impl MultiSendSummary {
+    pub fn update(&mut self, transactions: &[MultiSendTx]) {
+        self.total = transactions.len();
+        self.verified = 0;
+        self.mismatched = 0;
+        self.pending = 0;
+
+        for tx in transactions {
+            match &tx.decode {
+                Some(d) => match &d.comparison {
+                    ComparisonResult::Match => self.verified += 1,
+                    ComparisonResult::MethodMismatch { .. }
+                    | ComparisonResult::ParamMismatch(_) => self.mismatched += 1,
+                    ComparisonResult::OnlyApi | ComparisonResult::OnlyLocal => self.verified += 1,
+                    ComparisonResult::Pending | ComparisonResult::Failed(_) => self.pending += 1,
+                },
+                None => self.pending += 1,
+            }
+        }
+    }
+}
+
+// --- API Decode (from Safe Transaction Service) ---
+
+/// Decode provided by Safe API
+#[derive(Debug, Clone)]
+pub struct ApiDecode {
+    pub method: String,
+    pub params: Vec<ApiParam>,
+}
+
+/// Parameter from API decode
+#[derive(Debug, Clone)]
+pub struct ApiParam {
+    pub name: String,
+    pub typ: String,
+    pub value: String,
+}
+
+// --- Local Decode (from 4byte + alloy) ---
+
+/// Decode from local 4byte lookup + ABI decoding
+#[derive(Debug, Clone)]
+pub struct LocalDecode {
+    pub signature: String,
+    pub method: String,
+    pub params: Vec<LocalParam>,
+}
+
+/// Parameter from local decode (no names, just types)
+#[derive(Debug, Clone)]
+pub struct LocalParam {
+    pub typ: String,
+    pub value: String,
+}
+
+// --- Comparison ---
+
+/// Result of comparing API vs Local decode
+#[derive(Debug, Clone, Default)]
+pub enum ComparisonResult {
+    #[default]
+    Pending,
+    Match,
+    MethodMismatch {
+        api: String,
+        local: String,
+    },
+    ParamMismatch(Vec<ParamDiff>),
+    OnlyApi,
+    OnlyLocal,
+    Failed(String),
+}
+
+impl ComparisonResult {
+    pub fn is_match(&self) -> bool {
+        matches!(self, ComparisonResult::Match)
+    }
+
+    pub fn is_mismatch(&self) -> bool {
+        matches!(
+            self,
+            ComparisonResult::MethodMismatch { .. } | ComparisonResult::ParamMismatch(_)
+        )
+    }
+}
+
+/// Difference in a single parameter
+#[derive(Debug, Clone)]
+pub struct ParamDiff {
+    pub index: usize,
+    pub typ: String,
+    pub api_value: String,
+    pub local_value: String,
+}
+
+/// Overall status for the transaction
+#[derive(Debug, Clone, Default)]
+pub enum OverallStatus {
+    #[default]
+    Pending,
+    AllMatch,
+    HasMismatches,
+    PartiallyVerified,
+    Failed,
+}
+
+// --- Signature Cache ---
+
+/// Cached signature lookups
+#[derive(Debug, Clone, Default)]
+pub struct SignatureCache {
+    pub cache: HashMap<String, Vec<String>>,
+}
+
+impl SignatureCache {
+    pub fn new() -> Self {
+        Self {
+            cache: HashMap::new(),
+        }
+    }
+
+    pub fn get(&self, selector: &str) -> Option<&Vec<String>> {
+        self.cache.get(selector)
+    }
+
+    pub fn insert(&mut self, selector: String, signatures: Vec<String>) {
+        self.cache.insert(selector, signatures);
+    }
+
+    pub fn contains(&self, selector: &str) -> bool {
+        self.cache.contains_key(selector)
+    }
+}
+
+
