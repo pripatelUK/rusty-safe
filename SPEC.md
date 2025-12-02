@@ -12,9 +12,18 @@ By building a pure Rust application:
 
 ## Vision
 
-A desktop GUI application that provides:
+A cross-platform GUI application (desktop + web) that provides:
 1. **Transaction Verification** (Phase 1) - safe-hash-rs features with a visual interface
 2. **Safe Wallet Management** (Phase 2) - localsafe.eth features ported to Rust
+
+### Platform Support
+
+| Platform | Build Target | Notes |
+|----------|--------------|-------|
+| Desktop (Linux/macOS/Windows) | Native binary | Full feature support |
+| Web Browser | WASM + WebGL | No X11/OpenGL dependencies, runs anywhere |
+
+The same Rust codebase compiles to both native and WASM targets.
 
 ## Reference Projects (External)
 
@@ -100,8 +109,12 @@ rusty-safe/
 ├── Cargo.toml              # Workspace root
 ├── crates/
 │   ├── rusty-safe/         # Main GUI application
+│   │   ├── index.html      # WASM entry point (trunk)
+│   │   ├── assets/
+│   │   │   └── favicon.ico
+│   │   ├── dist/           # WASM build output (trunk build)
 │   │   └── src/
-│   │       ├── main.rs     # Entry point (eframe)
+│   │       ├── main.rs     # Entry point (native + WASM)
 │   │       ├── app.rs      # Main App struct
 │   │       └── ui/
 │   │           ├── tx_verify.rs    # Transaction verification tab
@@ -120,16 +133,63 @@ rusty-safe/
 
 ### Dependencies
 
-| Crate | Purpose |
-|-------|---------|
-| `eframe` / `egui` | Native GUI framework |
-| `alloy-primitives` | Ethereum primitives (Address, U256, B256) |
-| `alloy-sol-types` | ABI encoding/decoding |
-| `alloy-dyn-abi` | Dynamic ABI for calldata decoding |
-| `reqwest` | HTTP client for Safe API |
-| `serde` / `serde_json` | JSON serialization |
-| `semver` | Safe version handling |
-| `tokio` | Async runtime |
+| Crate | Purpose | Platform |
+|-------|---------|----------|
+| `eframe` / `egui` | GUI framework (native + WASM) | All |
+| `alloy-primitives` | Ethereum primitives (Address, U256, B256) | All |
+| `alloy-sol-types` | ABI encoding/decoding | All |
+| `alloy-dyn-abi` | Dynamic ABI for calldata decoding | All |
+| `reqwest` | HTTP client for Safe API | All |
+| `serde` / `serde_json` | JSON serialization | All |
+| `semver` | Safe version handling | All |
+| `tokio` | Async runtime | Native only |
+| `arboard` | Clipboard access | Native only |
+| `tracing-subscriber` | Logging to stdout | Native only |
+| `tracing-wasm` | Logging to console.log | WASM only |
+| `wasm-bindgen-futures` | Async/await in WASM | WASM only |
+| `web-sys` | Browser APIs | WASM only |
+
+### Building for Web (WASM)
+
+The application compiles to WebAssembly for browser deployment. This eliminates X11/OpenGL dependencies and allows running anywhere with a modern browser.
+
+**Prerequisites:**
+```bash
+# Install WASM target and trunk bundler
+rustup target add wasm32-unknown-unknown
+cargo install trunk --locked
+```
+
+**Build Commands:**
+```bash
+cd crates/rusty-safe
+
+# Development build with hot-reload
+trunk serve --open
+
+# Production build (outputs to dist/)
+trunk build --release
+
+# Serve production build
+trunk serve --release --address 0.0.0.0 --port 8080
+```
+
+**WASM-specific Dependencies:**
+```toml
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen-futures = "0.4"
+web-sys = { version = "0.3", features = ["Window", "Document", "Element", "HtmlCanvasElement"] }
+tracing-wasm = "0.2"
+getrandom = { version = "0.2", features = ["js"] }  # Required for crypto in WASM
+```
+
+**Native-only Dependencies:**
+```toml
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+tokio = { workspace = true }
+arboard = { workspace = true }          # Clipboard (not available in WASM)
+tracing-subscriber = { workspace = true }
+```
 
 ### Integration with safe-hash-rs
 
@@ -502,6 +562,8 @@ pub struct TxVerifyState {
 | safe-utils | Git dependency | Leverage existing tested code |
 | Hardware Wallets | High priority (Phase 2) | Critical for Safe users |
 | UI Framework | egui/eframe | Pure Rust, cross-platform |
+| WASM Support | Yes, via trunk | Run in browser without native dependencies |
+| Build Tool | trunk | Standard WASM bundler for Rust web apps |
 
 ## Open Decisions
 
@@ -657,51 +719,61 @@ impl Warning {
 
 ---
 
-## Next Steps
+## Quick Start
 
-To begin implementation:
+**Native Build:**
+```bash
+cargo build --release
+./target/release/rusty-safe
 
-1. **Initialize workspace**
-   ```bash
-   cd rusty-safe
-   cargo init --name rusty-safe
-   # Convert to workspace structure
-   ```
+# For X11 forwarding (software rendering):
+LIBGL_ALWAYS_SOFTWARE=1 ./target/release/rusty-safe
+```
 
-2. **Start with Phase 1.0.1 - 1.0.4** (project setup + basic scaffold)
-
-3. **Verify safe-utils integration** works before building UI
-
-4. **Iterate**: Build minimal UI → test → expand
+**Web/WASM Build:**
+```bash
+cd crates/rusty-safe
+trunk serve --release --address 0.0.0.0 --port 8080
+# Open http://localhost:8080 in browser
+```
 
 ---
 
-## Cargo.toml (Initial)
+## Next Steps
 
+To continue implementation:
+
+1. **Start with Phase 1.0.5 - 1.0.13** (transaction verification UI)
+
+2. **Verify safe-utils integration** works before building UI
+
+3. **Iterate**: Build minimal UI → test → expand
+
+---
+
+## Cargo.toml (Current)
+
+**Workspace root (`Cargo.toml`):**
 ```toml
-[package]
-name = "rusty-safe"
-version = "0.1.0"
-edition = "2021"
-rust-version = "1.80"
+[workspace]
+resolver = "2"
+members = ["crates/*"]
 
-[dependencies]
-# GUI
-eframe = "0.29"
+[workspace.dependencies]
+# GUI - configured for both native and WASM
+eframe = { version = "0.29", default-features = false, features = [
+    "default_fonts",
+    "glow",
+    "persistence",
+] }
 egui = "0.29"
-egui_extras = { version = "0.29", features = ["image"] }
-
-# Ethereum
-alloy-primitives = "0.8"
-alloy-sol-types = "0.8"
-alloy-dyn-abi = "0.8"
 
 # Safe hash computation
 safe-utils = { git = "https://github.com/Cyfrin/safe-hash-rs" }
 
 # Async + HTTP
-tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
-reqwest = { version = "0.12", features = ["json"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 
 # Serialization
 serde = { version = "1", features = ["derive"] }
@@ -710,13 +782,45 @@ serde_json = "1"
 # Utils
 thiserror = "2"
 semver = "1"
-arboard = "3"  # Clipboard
+arboard = "3"
 tracing = "0.1"
-tracing-subscriber = "0.3"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 [profile.release]
 lto = true
 strip = true
+```
+
+**Crate (`crates/rusty-safe/Cargo.toml`):**
+```toml
+[package]
+name = "rusty-safe"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+eframe.workspace = true
+egui.workspace = true
+safe-utils.workspace = true
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+semver.workspace = true
+tracing.workspace = true
+
+# Native-only
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+tokio.workspace = true
+arboard.workspace = true
+tracing-subscriber.workspace = true
+
+# WASM-only
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen-futures = "0.4"
+web-sys = { version = "0.3", features = ["Window", "Document", "Element", "HtmlCanvasElement"] }
+tracing-wasm = "0.2"
+getrandom = { version = "0.2", features = ["js"] }
 ```
 
 ---
@@ -730,6 +834,7 @@ strip = true
 | [Safe Contracts](https://github.com/safe-global/safe-contracts) | Safe smart contracts |
 | [egui docs](https://docs.rs/egui) | GUI framework documentation |
 | [eframe docs](https://docs.rs/eframe) | egui native shell |
+| [trunk](https://trunkrs.dev/) | WASM bundler for Rust web apps |
 | [alloy-rs](https://github.com/alloy-rs/alloy) | Ethereum primitives |
 | [coins-ledger](https://docs.rs/coins-ledger) | Ledger hardware wallet |
 | [EIP-712](https://eips.ethereum.org/EIPS/eip-712) | Typed structured data hashing |
