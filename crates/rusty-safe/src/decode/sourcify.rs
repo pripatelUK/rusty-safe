@@ -1,10 +1,13 @@
 //! Sourcify 4byte signature lookup with caching
+//!
+//! Uses Sourcify's Signature Database API:
+//! https://docs.sourcify.dev/docs/api/#/Signature%20Database/get_signature_database_v1_lookup
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use serde::Deserialize;
 
-const SOURCIFY_API: &str = "https://www.4byte.directory/api/v1/signatures";
+const SOURCIFY_API: &str = "https://api.4byte.sourcify.dev/signature-database/v1/lookup";
 
 /// Log to console (works in both WASM and native)
 macro_rules! debug_log {
@@ -20,16 +23,28 @@ macro_rules! debug_log {
     };
 }
 
-/// Response from 4byte.directory API
+/// Response from Sourcify Signature Database API
 #[derive(Debug, Deserialize)]
-struct FourByteResponse {
-    count: u32,
-    results: Vec<FourByteResult>,
+struct SourcifyResponse {
+    ok: bool,
+    result: SourcifyResult,
 }
 
 #[derive(Debug, Deserialize)]
-struct FourByteResult {
-    text_signature: String,
+struct SourcifyResult {
+    function: HashMap<String, Vec<SignatureEntry>>,
+    #[allow(dead_code)]
+    event: HashMap<String, Vec<SignatureEntry>>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SignatureEntry {
+    name: String,
+    #[allow(dead_code)]
+    filtered: bool,
+    #[allow(dead_code)]
+    has_verified_contract: Option<bool>,
 }
 
 /// Cached 4byte signature lookup client
@@ -90,6 +105,7 @@ impl SignatureLookup {
             for sel in selectors {
                 let normalized = normalize_selector(sel);
                 if let Some(sigs) = cache.get(&normalized) {
+                    debug_log!("Cache hit for {}", normalized);
                     results.insert(normalized, sigs.clone());
                 } else if !to_fetch.contains(&normalized) {
                     to_fetch.push(normalized);
@@ -97,12 +113,23 @@ impl SignatureLookup {
             }
         }
 
-        // Fetch uncached (one by one for now, could parallelize)
-        for sel in to_fetch {
-            if let Ok(sigs) = self.fetch_single(&sel).await {
+        if to_fetch.is_empty() {
+            return results;
+        }
+
+        debug_log!("Batch fetching {} selectors: {:?}", to_fetch.len(), to_fetch);
+
+        // Fetch all uncached in one request
+        match self.fetch_batch(&to_fetch).await {
+            Ok(fetched) => {
                 let mut cache = self.cache.lock().unwrap();
-                cache.insert(sel.clone(), sigs.clone());
-                results.insert(sel, sigs);
+                for (sel, sigs) in fetched {
+                    cache.insert(sel.clone(), sigs.clone());
+                    results.insert(sel, sigs);
+                }
+            }
+            Err(e) => {
+                debug_log!("Batch fetch error: {}", e);
             }
         }
 
@@ -116,11 +143,26 @@ impl SignatureLookup {
         cache.contains_key(&selector)
     }
 
-    /// Fetch signatures for a selector from 4byte.directory
+    /// Fetch signatures for a selector from Sourcify
     async fn fetch_single(&self, selector: &str) -> Result<Vec<String>, String> {
-        // 4byte.directory uses hex_signature param without 0x prefix
-        let hex_sig = selector.strip_prefix("0x").unwrap_or(selector);
-        let url = format!("{}/?hex_signature={}", SOURCIFY_API, hex_sig);
+        self.fetch_batch(&[selector.to_string()])
+            .await
+            .map(|mut map| map.remove(selector).unwrap_or_default())
+    }
+
+    /// Fetch signatures for multiple selectors in one request
+    async fn fetch_batch(&self, selectors: &[String]) -> Result<HashMap<String, Vec<String>>, String> {
+        if selectors.is_empty() {
+            return Ok(HashMap::new());
+        }
+
+        // Build URL with function params (can have multiple)
+        // e.g., ?function=0xa9059cbb&function=0x095ea7b3&filter=true
+        let params: Vec<String> = selectors
+            .iter()
+            .map(|s| format!("function={}", s))
+            .collect();
+        let url = format!("{}?{}&filter=true", SOURCIFY_API, params.join("&"));
         debug_log!("Fetching: {}", url);
 
         let response = reqwest::get(&url)
@@ -136,7 +178,7 @@ impl SignatureLookup {
             return Err(format!("API error: {}", response.status()));
         }
 
-        let api_response: FourByteResponse = response
+        let api_response: SourcifyResponse = response
             .json()
             .await
             .map_err(|e| {
@@ -144,14 +186,26 @@ impl SignatureLookup {
                 format!("Parse error: {}", e)
             })?;
 
-        let sigs: Vec<String> = api_response
-            .results
-            .into_iter()
-            .map(|r| r.text_signature)
-            .collect();
+        if !api_response.ok {
+            return Err("API returned ok=false".into());
+        }
 
-        debug_log!("Found signatures: {:?}", sigs);
-        Ok(sigs)
+        // Convert to our format, prioritizing verified signatures
+        let mut results = HashMap::new();
+        for (selector, entries) in api_response.result.function {
+            // Sort: verified contracts first
+            let mut sigs: Vec<(bool, String)> = entries
+                .into_iter()
+                .map(|e| (e.has_verified_contract.unwrap_or(false), e.name))
+                .collect();
+            sigs.sort_by(|a, b| b.0.cmp(&a.0)); // verified first
+
+            let sig_names: Vec<String> = sigs.into_iter().map(|(_, name)| name).collect();
+            debug_log!("Selector {}: {:?}", selector, sig_names);
+            results.insert(selector, sig_names);
+        }
+
+        Ok(results)
     }
 }
 
