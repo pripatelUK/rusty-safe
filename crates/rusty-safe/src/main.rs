@@ -7,6 +7,7 @@ mod app;
 mod hasher;
 mod state;
 mod ui;
+mod validation;
 
 // Web entry point
 #[cfg(target_arch = "wasm32")]

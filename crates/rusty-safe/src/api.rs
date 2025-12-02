@@ -5,8 +5,8 @@
 // Re-export API types from safe-hash
 pub use safe_hash::{
     SafeTransaction, SafeApiResponse, Confirmation, DataDecoded, Parameter, Mismatch,
+    get_safe_transaction_async,
     validate_safe_tx_hash,
-    get_safe_transaction_async,  // Async version works on WASM
 };
 
 // Re-export hash types

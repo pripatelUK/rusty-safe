@@ -674,23 +674,17 @@ impl App {
 
             match result {
                 FetchResult::Success(tx) => {
-                    // Compute hashes from the fetched transaction
+                    // Compute hashes from the fetched transaction using validate_safe_tx_hash
                     match compute_hashes_from_api_tx(
                         &self.tx_state.chain_name,
                         &self.tx_state.safe_address,
                         &self.tx_state.safe_version,
                         &tx,
                     ) {
-                        Ok(hashes) => {
-                            // Check if hash matches
-                            if hashes.matches_api == Some(false) {
-                                self.tx_state.warnings.argument_mismatches.push(
-                                    safe_hash::Mismatch {
-                                        field: "safe_tx_hash".to_string(),
-                                        api_value: tx.safe_tx_hash.clone(),
-                                        user_value: hashes.safe_tx_hash.clone(),
-                                    }
-                                );
+                        Ok((hashes, mismatch)) => {
+                            // Add hash mismatch to warnings if present
+                            if let Some(m) = mismatch {
+                                self.tx_state.warnings.argument_mismatches.push(m);
                             }
                             self.tx_state.hashes = Some(hashes);
                         }
@@ -699,7 +693,7 @@ impl App {
                         }
                     }
 
-                    // Get warnings
+                    // Get warnings using check_suspicious_content (via get_warnings_from_api_tx)
                     let chain_id = ChainId::of(&self.tx_state.chain_name).ok();
                     self.tx_state.warnings.union(get_warnings_from_api_tx(&tx, chain_id));
                     

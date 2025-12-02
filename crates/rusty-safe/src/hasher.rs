@@ -1,9 +1,10 @@
 //! Hash computation - uses safe_hash library
 
-use crate::api::{SafeTransaction, TxInput, tx_signing_hashes, check_suspicious_content, get_safe_transaction_async};
+use crate::api::{SafeTransaction, TxInput, tx_signing_hashes, check_suspicious_content, get_safe_transaction_async, validate_safe_tx_hash};
 use crate::state::ComputedHashes;
-use alloy::primitives::{Address, ChainId, U256, hex};
-use safe_hash::{SafeHashes, SafeWarnings};
+use crate::validation::{ExpectedTxValues, validate_tx_against_expected};
+use alloy::primitives::{Address, FixedBytes, ChainId, U256, hex};
+use safe_hash::{SafeHashes, SafeWarnings, Mismatch};
 use safe_utils::{Of, SafeWalletVersion};
 
 /// Fetch transaction from Safe API (async - works on WASM)
@@ -109,13 +110,14 @@ pub fn compute_hashes(
 }
 
 /// Compute hashes from a SafeTransaction (fetched from API)
+/// Returns (hashes, optional_mismatch)
 pub fn compute_hashes_from_api_tx(
     chain_name: &str,
     safe_address: &str,
     version: &str,
     tx: &SafeTransaction,
-) -> Result<ComputedHashes, String> {
-    let mut hashes = compute_hashes(
+) -> Result<(ComputedHashes, Option<Mismatch>), String> {
+    let hashes = compute_hashes(
         chain_name,
         safe_address,
         version,
@@ -131,12 +133,43 @@ pub fn compute_hashes_from_api_tx(
         &tx.nonce.to_string(),
     )?;
 
-    // Compare with API hash
-    let api_hash = tx.safe_tx_hash.to_lowercase();
-    let computed_hash = hashes.safe_tx_hash.to_lowercase();
-    hashes.matches_api = Some(api_hash == computed_hash);
+    // Use validate_safe_tx_hash from safe-hash
+    let computed_hash_bytes = hex::decode(hashes.safe_tx_hash.strip_prefix("0x").unwrap_or(&hashes.safe_tx_hash))
+        .map_err(|e| format!("Failed to decode computed hash: {}", e))?;
+    let computed_fixed: FixedBytes<32> = FixedBytes::from_slice(&computed_hash_bytes);
+    
+    let mismatch = match validate_safe_tx_hash(tx, &computed_fixed) {
+        Ok(()) => None,
+        Err(m) => Some(m),
+    };
 
-    Ok(hashes)
+    let mut final_hashes = hashes;
+    final_hashes.matches_api = Some(mismatch.is_none());
+
+    Ok((final_hashes, mismatch))
+}
+
+/// Validate user-expected values against API transaction
+/// Returns list of mismatches (empty if all match)
+pub fn validate_expected_against_api(
+    tx: &SafeTransaction,
+    expected_to: Option<&str>,
+    expected_value: Option<&str>,
+    expected_data: Option<&str>,
+    expected_operation: Option<u8>,
+) -> Vec<Mismatch> {
+    let expected = ExpectedTxValues {
+        to: expected_to.and_then(|s| s.parse().ok()),
+        value: expected_value.and_then(|s| parse_u256(s).ok()),
+        data: expected_data.map(|s| s.to_string()),
+        operation: expected_operation,
+        ..Default::default()
+    };
+
+    match validate_tx_against_expected(tx, &expected) {
+        Ok(()) => vec![],
+        Err(mismatches) => mismatches,
+    }
 }
 
 fn parse_u256(value: &str) -> Result<U256, String> {
