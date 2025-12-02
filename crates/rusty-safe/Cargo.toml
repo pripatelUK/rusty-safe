@@ -20,7 +20,6 @@ egui.workspace = true
 safe-utils.workspace = true
 
 # Async + HTTP
-tokio.workspace = true
 reqwest.workspace = true
 
 # Serialization
@@ -30,9 +29,19 @@ serde_json.workspace = true
 # Utils
 thiserror.workspace = true
 semver.workspace = true
-arboard.workspace = true
 
 # Logging
 tracing.workspace = true
+
+# Native-only dependencies
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+tokio.workspace = true
+arboard.workspace = true
 tracing-subscriber.workspace = true
 
+# WASM-only dependencies
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen-futures = "0.4"
+web-sys = { version = "0.3", features = ["Window", "Document", "Element", "HtmlCanvasElement"] }
+tracing-wasm = "0.2"
+getrandom = { version = "0.2", features = ["js"] }

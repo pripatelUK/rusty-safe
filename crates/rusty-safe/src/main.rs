@@ -1,9 +1,52 @@
 //! Rusty-Safe: A Rust-native Safe{Wallet} transaction verification GUI
 
-use eframe::egui;
-
 mod app;
 
+// Web entry point
+#[cfg(target_arch = "wasm32")]
+fn main() {
+    use eframe::wasm_bindgen::JsCast as _;
+    
+    // Redirect tracing to console.log
+    tracing_wasm::set_as_global_default();
+    
+    tracing::info!("Starting Rusty-Safe (WASM)");
+
+    let web_options = eframe::WebOptions::default();
+
+    wasm_bindgen_futures::spawn_local(async {
+        let document = web_sys::window()
+            .expect("No window")
+            .document()
+            .expect("No document");
+
+        let canvas = document
+            .get_element_by_id("the_canvas_id")
+            .expect("Failed to find canvas")
+            .dyn_into::<web_sys::HtmlCanvasElement>()
+            .expect("Element is not a canvas");
+
+        let start_result = eframe::WebRunner::new()
+            .start(
+                canvas,
+                web_options,
+                Box::new(|cc| Ok(Box::new(app::App::new(cc)))),
+            )
+            .await;
+
+        // Remove loading screen
+        if let Some(loading) = document.get_element_by_id("loading") {
+            loading.remove();
+        }
+
+        if let Err(e) = start_result {
+            tracing::error!("Failed to start eframe: {:?}", e);
+        }
+    });
+}
+
+// Native entry point
+#[cfg(not(target_arch = "wasm32"))]
 fn main() -> eframe::Result<()> {
     // Initialize logging
     tracing_subscriber::fmt()
