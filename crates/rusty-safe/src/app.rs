@@ -8,6 +8,20 @@ use std::sync::{Arc, Mutex};
 
 use crate::api::SafeTransaction;
 use crate::decode::{self, SignatureLookup, TransactionKind, SingleDecode, ComparisonResult, get_selector};
+
+/// Log to console (works in both WASM and native)
+macro_rules! debug_log {
+    ($($arg:tt)*) => {
+        #[cfg(target_arch = "wasm32")]
+        {
+            web_sys::console::log_1(&format!($($arg)*).into());
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            eprintln!("[app] {}", format!($($arg)*));
+        }
+    };
+}
 use crate::expected;
 use crate::hasher::{get_warnings_for_tx, get_warnings_from_api_tx, compute_hashes, compute_hashes_from_api_tx, fetch_transaction};
 use crate::state::{Eip712State, MsgVerifyState, TxVerifyState, SAFE_VERSIONS};
@@ -746,12 +760,23 @@ impl App {
                     }
 
                     // Initialize calldata decode
+                    debug_log!("Parsing calldata: {} bytes", tx.data.len());
                     let decode_state = decode::parse_initial(&tx.data, tx.data_decoded.as_ref());
+                    debug_log!("Decode kind: {:?}, selector: {}", 
+                        match &decode_state.kind {
+                            TransactionKind::Empty => "Empty",
+                            TransactionKind::Single(_) => "Single",
+                            TransactionKind::MultiSend(_) => "MultiSend",
+                            TransactionKind::Unknown => "Unknown",
+                        },
+                        decode_state.selector
+                    );
                     self.tx_state.decode = Some(decode_state);
 
                     // Trigger 4byte lookup for single calls
                     if let Some(ref decode) = self.tx_state.decode {
                         if matches!(&decode.kind, TransactionKind::Single(_)) && !decode.selector.is_empty() {
+                            debug_log!("Triggering 4byte lookup for selector: {}", decode.selector);
                             self.trigger_decode_lookup(&decode.selector, &tx.data);
                         }
                     }
@@ -772,17 +797,22 @@ impl App {
         };
 
         if let Some(result) = result {
+            debug_log!("Received decode result");
             match result {
                 DecodeResult::Single { selector: _, local_decode } => {
+                    debug_log!("Processing single decode result: {:?}", 
+                        local_decode.as_ref().map(|d| &d.method).ok());
                     if let Some(ref mut decode) = self.tx_state.decode {
                         if let TransactionKind::Single(ref mut single) = decode.kind {
                             match local_decode {
                                 Ok(local) => {
+                                    debug_log!("Local decode success: {}", local.method);
                                     single.local = Some(local);
                                     single.comparison = decode::compare_decodes(
                                         single.api.as_ref(),
                                         single.local.as_ref(),
                                     );
+                                    debug_log!("Comparison result: {:?}", single.comparison);
                                 }
                                 Err(e) => {
                                     single.comparison = ComparisonResult::Failed(e);
