@@ -1,15 +1,19 @@
 //! Rusty-Safe: A Rust-native Safe{Wallet} transaction verification GUI
+//! 
+//! Uses safe-utils from safe-hash-rs for all hash computation and chain data.
 
+mod api;
 mod app;
+mod hasher;
+mod state;
+mod ui;
 
 // Web entry point
 #[cfg(target_arch = "wasm32")]
 fn main() {
     use eframe::wasm_bindgen::JsCast as _;
-    
-    // Redirect tracing to console.log
+
     tracing_wasm::set_as_global_default();
-    
     tracing::info!("Starting Rusty-Safe (WASM)");
 
     let web_options = eframe::WebOptions::default();
@@ -34,7 +38,6 @@ fn main() {
             )
             .await;
 
-        // Remove loading screen
         if let Some(loading) = document.get_element_by_id("loading") {
             loading.remove();
         }
@@ -48,7 +51,6 @@ fn main() {
 // Native entry point
 #[cfg(not(target_arch = "wasm32"))]
 fn main() -> eframe::Result<()> {
-    // Initialize logging
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::from_default_env()
