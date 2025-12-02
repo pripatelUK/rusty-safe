@@ -7,6 +7,7 @@ use safe_utils::{get_all_supported_chain_names, DomainHasher, MessageHasher, Of,
 use std::sync::{Arc, Mutex};
 
 use crate::api::SafeTransaction;
+use crate::expected;
 use crate::hasher::{get_warnings_for_tx, get_warnings_from_api_tx, compute_hashes, compute_hashes_from_api_tx, fetch_transaction};
 use crate::state::{Eip712State, MsgVerifyState, TxVerifyState, SAFE_VERSIONS};
 use crate::ui;
@@ -204,6 +205,12 @@ impl App {
                 });
         }
 
+        // Expected values section (only shown when NOT in offline mode)
+        if !self.tx_state.offline_mode {
+            ui.add_space(10.0);
+            expected::render_section(ui, &mut self.tx_state.expected);
+        }
+
         ui.add_space(15.0);
 
         ui.horizontal(|ui| {
@@ -284,6 +291,9 @@ impl App {
                     }
                 });
         }
+
+        // Expected values validation result (before other warnings)
+        expected::render_result(ui, &self.tx_state.expected);
 
         if self.tx_state.warnings.has_warnings() {
             ui.add_space(15.0);
@@ -696,7 +706,13 @@ impl App {
                     // Get warnings using check_suspicious_content (via get_warnings_from_api_tx)
                     let chain_id = ChainId::of(&self.tx_state.chain_name).ok();
                     self.tx_state.warnings.union(get_warnings_from_api_tx(&tx, chain_id));
-                    
+
+                    // Validate against expected values if any were provided
+                    if self.tx_state.expected.has_values() {
+                        self.tx_state.expected.result =
+                            Some(expected::validate_against_api(&tx, &self.tx_state.expected));
+                    }
+
                     self.tx_state.fetched_tx = Some(tx);
                 }
                 FetchResult::Error(e) => {

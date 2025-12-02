@@ -2,7 +2,6 @@
 
 use crate::api::{SafeTransaction, TxInput, tx_signing_hashes, check_suspicious_content, get_safe_transaction_async, validate_safe_tx_hash};
 use crate::state::ComputedHashes;
-use crate::validation::{ExpectedTxValues, validate_tx_against_expected};
 use alloy::primitives::{Address, FixedBytes, ChainId, U256, hex};
 use safe_hash::{SafeHashes, SafeWarnings, Mismatch};
 use safe_utils::{Of, SafeWalletVersion};
@@ -147,29 +146,6 @@ pub fn compute_hashes_from_api_tx(
     final_hashes.matches_api = Some(mismatch.is_none());
 
     Ok((final_hashes, mismatch))
-}
-
-/// Validate user-expected values against API transaction
-/// Returns list of mismatches (empty if all match)
-pub fn validate_expected_against_api(
-    tx: &SafeTransaction,
-    expected_to: Option<&str>,
-    expected_value: Option<&str>,
-    expected_data: Option<&str>,
-    expected_operation: Option<u8>,
-) -> Vec<Mismatch> {
-    let expected = ExpectedTxValues {
-        to: expected_to.and_then(|s| s.parse().ok()),
-        value: expected_value.and_then(|s| parse_u256(s).ok()),
-        data: expected_data.map(|s| s.to_string()),
-        operation: expected_operation,
-        ..Default::default()
-    };
-
-    match validate_tx_against_expected(tx, &expected) {
-        Ok(()) => vec![],
-        Err(mismatches) => mismatches,
-    }
 }
 
 fn parse_u256(value: &str) -> Result<U256, String> {

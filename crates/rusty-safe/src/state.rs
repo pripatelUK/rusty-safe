@@ -4,6 +4,7 @@
 //! UI state structs are rusty-safe specific.
 
 use crate::api::SafeTransaction;
+use crate::expected::ExpectedState;
 use safe_hash::SafeWarnings;
 use safe_utils::get_all_supported_chain_names;
 
@@ -35,6 +36,9 @@ pub struct TxVerifyState {
     pub gas_price: String,
     pub gas_token: String,
     pub refund_receiver: String,
+
+    // Expected values for API validation
+    pub expected: ExpectedState,
 
     // Fetched from API
     pub fetched_tx: Option<SafeTransaction>,
@@ -85,6 +89,7 @@ impl Default for TxVerifyState {
             gas_price: "0".to_string(),
             gas_token: "0x0000000000000000000000000000000000000000".to_string(),
             refund_receiver: "0x0000000000000000000000000000000000000000".to_string(),
+            expected: ExpectedState::default(),
             fetched_tx: None,
             hashes: None,
             warnings: SafeWarnings::new(),
@@ -99,6 +104,7 @@ impl TxVerifyState {
         self.fetched_tx = None;
         self.hashes = None;
         self.warnings = SafeWarnings::new();
+        self.expected.clear_result();
         self.error = None;
     }
 }
