@@ -5,9 +5,14 @@
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use eyre::{Result, WrapErr};
 use serde::Deserialize;
 
 const SOURCIFY_API: &str = "https://api.4byte.sourcify.dev/signature-database/v1/lookup";
+
+/// How many requests can fail before we mark the connection as spurious
+const MAX_FAILED_REQUESTS: usize = 3;
 
 /// Log to console (works in both WASM and native)
 macro_rules! debug_log {
@@ -47,10 +52,17 @@ struct SignatureEntry {
     has_verified_contract: Option<bool>,
 }
 
-/// Cached 4byte signature lookup client
+/// Cached 4byte signature lookup client with spurious connection detection
+///
+/// Tracks failed requests and marks the API as unavailable after
+/// `MAX_FAILED_REQUESTS` consecutive failures (timeout, network error, 5xx).
 #[derive(Clone)]
 pub struct SignatureLookup {
     cache: Arc<Mutex<HashMap<String, Vec<String>>>>,
+    /// Whether the API connection appears to be down
+    is_spurious: Arc<AtomicBool>,
+    /// Count of consecutive failed requests
+    failed_count: Arc<AtomicUsize>,
 }
 
 impl Default for SignatureLookup {
@@ -63,11 +75,53 @@ impl SignatureLookup {
     pub fn new() -> Self {
         Self {
             cache: Arc::new(Mutex::new(HashMap::new())),
+            is_spurious: Arc::new(AtomicBool::new(false)),
+            failed_count: Arc::new(AtomicUsize::new(0)),
+        }
+    }
+
+    /// Check if the API appears to be down
+    pub fn is_spurious(&self) -> bool {
+        self.is_spurious.load(Ordering::Relaxed)
+    }
+
+    /// Reset spurious state (e.g., for retry)
+    pub fn reset_spurious(&self) {
+        self.is_spurious.store(false, Ordering::Relaxed);
+        self.failed_count.store(0, Ordering::Relaxed);
+    }
+
+    /// Record a successful request
+    fn on_success(&self) {
+        self.failed_count.store(0, Ordering::Relaxed);
+    }
+
+    /// Record a failed request
+    fn on_failure(&self, err: &reqwest::Error) {
+        // Only count connectivity-type errors (timeout, or server errors)
+        // Note: is_connect() isn't available in WASM, so we check timeout and server errors
+        let is_connectivity_error = err.is_timeout() 
+            || err.status().map_or(false, |s| s.is_server_error())
+            || err.is_request();  // Catch other request-level failures
+        
+        if is_connectivity_error {
+            let count = self.failed_count.fetch_add(1, Ordering::SeqCst) + 1;
+            debug_log!("Request failed ({}/{}): {}", count, MAX_FAILED_REQUESTS, err);
+            if count >= MAX_FAILED_REQUESTS {
+                debug_log!("Marking API as spurious after {} failures", count);
+                self.is_spurious.store(true, Ordering::Relaxed);
+            }
         }
     }
 
     /// Lookup a single selector (checks cache first)
-    pub async fn lookup(&self, selector: &str) -> Result<Vec<String>, String> {
+    pub async fn lookup(&self, selector: &str) -> Result<Vec<String>> {
+        // Short-circuit if API is marked as down
+        if self.is_spurious() {
+            debug_log!("Skipping lookup - API marked as spurious");
+            return Ok(vec![]);
+        }
+
         let selector = normalize_selector(selector);
         debug_log!("Looking up selector: {}", selector);
 
@@ -144,15 +198,21 @@ impl SignatureLookup {
     }
 
     /// Fetch signatures for a selector from Sourcify
-    async fn fetch_single(&self, selector: &str) -> Result<Vec<String>, String> {
+    async fn fetch_single(&self, selector: &str) -> Result<Vec<String>> {
         self.fetch_batch(&[selector.to_string()])
             .await
             .map(|mut map| map.remove(selector).unwrap_or_default())
     }
 
     /// Fetch signatures for multiple selectors in one request
-    async fn fetch_batch(&self, selectors: &[String]) -> Result<HashMap<String, Vec<String>>, String> {
+    async fn fetch_batch(&self, selectors: &[String]) -> Result<HashMap<String, Vec<String>>> {
         if selectors.is_empty() {
+            return Ok(HashMap::new());
+        }
+
+        // Short-circuit if API is marked as down
+        if self.is_spurious() {
+            debug_log!("Skipping batch fetch - API marked as spurious");
             return Ok(HashMap::new());
         }
 
@@ -165,30 +225,38 @@ impl SignatureLookup {
         let url = format!("{}?{}&filter=true", SOURCIFY_API, params.join("&"));
         debug_log!("Fetching: {}", url);
 
-        let response = reqwest::get(&url)
-            .await
-            .map_err(|e| {
-                debug_log!("Network error: {}", e);
-                format!("Network error: {}", e)
-            })?;
+        let response = match reqwest::get(&url).await {
+            Ok(resp) => resp,
+            Err(e) => {
+                self.on_failure(&e);
+                return Err(e).wrap_err("Failed to fetch from Sourcify API");
+            }
+        };
 
         debug_log!("Response status: {}", response.status());
 
         if !response.status().is_success() {
-            return Err(format!("API error: {}", response.status()));
+            // Track server errors as potential spurious connection
+            if response.status().is_server_error() {
+                let count = self.failed_count.fetch_add(1, Ordering::SeqCst) + 1;
+                if count >= MAX_FAILED_REQUESTS {
+                    self.is_spurious.store(true, Ordering::Relaxed);
+                }
+            }
+            eyre::bail!("Sourcify API error: {}", response.status());
         }
 
         let api_response: SourcifyResponse = response
             .json()
             .await
-            .map_err(|e| {
-                debug_log!("Parse error: {}", e);
-                format!("Parse error: {}", e)
-            })?;
+            .wrap_err("Failed to parse Sourcify response")?;
 
         if !api_response.ok {
-            return Err("API returned ok=false".into());
+            eyre::bail!("Sourcify API returned ok=false");
         }
+
+        // Success - reset failure count
+        self.on_success();
 
         // Convert to our format, prioritizing verified signatures
         let mut results = HashMap::new();

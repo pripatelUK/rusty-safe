@@ -635,7 +635,7 @@ impl App {
                 self.tx_state.hashes = Some(hashes);
             }
             Err(e) => {
-                self.tx_state.error = Some(e);
+                self.tx_state.error = Some(format!("{:#}", e));
             }
         }
     }
@@ -718,7 +718,7 @@ impl App {
                 let mut result_guard = result.lock().unwrap();
                 *result_guard = Some(match fetch_result {
                     Ok(tx) => FetchResult::Success(tx),
-                    Err(e) => FetchResult::Error(e),
+                    Err(e) => FetchResult::Error(format!("{:#}", e)),
                 });
                 ctx.request_repaint();
             });
@@ -732,7 +732,7 @@ impl App {
                 let mut result_guard = result.lock().unwrap();
                 *result_guard = Some(match fetch_result {
                     Ok(tx) => FetchResult::Success(tx),
-                    Err(e) => FetchResult::Error(e),
+                    Err(e) => FetchResult::Error(format!("{:#}", e)),
                 });
                 ctx.request_repaint();
             });
@@ -765,7 +765,7 @@ impl App {
                             self.tx_state.hashes = Some(hashes);
                         }
                         Err(e) => {
-                            self.tx_state.error = Some(format!("Hash computation failed: {}", e));
+                            self.tx_state.error = Some(format!("Hash computation failed: {:#}", e));
                         }
                     }
 
@@ -984,8 +984,9 @@ impl App {
         selector: &str,
         data: &str,
     ) -> Result<decode::LocalDecode, String> {
-        // Lookup signatures for selector
-        let signatures = lookup.lookup(selector).await?;
+        // Lookup signatures for selector (convert eyre error to String)
+        let signatures = lookup.lookup(selector).await
+            .map_err(|e| format!("{:#}", e))?;
 
         if signatures.is_empty() {
             return Err("No signatures found for selector".into());

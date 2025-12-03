@@ -3,6 +3,7 @@
 use crate::api::{SafeTransaction, TxInput, tx_signing_hashes, check_suspicious_content, get_safe_transaction_async, validate_safe_tx_hash};
 use crate::state::ComputedHashes;
 use alloy::primitives::{Address, FixedBytes, ChainId, U256, hex};
+use eyre::{Result, WrapErr};
 use safe_hash::{SafeHashes, SafeWarnings, Mismatch};
 use safe_utils::{Of, SafeWalletVersion};
 
@@ -11,14 +12,16 @@ pub async fn fetch_transaction(
     chain_name: &str,
     safe_address: &str,
     nonce: u64,
-) -> Result<SafeTransaction, String> {
+) -> Result<SafeTransaction> {
     let chain_id = ChainId::of(chain_name)
-        .map_err(|e| format!("Invalid chain '{}': {}", chain_name, e))?;
+        .map_err(|e| eyre::eyre!("Invalid chain '{}': {}", chain_name, e))?;
     
     let addr: Address = safe_address.trim().parse()
-        .map_err(|e| format!("Invalid Safe address: {}", e))?;
+        .wrap_err("Invalid Safe address")?;
     
-    get_safe_transaction_async(chain_id, addr, nonce).await
+    get_safe_transaction_async(chain_id, addr, nonce)
+        .await
+        .map_err(|e| eyre::eyre!(e))
 }
 
 /// Compute hashes for a transaction using safe_hash::tx_signing_hashes
@@ -36,38 +39,38 @@ pub fn compute_hashes(
     gas_token: &str,
     refund_receiver: &str,
     nonce: &str,
-) -> Result<ComputedHashes, String> {
+) -> Result<ComputedHashes> {
     let chain_id = ChainId::of(chain_name)
-        .map_err(|e| format!("Invalid chain '{}': {}", chain_name, e))?;
+        .map_err(|e| eyre::eyre!("Invalid chain '{}': {}", chain_name, e))?;
 
     let safe_version = SafeWalletVersion::parse(version)
-        .map_err(|e| format!("Invalid version: {}", e))?;
+        .map_err(|e| eyre::eyre!("Invalid Safe version '{}': {}", version, e))?;
 
     let safe_addr: Address = safe_address
         .trim()
         .parse()
-        .map_err(|e| format!("Invalid Safe address: {}", e))?;
+        .wrap_err("Invalid Safe address")?;
 
     let to_addr: Address = to
         .trim()
         .parse()
-        .map_err(|e| format!("Invalid 'to' address: {}", e))?;
+        .wrap_err("Invalid 'to' address")?;
 
-    let value_u256 = parse_u256(value)?;
-    let safe_tx_gas_u256 = parse_u256(safe_tx_gas)?;
-    let base_gas_u256 = parse_u256(base_gas)?;
-    let gas_price_u256 = parse_u256(gas_price)?;
-    let nonce_u64: u64 = nonce.trim().parse().map_err(|e| format!("Invalid nonce: {}", e))?;
+    let value_u256 = parse_u256(value).wrap_err("Invalid value")?;
+    let safe_tx_gas_u256 = parse_u256(safe_tx_gas).wrap_err("Invalid safeTxGas")?;
+    let base_gas_u256 = parse_u256(base_gas).wrap_err("Invalid baseGas")?;
+    let gas_price_u256 = parse_u256(gas_price).wrap_err("Invalid gasPrice")?;
+    let nonce_u64: u64 = nonce.trim().parse().wrap_err("Invalid nonce")?;
 
     let gas_token_addr: Address = gas_token
         .trim()
         .parse()
-        .map_err(|e| format!("Invalid gas token address: {}", e))?;
+        .wrap_err("Invalid gas token address")?;
 
     let refund_receiver_addr: Address = refund_receiver
         .trim()
         .parse()
-        .map_err(|e| format!("Invalid refund receiver address: {}", e))?;
+        .wrap_err("Invalid refund receiver address")?;
 
     // Normalize data - remove 0x prefix if present
     let data_normalized = data.strip_prefix("0x").unwrap_or(data);
@@ -115,7 +118,7 @@ pub fn compute_hashes_from_api_tx(
     safe_address: &str,
     version: &str,
     tx: &SafeTransaction,
-) -> Result<(ComputedHashes, Option<Mismatch>), String> {
+) -> Result<(ComputedHashes, Option<Mismatch>)> {
     let hashes = compute_hashes(
         chain_name,
         safe_address,
@@ -134,7 +137,7 @@ pub fn compute_hashes_from_api_tx(
 
     // Use validate_safe_tx_hash from safe-hash
     let computed_hash_bytes = hex::decode(hashes.safe_tx_hash.strip_prefix("0x").unwrap_or(&hashes.safe_tx_hash))
-        .map_err(|e| format!("Failed to decode computed hash: {}", e))?;
+        .wrap_err("Failed to decode computed hash")?;
     let computed_fixed: FixedBytes<32> = FixedBytes::from_slice(&computed_hash_bytes);
     
     let mismatch = match validate_safe_tx_hash(tx, &computed_fixed) {
@@ -148,18 +151,18 @@ pub fn compute_hashes_from_api_tx(
     Ok((final_hashes, mismatch))
 }
 
-fn parse_u256(value: &str) -> Result<U256, String> {
+fn parse_u256(value: &str) -> Result<U256> {
     let value = value.trim();
     if value.is_empty() || value == "0" {
         return Ok(U256::ZERO);
     }
     if value.starts_with("0x") || value.starts_with("0X") {
         U256::from_str_radix(&value[2..], 16)
-            .map_err(|e| format!("Invalid hex value '{}': {}", value, e))
+            .wrap_err_with(|| format!("Invalid hex value '{}'", value))
     } else {
         value
             .parse()
-            .map_err(|e| format!("Invalid value '{}': {}", value, e))
+            .wrap_err_with(|| format!("Invalid value '{}'", value))
     }
 }
 

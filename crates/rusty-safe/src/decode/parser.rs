@@ -6,6 +6,7 @@
 use alloy::dyn_abi::JsonAbiExt;
 use alloy::json_abi::Function;
 use alloy::primitives::{hex, U256};
+use eyre::{Result, WrapErr};
 
 use super::types::*;
 use crate::api::DataDecoded;
@@ -94,7 +95,7 @@ fn convert_api_decode(decoded: &DataDecoded) -> ApiDecode {
 fn parse_multisend(
     raw_data: &str,
     api_decoded: Option<&DataDecoded>,
-) -> Result<MultiSendDecode, String> {
+) -> Result<MultiSendDecode> {
     // Decode the outer multiSend(bytes) call
     let bytes_data = decode_multisend_bytes(raw_data)?;
 
@@ -119,47 +120,41 @@ fn parse_multisend(
 }
 
 /// Decode multiSend(bytes) ABI encoding to get the packed bytes
-fn decode_multisend_bytes(raw_data: &str) -> Result<Vec<u8>, String> {
+fn decode_multisend_bytes(raw_data: &str) -> Result<Vec<u8>> {
     // Skip selector (4 bytes = 8 hex chars + 2 for "0x")
     let encoded = raw_data
         .strip_prefix("0x")
         .unwrap_or(raw_data)
         .get(8..)
-        .ok_or("Data too short")?;
+        .ok_or_else(|| eyre::eyre!("Data too short"))?;
 
-    let bytes = hex::decode(encoded).map_err(|e| format!("Hex decode error: {}", e))?;
+    let bytes = hex::decode(encoded).wrap_err("Failed to decode hex")?;
 
     // ABI decode: bytes is (offset, length, data)
     // offset is at position 0 (32 bytes)
     // length is at offset position (32 bytes)
     // data follows
 
-    if bytes.len() < 64 {
-        return Err("Data too short for ABI bytes".into());
-    }
+    eyre::ensure!(bytes.len() >= 64, "Data too short for ABI bytes");
 
     // Read offset (should be 32 = 0x20)
     let offset = U256::from_be_slice(&bytes[0..32]);
     let offset_usize = offset.to::<usize>();
 
-    if offset_usize + 32 > bytes.len() {
-        return Err("Invalid offset".into());
-    }
+    eyre::ensure!(offset_usize + 32 <= bytes.len(), "Invalid offset");
 
     // Read length
     let length = U256::from_be_slice(&bytes[offset_usize..offset_usize + 32]);
     let length_usize = length.to::<usize>();
 
     let data_start = offset_usize + 32;
-    if data_start + length_usize > bytes.len() {
-        return Err("Invalid length".into());
-    }
+    eyre::ensure!(data_start + length_usize <= bytes.len(), "Invalid length");
 
     Ok(bytes[data_start..data_start + length_usize].to_vec())
 }
 
 /// Unpack MultiSend packed transactions
-fn unpack_multisend_transactions(packed: &[u8]) -> Result<Vec<MultiSendTx>, String> {
+fn unpack_multisend_transactions(packed: &[u8]) -> Result<Vec<MultiSendTx>> {
     let mut transactions = Vec::new();
     let mut offset = 0;
 
@@ -172,31 +167,35 @@ fn unpack_multisend_transactions(packed: &[u8]) -> Result<Vec<MultiSendTx>, Stri
         offset += 1;
 
         // to: 20 bytes
-        if offset + 20 > packed.len() {
-            return Err("Incomplete transaction: missing 'to' address".into());
-        }
+        eyre::ensure!(
+            offset + 20 <= packed.len(),
+            "Incomplete transaction: missing 'to' address"
+        );
         let to = format!("0x{}", hex::encode(&packed[offset..offset + 20]));
         offset += 20;
 
         // value: 32 bytes
-        if offset + 32 > packed.len() {
-            return Err("Incomplete transaction: missing 'value'".into());
-        }
+        eyre::ensure!(
+            offset + 32 <= packed.len(),
+            "Incomplete transaction: missing 'value'"
+        );
         let value = U256::from_be_slice(&packed[offset..offset + 32]);
         offset += 32;
 
         // dataLength: 32 bytes
-        if offset + 32 > packed.len() {
-            return Err("Incomplete transaction: missing 'dataLength'".into());
-        }
+        eyre::ensure!(
+            offset + 32 <= packed.len(),
+            "Incomplete transaction: missing 'dataLength'"
+        );
         let data_length = U256::from_be_slice(&packed[offset..offset + 32]);
         let data_length_usize = data_length.to::<usize>();
         offset += 32;
 
         // data: dataLength bytes
-        if offset + data_length_usize > packed.len() {
-            return Err("Incomplete transaction: missing 'data'".into());
-        }
+        eyre::ensure!(
+            offset + data_length_usize <= packed.len(),
+            "Incomplete transaction: missing 'data'"
+        );
         let data = if data_length_usize > 0 {
             format!("0x{}", hex::encode(&packed[offset..offset + data_length_usize]))
         } else {
@@ -240,23 +239,24 @@ macro_rules! decode_log {
 pub fn decode_with_signature(
     data: &str,
     signature: &str,
-) -> Result<LocalDecode, String> {
+) -> Result<LocalDecode> {
     decode_log!("Decoding with signature: {}", signature);
 
     // Parse function signature using alloy-json-abi (same as Foundry)
     let func = Function::parse(signature)
-        .map_err(|e| format!("Invalid signature '{}': {}", signature, e))?;
+        .wrap_err_with(|| format!("Invalid signature '{}'", signature))?;
 
     decode_log!("Parsed function: {} with {} inputs", func.name, func.inputs.len());
 
     // Decode the calldata bytes
     let data_bytes = hex::decode(data.strip_prefix("0x").unwrap_or(data))
-        .map_err(|e| format!("Hex decode error: {}", e))?;
+        .wrap_err("Failed to decode hex calldata")?;
 
     // Need at least 4 bytes for selector
-    if data_bytes.len() < 4 {
-        return Err("Data too short (need at least 4 bytes for selector)".into());
-    }
+    eyre::ensure!(
+        data_bytes.len() >= 4,
+        "Data too short (need at least 4 bytes for selector)"
+    );
 
     // Empty params case
     if data_bytes.len() == 4 && func.inputs.is_empty() {
@@ -270,12 +270,13 @@ pub fn decode_with_signature(
     // Use Function::abi_decode_input which handles the selector automatically
     let decoded = func
         .abi_decode_input(&data_bytes[4..], true)
-        .map_err(|e| format!("ABI decode failed for '{}': {}", signature, e))?;
+        .wrap_err_with(|| format!("ABI decode failed for '{}'", signature))?;
 
     // Ensure we decoded something (same check as Foundry)
-    if decoded.is_empty() && !func.inputs.is_empty() {
-        return Err("No data was decoded".into());
-    }
+    eyre::ensure!(
+        !decoded.is_empty() || func.inputs.is_empty(),
+        "No data was decoded"
+    );
 
     // Build params with type info from the function definition
     let params = decoded
