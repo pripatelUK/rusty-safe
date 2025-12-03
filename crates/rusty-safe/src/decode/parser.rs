@@ -336,7 +336,12 @@ fn format_value(val: &alloy::dyn_abi::DynSolValue) -> String {
         DynSolValue::Bool(b) => b.to_string(),
         DynSolValue::Int(i, _) => i.to_string(),
         DynSolValue::Uint(u, _) => u.to_string(),
-        DynSolValue::FixedBytes(b, _) => format!("0x{}", hex::encode(b)),
+        // FixedBytes: word is 32 bytes, size is actual length (e.g., 4 for bytes4)
+        // bytesN is right-padded, so take first `size` bytes
+        DynSolValue::FixedBytes(word, size) => {
+            let bytes = word.as_slice();
+            format!("0x{}", hex::encode(&bytes[..*size]))
+        }
         DynSolValue::Address(a) => format!("{}", a),
         DynSolValue::Function(f) => format!("0x{}", hex::encode(f)),
         DynSolValue::Bytes(b) => format!("0x{}", hex::encode(b)),
