@@ -1,0 +1,10 @@
+[build]
+# Use release mode for smaller WASM binary
+release = true
+# Disable minification (requires additional tools)
+minify = "never"
+
+[watch]
+# Use debug for faster iteration during development
+release = false
+
