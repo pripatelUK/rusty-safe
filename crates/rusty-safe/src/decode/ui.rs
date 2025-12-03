@@ -132,7 +132,7 @@ fn render_params_rows(ui: &mut egui::Ui, decode: &SingleDecode) {
             let label = format!("{} ({}):", ap.name, ap.typ);
             ui.vertical(|ui| {
                 ui.label(egui::RichText::new(label).weak().small());
-                let value_text = egui::RichText::new(truncate_value(&ap.value, 40)).monospace();
+                let value_text = egui::RichText::new(&ap.value).monospace().small();
                 if has_mismatch {
                     ui.label(value_text.color(egui::Color32::from_rgb(220, 80, 80)));
                 } else {
@@ -148,7 +148,7 @@ fn render_params_rows(ui: &mut egui::Ui, decode: &SingleDecode) {
             let label = format!("param{} ({}):", i, lp.typ);
             ui.vertical(|ui| {
                 ui.label(egui::RichText::new(label).weak().small());
-                let value_text = egui::RichText::new(truncate_value(&lp.value, 40)).monospace();
+                let value_text = egui::RichText::new(&lp.value).monospace().small();
                 if has_mismatch {
                     ui.label(value_text.color(egui::Color32::from_rgb(100, 200, 100)));
                 } else {
@@ -205,7 +205,7 @@ fn render_multisend_tx(
         "#{} {} → {} ({})",
         tx.index + 1,
         status_emoji,
-        truncate_address(&tx.to),
+        &tx.to,
         if tx.value == "0" {
             "0 ETH".to_string()
         } else {
@@ -358,25 +358,16 @@ fn render_comparison_message(ui: &mut egui::Ui, result: &ComparisonResult) {
 
 /// Render raw calldata
 fn render_raw_data(ui: &mut egui::Ui, data: &str) {
-    let display = truncate_value(data, 66);
-    ui.label(egui::RichText::new(display).monospace().small());
-}
-
-/// Truncate a value for display
-fn truncate_value(value: &str, max_len: usize) -> String {
-    if value.len() <= max_len {
-        value.to_string()
+    // Use a scrollable area for long data, show full value
+    if data.len() > 100 {
+        egui::ScrollArea::horizontal()
+            .max_width(400.0)
+            .show(ui, |ui| {
+                ui.label(egui::RichText::new(data).monospace().small());
+            });
     } else {
-        format!("{}...", &value[..max_len])
+        ui.label(egui::RichText::new(data).monospace().small());
     }
 }
 
-/// Truncate address for display
-fn truncate_address(addr: &str) -> String {
-    if addr.len() >= 42 {
-        format!("{}...{}", &addr[..6], &addr[addr.len() - 4..])
-    } else {
-        addr.to_string()
-    }
-}
 

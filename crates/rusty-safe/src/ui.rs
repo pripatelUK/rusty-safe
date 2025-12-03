@@ -21,7 +21,7 @@ pub fn labeled_field_with_copy(ui: &mut egui::Ui, label: &str, value: &str) -> b
     let mut copied = false;
     ui.horizontal(|ui| {
         ui.label(egui::RichText::new(format!("{}:", label)).strong());
-        ui.label(truncate_hash(value, 20));
+        ui.label(egui::RichText::new(value).monospace());
         if ui.small_button("📋").on_hover_text("Copy to clipboard").clicked() {
             copied = true;
         }
@@ -46,15 +46,6 @@ pub fn copy_to_clipboard(text: &str) {
     }
 }
 
-/// Truncate a hash for display
-pub fn truncate_hash(hash: &str, max_len: usize) -> String {
-    if hash.len() <= max_len {
-        hash.to_string()
-    } else {
-        let half = (max_len - 3) / 2;
-        format!("{}...{}", &hash[..half + 2], &hash[hash.len() - half..])
-    }
-}
 
 /// Create a styled text edit for address input
 pub fn address_input(ui: &mut egui::Ui, value: &mut String) -> egui::Response {

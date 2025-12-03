@@ -202,8 +202,8 @@ pub fn validate_against_api(api_tx: &SafeTransaction, state: &ExpectedState) -> 
         if expected_data != api_data {
             mismatches.push(Mismatch {
                 field: "data".to_string(),
-                api_value: truncate_for_display(&api_tx.data, 40),
-                user_value: truncate_for_display(&state.data, 40),
+                api_value: api_tx.data.clone(),
+                user_value: state.data.clone(),
             });
         }
     }
@@ -259,11 +259,4 @@ fn op_to_string(op: u8) -> String {
     }
 }
 
-fn truncate_for_display(s: &str, max_len: usize) -> String {
-    if s.len() <= max_len {
-        s.to_string()
-    } else {
-        format!("{}...", &s[..max_len])
-    }
-}
 
