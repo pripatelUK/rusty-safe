@@ -80,14 +80,15 @@ fn normalize_value(value: &str, typ: &str) -> String {
         return normalize_address(value);
     }
 
+    // Integers: parse and compare numerically (must come before bytes check
+    // because uint256 values can be hex like "0x3e8")
+    if typ.contains("int") {
+        return normalize_int(value);
+    }
+
     // Bytes/hex: lowercase, ensure 0x prefix
     if typ.contains("bytes") || value.starts_with("0x") || value.starts_with("0X") {
         return normalize_hex(value);
-    }
-
-    // Integers: parse and compare numerically
-    if typ.contains("int") {
-        return normalize_int(value);
     }
 
     // Bool: normalize to lowercase
