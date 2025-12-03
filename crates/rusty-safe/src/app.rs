@@ -298,14 +298,34 @@ impl App {
 
                     ui.label("Data:");
                     let data = &tx.data;
-                    let data_display = if data.len() > 66 {
-                        format!("{}...", &data[..66])
-                    } else if data.is_empty() || data == "0x" {
-                        "0x (empty)".to_string()
+                    if data.is_empty() || data == "0x" {
+                        ui.label(egui::RichText::new("0x (empty)").monospace());
+                    } else if data.len() > 66 {
+                        // Long data - show preview with toggle
+                        ui.vertical(|ui| {
+                            if self.tx_state.show_full_data {
+                                // Show full data with word wrap
+                                let wrapped = data.chars()
+                                    .collect::<Vec<_>>()
+                                    .chunks(64)
+                                    .map(|c| c.iter().collect::<String>())
+                                    .collect::<Vec<_>>()
+                                    .join("\n");
+                                ui.label(egui::RichText::new(&wrapped).monospace().small());
+                                if ui.small_button("▲ Show less").clicked() {
+                                    self.tx_state.show_full_data = false;
+                                }
+                            } else {
+                                // Show preview
+                                ui.label(egui::RichText::new(format!("{}...", &data[..66])).monospace());
+                                if ui.small_button("▼ Show more").clicked() {
+                                    self.tx_state.show_full_data = true;
+                                }
+                            }
+                        });
                     } else {
-                        data.clone()
-                    };
-                    ui.label(egui::RichText::new(data_display).monospace());
+                        ui.label(egui::RichText::new(data).monospace());
+                    }
                     ui.end_row();
 
                     ui.label("Operation:");
@@ -848,7 +868,7 @@ impl App {
                                         params: dd.parameters.iter().map(|p| decode::ApiParam {
                                             name: p.name.clone(),
                                             typ: p.r#type.clone(),
-                                            value: p.value.clone(),
+                                            value: p.value_as_string(),
                                         }).collect(),
                                     });
 

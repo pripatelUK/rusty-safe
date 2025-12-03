@@ -44,6 +44,9 @@ pub struct TxVerifyState {
     // Calldata decode state
     pub decode: Option<DecodedTransaction>,
 
+    // UI toggle for showing full data
+    pub show_full_data: bool,
+
     // Fetched from API
     pub fetched_tx: Option<SafeTransaction>,
 
@@ -95,6 +98,7 @@ impl Default for TxVerifyState {
             refund_receiver: "0x0000000000000000000000000000000000000000".to_string(),
             expected: ExpectedState::default(),
             decode: None,
+            show_full_data: false,
             fetched_tx: None,
             hashes: None,
             warnings: SafeWarnings::new(),

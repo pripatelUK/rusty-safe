@@ -80,7 +80,7 @@ fn convert_api_decode(decoded: &DataDecoded) -> ApiDecode {
             .map(|p| ApiParam {
                 name: p.name.clone(),
                 typ: p.r#type.clone(),
-                value: p.value.clone(),
+                value: p.value_as_string(),
             })
             .collect(),
     }
@@ -215,11 +215,27 @@ fn unpack_multisend_transactions(packed: &[u8]) -> Result<Vec<MultiSendTx>, Stri
     Ok(transactions)
 }
 
+/// Log to console (works in both WASM and native)
+macro_rules! decode_log {
+    ($($arg:tt)*) => {
+        #[cfg(target_arch = "wasm32")]
+        {
+            web_sys::console::log_1(&format!($($arg)*).into());
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            eprintln!("[decode] {}", format!($($arg)*));
+        }
+    };
+}
+
 /// Decode calldata using a function signature
 pub fn decode_with_signature(
     data: &str,
     signature: &str,
 ) -> Result<LocalDecode, String> {
+    decode_log!("Decoding with signature: {}", signature);
+
     // Parse method name from signature
     let method = signature
         .split('(')
@@ -228,7 +244,16 @@ pub fn decode_with_signature(
         .to_string();
 
     // Parse parameter types from signature
-    let types = parse_signature_types(signature)?;
+    let types = match parse_signature_types(signature) {
+        Ok(t) => {
+            decode_log!("Parsed {} types: {:?}", t.len(), t);
+            t
+        }
+        Err(e) => {
+            decode_log!("Failed to parse signature types: {}", e);
+            return Err(e);
+        }
+    };
 
     // Skip selector (first 4 bytes = 8 hex chars)
     let data_normalized = data.strip_prefix("0x").unwrap_or(data);
@@ -247,14 +272,22 @@ pub fn decode_with_signature(
     }
 
     let params_bytes = hex::decode(params_hex).map_err(|e| format!("Hex decode: {}", e))?;
+    decode_log!("Params bytes length: {}", params_bytes.len());
 
     // Build tuple type for decoding
     let tuple_type = DynSolType::Tuple(types.clone());
 
-    // Decode
+    // Try abi_decode_params first (handles function params encoding)
+    // Fall back to abi_decode if that fails
     let decoded = tuple_type
-        .abi_decode(&params_bytes)
-        .map_err(|e| format!("ABI decode failed: {}", e))?;
+        .abi_decode_params(&params_bytes)
+        .or_else(|e1| {
+            decode_log!("abi_decode_params failed, trying abi_decode: {}", e1);
+            tuple_type.abi_decode(&params_bytes).map_err(|e2| {
+                decode_log!("Both decode methods failed for '{}': params={}, decode={}", signature, e1, e2);
+                format!("ABI decode failed: {} / {}", e1, e2)
+            })
+        })?;
 
     // Extract values
     let params = match decoded {
@@ -391,6 +424,33 @@ mod tests {
     fn test_get_selector() {
         assert_eq!(get_selector("0xa9059cbb1234"), "0xa9059cbb");
         assert_eq!(get_selector("a9059cbb1234"), "0xa9059cbb");
+    }
+
+    #[test]
+    fn test_decode_scope_function() {
+        let sig = "scopeFunction(uint16,address,bytes4,bool[],uint8[],uint8[],bytes[],uint8)";
+        let data = "0x33a0480c000000000000000000000000000000000000000000000000000000000000000100000000000000000000000068b3465833fb72a70ecdf485e0e4c7bd8665fc45472b43f300000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000001a0000000000000000000000000000000000000000000000000000000000000024000000000000000000000000000000000000000000000000000000000000002e000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000004000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000040000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000400000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000004000000000000000000000000000000000000000000000000000000000000008000000000000000000000000000000000000000000000000000000000000000a000000000000000000000000000000000000000000000000000000000000000c000000000000000000000000000000000000000000000000000000000000000e000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000200000000000000000000000004f2083f5fbede34c2714affb3105539775f7fe64";
+
+        // First verify signature parsing works
+        let types = parse_signature_types(sig).unwrap();
+        assert_eq!(types.len(), 8, "Should have 8 params");
+        println!("Types parsed: {:?}", types);
+
+        // Now try decoding
+        let result = decode_with_signature(data, sig);
+        match result {
+            Ok(decoded) => {
+                println!("Decoded successfully!");
+                println!("Method: {}", decoded.method);
+                for (i, p) in decoded.params.iter().enumerate() {
+                    println!("  Param {}: {} = {}", i, p.typ, p.value);
+                }
+                assert_eq!(decoded.params.len(), 8, "Should decode 8 params");
+            }
+            Err(e) => {
+                panic!("Failed to decode: {}", e);
+            }
+        }
     }
 }
 
