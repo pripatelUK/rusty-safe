@@ -78,11 +78,25 @@ pub enum Tab {
 impl App {
     /// Create a new App instance
     pub fn new(_cc: &eframe::CreationContext<'_>) -> Self {
+        // Load cached Safe address from LocalStorage
+        let cached_address = crate::state::load_cached_safe_address().unwrap_or_default();
+        
+        let mut tx_state = TxVerifyState::default();
+        let mut msg_state = MsgVerifyState::default();
+        let mut eip712_state = Eip712State::default();
+        
+        // Apply cached address to all states
+        if !cached_address.is_empty() {
+            tx_state.safe_address = cached_address.clone();
+            msg_state.safe_address = cached_address.clone();
+            eip712_state.safe_address = cached_address;
+        }
+        
         Self {
             active_tab: Tab::default(),
-            tx_state: TxVerifyState::default(),
-            msg_state: MsgVerifyState::default(),
-            eip712_state: Eip712State::default(),
+            tx_state,
+            msg_state,
+            eip712_state,
             chain_names: get_all_supported_chain_names(),
             fetch_result: Arc::new(Mutex::new(None)),
             signature_lookup: SignatureLookup::new(),
@@ -175,7 +189,11 @@ impl App {
 
         ui.horizontal(|ui| {
             ui.label("Safe Address:");
-            ui::address_input(ui, &mut self.tx_state.safe_address);
+            let response = ui::address_input(ui, &mut self.tx_state.safe_address);
+            // Cache address when it loses focus or user presses enter
+            if response.lost_focus() || response.changed() {
+                crate::state::save_safe_address(&self.tx_state.safe_address);
+            }
         });
 
         ui.add_space(5.0);
@@ -458,7 +476,10 @@ impl App {
 
         ui.horizontal(|ui| {
             ui.label("Safe Address:");
-            ui::address_input(ui, &mut self.msg_state.safe_address);
+            let response = ui::address_input(ui, &mut self.msg_state.safe_address);
+            if response.lost_focus() || response.changed() {
+                crate::state::save_safe_address(&self.msg_state.safe_address);
+            }
         });
 
         ui.add_space(10.0);
@@ -562,7 +583,10 @@ impl App {
 
         ui.horizontal(|ui| {
             ui.label("Safe Address:");
-            ui::address_input(ui, &mut self.eip712_state.safe_address);
+            let response = ui::address_input(ui, &mut self.eip712_state.safe_address);
+            if response.lost_focus() || response.changed() {
+                crate::state::save_safe_address(&self.eip712_state.safe_address);
+            }
         });
 
         ui.add_space(10.0);

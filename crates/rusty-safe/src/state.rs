@@ -9,6 +9,37 @@ use crate::expected::ExpectedState;
 use safe_hash::SafeWarnings;
 use safe_utils::get_all_supported_chain_names;
 
+/// LocalStorage key for cached Safe address
+const SAFE_ADDRESS_KEY: &str = "rusty-safe-address-v1";
+
+/// Load cached Safe address from LocalStorage (WASM only)
+#[cfg(target_arch = "wasm32")]
+pub fn load_cached_safe_address() -> Option<String> {
+    use gloo_storage::{LocalStorage, Storage};
+    LocalStorage::get::<String>(SAFE_ADDRESS_KEY).ok().filter(|s| !s.is_empty())
+}
+
+/// Load cached Safe address - returns None on native
+#[cfg(not(target_arch = "wasm32"))]
+pub fn load_cached_safe_address() -> Option<String> {
+    None
+}
+
+/// Save Safe address to LocalStorage (WASM only)
+#[cfg(target_arch = "wasm32")]
+pub fn save_safe_address(address: &str) {
+    use gloo_storage::{LocalStorage, Storage};
+    if !address.is_empty() {
+        let _ = LocalStorage::set(SAFE_ADDRESS_KEY, address);
+    }
+}
+
+/// Save Safe address - no-op on native
+#[cfg(not(target_arch = "wasm32"))]
+pub fn save_safe_address(_address: &str) {
+    // No-op
+}
+
 /// Safe versions supported
 pub const SAFE_VERSIONS: &[&str] = &[
     "1.4.1", "1.4.0", "1.3.0", "1.2.0", "1.1.1", "1.1.0", "1.0.0",
