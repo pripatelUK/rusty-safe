@@ -273,7 +273,7 @@ impl App {
                 for (i, module) in info.modules.iter().enumerate() {
                     ui.horizontal(|ui| {
                         ui.add_space(120.0);
-                        ui.label(egui::RichText::new(format!("  {}. {:?}", i + 1, module)).monospace().small());
+                        ui.label(egui::RichText::new(format!("{:?}", module)).monospace().small());
                     });
                 }
             }

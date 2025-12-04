@@ -287,13 +287,10 @@ impl SignatureLookup {
             return Ok(HashMap::new());
         }
 
-        // Build URL with function params (can have multiple)
-        // e.g., ?function=0xa9059cbb&function=0x095ea7b3&filter=true
-        let params: Vec<String> = selectors
-            .iter()
-            .map(|s| format!("function={}", s))
-            .collect();
-        let url = format!("{}?{}&filter=true", SOURCIFY_API, params.join("&"));
+        // Build URL with comma-delimited selectors
+        // e.g., ?function=0xa9059cbb,0x095ea7b3&filter=true
+        let selectors_csv: String = selectors.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(",");
+        let url = format!("{}?function={}&filter=true", SOURCIFY_API, selectors_csv);
         debug_log!("Fetching: {}", url);
 
         let response = match reqwest::get(&url).await {
