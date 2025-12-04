@@ -99,20 +99,35 @@ fn parse_multisend(
     // Decode the outer multiSend(bytes) call
     let bytes_data = decode_multisend_bytes(raw_data)?;
 
-    // Get nested decodes from API if available (used later for comparison)
-    let _api_nested_count = api_decoded
+    // Get nested decodes from API if available
+    let api_nested_decodes: Vec<Option<ApiDecode>> = api_decoded
         .and_then(|d| d.parameters.first())
         .and_then(|p| p.value_decoded.as_ref())
         .and_then(|v| v.as_array())
-        .map(|arr| arr.len())
-        .unwrap_or(0);
+        .map(|arr| {
+            arr.iter()
+                .map(|item| {
+                    // Each item has dataDecoded which contains method + params
+                    item.get("dataDecoded")
+                        .and_then(|dd| serde_json::from_value::<DataDecoded>(dd.clone()).ok())
+                        .map(|d| convert_api_decode(&d))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
 
-    // Parse packed transactions
-    let transactions = unpack_multisend_transactions(&bytes_data)?;
+    // Parse packed transactions and attach API decodes
+    let mut transactions = unpack_multisend_transactions(&bytes_data)?;
+    
+    // Attach API decode data to each transaction
+    for (i, tx) in transactions.iter_mut().enumerate() {
+        tx.api_decode = api_nested_decodes.get(i).cloned().flatten();
+    }
 
     let mut multi = MultiSendDecode {
         transactions,
         summary: MultiSendSummary::default(),
+        verification_state: VerificationState::Pending,
     };
     multi.summary.update(&multi.transactions);
 
@@ -209,9 +224,9 @@ fn unpack_multisend_transactions(packed: &[u8]) -> Result<Vec<MultiSendTx>> {
             to,
             value: value.to_string(),
             data,
+            api_decode: None, // Will be filled in by parse_multisend
             decode: None,
             is_expanded: false,
-            is_loading: false,
         });
     }
 

@@ -41,9 +41,8 @@ pub enum DecodeResult {
         selector: String,
         local_decode: Result<decode::LocalDecode, String>,
     },
-    MultiSendTx {
-        index: usize,
-        local_decode: Result<decode::LocalDecode, String>,
+    MultiSendBulk {
+        multi: decode::MultiSendDecode,
     },
 }
 
@@ -97,7 +96,7 @@ impl eframe::App for App {
         ctx.set_visuals(egui::Visuals::dark());
 
         // Check for async fetch results
-        self.check_fetch_result();
+        self.check_fetch_result(ctx);
 
         // Check for async decode results
         self.check_decode_result();
@@ -345,16 +344,7 @@ impl App {
             if let Some(decode_state) = &mut self.tx_state.decode {
                 ui.add_space(15.0);
                 ui::section_header(ui, "Calldata Verification");
-
-                let mut expand_index = None;
-                decode::render_decode_section(ui, decode_state, &mut |idx| {
-                    expand_index = Some(idx);
-                });
-
-                // Handle expand request for MultiSend
-                if let Some(idx) = expand_index {
-                    self.trigger_multisend_decode(idx, ctx);
-                }
+                decode::render_decode_section(ui, decode_state);
             }
         }
 
@@ -739,7 +729,7 @@ impl App {
         }
     }
 
-    fn check_fetch_result(&mut self) {
+    fn check_fetch_result(&mut self, ctx: &egui::Context) {
         let result = {
             let mut guard = self.fetch_result.lock().unwrap();
             guard.take()
@@ -791,13 +781,39 @@ impl App {
                         },
                         decode_state.selector
                     );
+                    // Determine what verification to trigger
+                    let verification_action = match &decode_state.kind {
+                        TransactionKind::Single(_) if !decode_state.selector.is_empty() => {
+                            Some(("single", decode_state.selector.clone(), tx.data.clone(), 0))
+                        }
+                        TransactionKind::MultiSend(multi) => {
+                            Some(("multi", String::new(), String::new(), multi.transactions.len()))
+                        }
+                        _ => None,
+                    };
+
                     self.tx_state.decode = Some(decode_state);
 
-                    // Trigger 4byte lookup for single calls
-                    if let Some(ref decode) = self.tx_state.decode {
-                        if matches!(&decode.kind, TransactionKind::Single(_)) && !decode.selector.is_empty() {
-                            debug_log!("Triggering 4byte lookup for selector: {}", decode.selector);
-                            self.trigger_decode_lookup(&decode.selector, &tx.data);
+                    // Trigger verification based on transaction type
+                    if let Some((kind, selector, data, tx_count)) = verification_action {
+                        match kind {
+                            "single" => {
+                                debug_log!("Triggering 4byte lookup for selector: {}", selector);
+                                self.trigger_decode_lookup(&selector, &data);
+                            }
+                            "multi" => {
+                                debug_log!("Triggering bulk verification for {} transactions", tx_count);
+                                // Update verification state
+                                if let Some(ref mut decode) = self.tx_state.decode {
+                                    if let TransactionKind::MultiSend(ref mut multi) = decode.kind {
+                                        multi.verification_state = decode::VerificationState::InProgress { 
+                                            total: tx_count 
+                                        };
+                                    }
+                                }
+                                self.trigger_multisend_bulk_verify(ctx);
+                            }
+                            _ => {}
                         }
                     }
 
@@ -849,44 +865,23 @@ impl App {
                         }
                     }
                 }
-                DecodeResult::MultiSendTx { index, local_decode } => {
+                DecodeResult::MultiSendBulk { multi: verified_multi } => {
+                    debug_log!("Received bulk MultiSend verification result");
                     if let Some(ref mut decode) = self.tx_state.decode {
                         if let TransactionKind::MultiSend(ref mut multi) = decode.kind {
-                            if let Some(tx) = multi.transactions.get_mut(index) {
-                                tx.is_loading = false;
-
-                                let api_decode = self.tx_state.fetched_tx.as_ref()
-                                    .and_then(|t| t.data_decoded.as_ref())
-                                    .and_then(|d| d.parameters.first())
-                                    .and_then(|p| p.value_decoded.as_ref())
-                                    .and_then(|v| v.as_array())
-                                    .and_then(|arr| arr.get(index))
-                                    .and_then(|item| item.get("dataDecoded"))
-                                    .and_then(|dd| serde_json::from_value::<crate::api::DataDecoded>(dd.clone()).ok())
-                                    .map(|dd| decode::ApiDecode {
-                                        method: dd.method,
-                                        params: dd.parameters.iter().map(|p| decode::ApiParam {
-                                            name: p.name.clone(),
-                                            typ: p.r#type.clone(),
-                                            value: p.value_as_string(),
-                                        }).collect(),
-                                    });
-
-                                let local = local_decode.ok();
-                                let comparison = decode::compare_decodes(
-                                    api_decode.as_ref(),
-                                    local.as_ref(),
-                                );
-
-                                tx.decode = Some(SingleDecode {
-                                    api: api_decode,
-                                    local,
-                                    comparison,
-                                });
-
-                                // Update summary
-                                multi.summary.update(&multi.transactions);
-                            }
+                            // Replace with the verified MultiSend
+                            *multi = verified_multi;
+                            
+                            // Update overall status based on summary
+                            decode.status = if multi.summary.mismatched > 0 {
+                                decode::OverallStatus::HasMismatches
+                            } else if multi.summary.verified == multi.summary.total {
+                                decode::OverallStatus::AllMatch
+                            } else if multi.summary.verified > 0 {
+                                decode::OverallStatus::PartiallyVerified
+                            } else {
+                                decode::OverallStatus::Pending
+                            };
                         }
                     }
                 }
@@ -921,23 +916,11 @@ impl App {
         }
     }
 
-    fn trigger_multisend_decode(&mut self, index: usize, ctx: &egui::Context) {
-        // Mark as loading
-        if let Some(ref mut decode) = self.tx_state.decode {
-            if let TransactionKind::MultiSend(ref mut multi) = decode.kind {
-                if let Some(tx) = multi.transactions.get_mut(index) {
-                    if tx.decode.is_some() || tx.is_loading || tx.data == "0x" || tx.data.is_empty() {
-                        return;
-                    }
-                    tx.is_loading = true;
-                }
-            }
-        }
-
-        // Get the data for this transaction
-        let data = if let Some(ref decode) = self.tx_state.decode {
-            if let TransactionKind::MultiSend(ref multi) = decode.kind {
-                multi.transactions.get(index).map(|tx| tx.data.clone())
+    fn trigger_multisend_bulk_verify(&mut self, ctx: &egui::Context) {
+        // Get the MultiSend data
+        let multi = if let Some(ref decode) = self.tx_state.decode {
+            if let TransactionKind::MultiSend(ref m) = decode.kind {
+                Some(m.clone())
             } else {
                 None
             }
@@ -945,37 +928,34 @@ impl App {
             None
         };
 
-        if let Some(data) = data {
-            let selector = get_selector(&data);
-            if selector.is_empty() {
-                return;
-            }
+        let Some(mut multi) = multi else {
+            return;
+        };
 
-            let lookup = self.signature_lookup.clone();
-            let result = Arc::clone(&self.decode_result);
-            let ctx = ctx.clone();
+        let lookup = self.signature_lookup.clone();
+        let result = Arc::clone(&self.decode_result);
+        let ctx = ctx.clone();
 
-            #[cfg(target_arch = "wasm32")]
-            {
-                use wasm_bindgen_futures::spawn_local;
-                spawn_local(async move {
-                    let local_decode = Self::do_decode_lookup(&lookup, &selector, &data).await;
-                    let mut guard = result.lock().unwrap();
-                    *guard = Some(DecodeResult::MultiSendTx { index, local_decode });
-                    ctx.request_repaint();
-                });
-            }
+        #[cfg(target_arch = "wasm32")]
+        {
+            use wasm_bindgen_futures::spawn_local;
+            spawn_local(async move {
+                decode::verify_multisend_batch(&mut multi, &lookup).await;
+                let mut guard = result.lock().unwrap();
+                *guard = Some(DecodeResult::MultiSendBulk { multi });
+                ctx.request_repaint();
+            });
+        }
 
-            #[cfg(not(target_arch = "wasm32"))]
-            {
-                std::thread::spawn(move || {
-                    let rt = tokio::runtime::Runtime::new().unwrap();
-                    let local_decode = rt.block_on(Self::do_decode_lookup(&lookup, &selector, &data));
-                    let mut guard = result.lock().unwrap();
-                    *guard = Some(DecodeResult::MultiSendTx { index, local_decode });
-                    ctx.request_repaint();
-                });
-            }
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            std::thread::spawn(move || {
+                let rt = tokio::runtime::Runtime::new().unwrap();
+                rt.block_on(decode::verify_multisend_batch(&mut multi, &lookup));
+                let mut guard = result.lock().unwrap();
+                *guard = Some(DecodeResult::MultiSendBulk { multi });
+                ctx.request_repaint();
+            });
         }
     }
 

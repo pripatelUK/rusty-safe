@@ -7,12 +7,11 @@ use super::types::*;
 /// Render the full decode section
 pub fn render_decode_section(
     ui: &mut egui::Ui,
-    decode: &DecodedTransaction,
-    on_expand: &mut impl FnMut(usize),
+    decode: &mut DecodedTransaction,
 ) {
     ui.add_space(10.0);
 
-    match &decode.kind {
+    match &mut decode.kind {
         TransactionKind::Empty => {
             ui.horizontal(|ui| {
                 ui.label(egui::RichText::new("📦 Calldata").strong());
@@ -23,7 +22,7 @@ pub fn render_decode_section(
             render_single_section(ui, single, &decode.selector);
         }
         TransactionKind::MultiSend(multi) => {
-            render_multisend_section(ui, multi, on_expand);
+            render_multisend_section(ui, multi);
         }
         TransactionKind::Unknown => {
             ui.horizontal(|ui| {
@@ -166,56 +165,145 @@ fn render_params_rows(ui: &mut egui::Ui, decode: &SingleDecode) {
 /// Render MultiSend section
 fn render_multisend_section(
     ui: &mut egui::Ui,
-    multi: &MultiSendDecode,
-    on_expand: &mut impl FnMut(usize),
+    multi: &mut MultiSendDecode,
 ) {
-    // Header with summary
+    // Header with summary and expand/collapse buttons
     ui.horizontal(|ui| {
         ui.label(egui::RichText::new(format!(
             "📦 MultiSend ({} transactions)",
             multi.transactions.len()
         )).strong());
 
-        render_summary_badges(ui, &multi.summary);
+        // Show verification state or summary badges
+        match &multi.verification_state {
+            VerificationState::Pending => {
+                ui.label(egui::RichText::new("⏳ Waiting...").weak());
+            }
+            VerificationState::InProgress { total } => {
+                ui.spinner();
+                ui.label(format!("Verifying {} transactions...", total));
+            }
+            VerificationState::Complete => {
+                render_summary_badges(ui, &multi.summary);
+            }
+        }
+        
+        ui.add_space(20.0);
+        
+        // Expand All button
+        if ui.small_button("⬇ Expand All").clicked() {
+            for tx in &mut multi.transactions {
+                tx.is_expanded = true;
+            }
+        }
+        
+        // Collapse All button
+        if ui.small_button("⬆ Collapse All").clicked() {
+            for tx in &mut multi.transactions {
+                tx.is_expanded = false;
+            }
+        }
     });
 
     ui.add_space(8.0);
 
     // Collapsible transactions
-    for tx in &multi.transactions {
-        render_multisend_tx(ui, tx, on_expand);
+    for tx in &mut multi.transactions {
+        render_multisend_tx(ui, tx);
     }
+}
+
+/// Build a compact header string showing method + key params (Option B format)
+fn build_tx_header(tx: &MultiSendTx) -> String {
+    let status_emoji = match &tx.decode {
+        Some(d) if d.comparison.is_match() => "✓",
+        Some(d) if d.comparison.is_mismatch() => "✗",
+        Some(_) => "◇",
+        None => "□",
+    };
+
+    // Try to get method name and params - prefer api_decode (always available), 
+    // fall back to decode.api if available
+    let api_data = tx.api_decode.as_ref()
+        .or_else(|| tx.decode.as_ref().and_then(|d| d.api.as_ref()));
+    
+    let method_part = api_data
+        .map(|api| {
+            // Build compact params: method(val1, val2, ...)
+            let params_str = api.params
+                .iter()
+                .take(3) // Limit to first 3 params for compactness
+                .map(|p| truncate_param(&p.value, 12))
+                .collect::<Vec<_>>()
+                .join(", ");
+            
+            if api.params.len() > 3 {
+                format!("{}({}, ...)", api.method, params_str)
+            } else if params_str.is_empty() {
+                api.method.clone()
+            } else {
+                format!("{}({})", api.method, params_str)
+            }
+        })
+        .unwrap_or_else(|| truncate_address(&tx.to));
+
+    let value_part = if tx.value == "0" {
+        "0 ETH".to_string()
+    } else {
+        format_wei(&tx.value)
+    };
+
+    format!("#{} {} {} ({})", tx.index + 1, status_emoji, method_part, value_part)
+}
+
+/// Truncate a parameter value for display in header
+fn truncate_param(value: &str, max_len: usize) -> String {
+    if value.len() <= max_len {
+        return value.to_string();
+    }
+    // For addresses/hashes, show prefix...suffix
+    if value.starts_with("0x") && value.len() > 10 {
+        format!("{}...{}", &value[..6], &value[value.len()-4..])
+    } else {
+        format!("{}...", &value[..max_len])
+    }
+}
+
+/// Truncate address for display
+fn truncate_address(addr: &str) -> String {
+    if addr.len() > 12 {
+        format!("{}...{}", &addr[..6], &addr[addr.len()-4..])
+    } else {
+        addr.to_string()
+    }
+}
+
+/// Format wei value nicely
+fn format_wei(wei: &str) -> String {
+    // Try to parse and format with units
+    if let Ok(val) = wei.parse::<u128>() {
+        if val == 0 {
+            return "0 ETH".to_string();
+        }
+        let eth = val as f64 / 1e18;
+        if eth >= 0.001 {
+            return format!("{:.4} ETH", eth);
+        }
+    }
+    format!("{} wei", wei)
 }
 
 /// Render a single MultiSend transaction (collapsible)
 fn render_multisend_tx(
     ui: &mut egui::Ui,
-    tx: &MultiSendTx,
-    on_expand: &mut impl FnMut(usize),
+    tx: &mut MultiSendTx,
 ) {
-    let status_emoji = match &tx.decode {
-        Some(d) if d.comparison.is_match() => "✅",
-        Some(d) if d.comparison.is_mismatch() => "❌",
-        Some(_) => "⚠️",
-        None if tx.is_loading => "⏳",
-        None => "📋",
-    };
+    let header = build_tx_header(tx);
 
-    let header = format!(
-        "#{} {} → {} ({})",
-        tx.index + 1,
-        status_emoji,
-        &tx.to,
-        if tx.value == "0" {
-            "0 ETH".to_string()
-        } else {
-            format!("{} wei", tx.value)
-        }
-    );
-
+    // Use .open() for external state control (collapse all / expand all)
     let response = egui::CollapsingHeader::new(header)
         .id_salt(format!("multisend_tx_{}", tx.index))
-        .default_open(tx.is_expanded)
+        .open(Some(tx.is_expanded))
         .show(ui, |ui| {
             ui.add_space(4.0);
 
@@ -239,24 +327,19 @@ fn render_multisend_tx(
 
             ui.add_space(8.0);
 
-            // Decode comparison
-            if tx.is_loading {
-                ui.horizontal(|ui| {
-                    ui.spinner();
-                    ui.label("Verifying calldata...");
-                });
-            } else if let Some(decode) = &tx.decode {
+            // Decode comparison (results already available from bulk verification)
+            if let Some(decode) = &tx.decode {
                 render_single_comparison(ui, decode);
             } else if tx.data == "0x" || tx.data.is_empty() {
                 ui.label(egui::RichText::new("No calldata").weak());
             } else {
-                ui.label("Expand to verify calldata");
+                ui.label(egui::RichText::new("Verification unavailable").weak());
             }
         });
 
-    // Trigger expand callback when first opened
-    if response.header_response.clicked() && tx.decode.is_none() && !tx.is_loading && tx.data != "0x" {
-        on_expand(tx.index);
+    // Track expand state (purely visual now)
+    if response.header_response.clicked() {
+        tx.is_expanded = !tx.is_expanded;
     }
 }
 

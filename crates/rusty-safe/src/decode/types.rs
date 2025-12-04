@@ -34,6 +34,16 @@ pub struct SingleDecode {
 pub struct MultiSendDecode {
     pub transactions: Vec<MultiSendTx>,
     pub summary: MultiSendSummary,
+    pub verification_state: VerificationState,
+}
+
+/// Verification state for bulk operations
+#[derive(Debug, Clone, Default)]
+pub enum VerificationState {
+    #[default]
+    Pending,
+    InProgress { total: usize },
+    Complete,
 }
 
 /// Single transaction within a MultiSend batch
@@ -44,9 +54,12 @@ pub struct MultiSendTx {
     pub to: String,
     pub value: String,
     pub data: String,
+    /// API decode from Safe Transaction Service (available immediately)
+    pub api_decode: Option<ApiDecode>,
+    /// Full decode comparison (populated after bulk verification)
     pub decode: Option<SingleDecode>,
+    /// UI-only: whether this item is expanded for viewing details
     pub is_expanded: bool,
-    pub is_loading: bool,
 }
 
 /// Summary counts for MultiSend
