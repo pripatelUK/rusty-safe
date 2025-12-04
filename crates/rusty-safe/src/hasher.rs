@@ -5,7 +5,63 @@ use crate::state::ComputedHashes;
 use alloy::primitives::{Address, FixedBytes, ChainId, U256, hex};
 use eyre::{Result, WrapErr};
 use safe_hash::{SafeHashes, SafeWarnings, Mismatch};
-use safe_utils::{Of, SafeWalletVersion};
+use safe_utils::{get_safe_api, Of, SafeWalletVersion};
+use serde::Deserialize;
+
+/// Safe info response from API
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SafeInfo {
+    pub address: Address,
+    #[serde(deserialize_with = "deserialize_string_to_u64")]
+    pub nonce: u64,
+    pub threshold: u64,
+    pub owners: Vec<Address>,
+    pub modules: Vec<Address>,
+    pub version: String,
+}
+
+/// Deserialize a string number to u64
+fn deserialize_string_to_u64<'de, D>(deserializer: D) -> Result<u64, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::de::Error;
+    let s: String = String::deserialize(deserializer)?;
+    s.parse().map_err(|_| D::Error::custom(format!("Failed to parse '{}' as u64", s)))
+}
+
+/// Fetch Safe info from API (async - works on WASM)
+pub async fn fetch_safe_info(
+    chain_name: &str,
+    safe_address: &str,
+) -> Result<SafeInfo> {
+    let chain_id = ChainId::of(chain_name)
+        .map_err(|e| eyre::eyre!("Invalid chain '{}': {}", chain_name, e))?;
+    
+    let addr: Address = safe_address.trim().parse()
+        .wrap_err("Invalid Safe address")?;
+    
+    let api_url = get_safe_api(chain_id)
+        .map_err(|e| eyre::eyre!("Failed to get API URL: {}", e))?;
+    
+    let url = format!("{}/api/v1/safes/{}/", api_url, addr);
+    
+    let response = reqwest::get(&url)
+        .await
+        .wrap_err("Network error")?;
+    
+    if !response.status().is_success() {
+        eyre::bail!("API error: {}", response.status());
+    }
+    
+    let safe_info: SafeInfo = response
+        .json()
+        .await
+        .wrap_err("Failed to parse Safe info")?;
+    
+    Ok(safe_info)
+}
 
 /// Fetch transaction from Safe API (async - works on WASM)
 pub async fn fetch_transaction(

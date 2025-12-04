@@ -46,6 +46,13 @@ pub enum DecodeResult {
     },
 }
 
+/// Result from async Safe info fetch
+#[derive(Clone)]
+pub enum SafeInfoResult {
+    Success(crate::hasher::SafeInfo),
+    Error(String),
+}
+
 /// The main application state
 pub struct App {
     /// Current active tab
@@ -64,6 +71,12 @@ pub struct App {
     signature_lookup: SignatureLookup,
     /// Async decode result receiver
     decode_result: Arc<Mutex<Option<DecodeResult>>>,
+    /// Async Safe info fetch result receiver
+    safe_info_result: Arc<Mutex<Option<SafeInfoResult>>>,
+    /// Fetched Safe info
+    safe_info: Option<crate::hasher::SafeInfo>,
+    /// Whether Safe info fetch is in progress
+    safe_info_loading: bool,
 }
 
 /// Available tabs in the application
@@ -101,6 +114,9 @@ impl App {
             fetch_result: Arc::new(Mutex::new(None)),
             signature_lookup: SignatureLookup::new(),
             decode_result: Arc::new(Mutex::new(None)),
+            safe_info_result: Arc::new(Mutex::new(None)),
+            safe_info: None,
+            safe_info_loading: false,
         }
     }
 }
@@ -114,6 +130,9 @@ impl eframe::App for App {
 
         // Check for async decode results
         self.check_decode_result();
+        
+        // Check for async Safe info results
+        self.check_safe_info_result();
 
         egui::TopBottomPanel::top("header").show(ctx, |ui| {
             ui.add_space(8.0);
@@ -171,18 +190,29 @@ impl App {
 
             ui.add_space(20.0);
             ui.label("Safe Version:");
-            egui::ComboBox::from_id_salt("version_select")
-                .selected_text(&self.tx_state.safe_version)
-                .width(100.0)
-                .show_ui(ui, |ui| {
-                    for version in SAFE_VERSIONS {
-                        ui.selectable_value(
-                            &mut self.tx_state.safe_version,
-                            version.to_string(),
-                            *version,
-                        );
-                    }
-                });
+            
+            // If we have safe_info with a valid version, show it as read-only
+            let version_from_api = self.safe_info.as_ref()
+                .filter(|info| SAFE_VERSIONS.contains(&info.version.as_str()));
+            
+            if version_from_api.is_some() {
+                // Show as disabled/read-only
+                ui.add_enabled(false, egui::Button::new(&self.tx_state.safe_version).min_size(egui::vec2(100.0, 0.0)));
+                ui.label(egui::RichText::new("(from API)").weak().small());
+            } else {
+                egui::ComboBox::from_id_salt("version_select")
+                    .selected_text(&self.tx_state.safe_version)
+                    .width(100.0)
+                    .show_ui(ui, |ui| {
+                        for version in SAFE_VERSIONS {
+                            ui.selectable_value(
+                                &mut self.tx_state.safe_version,
+                                version.to_string(),
+                                *version,
+                            );
+                        }
+                    });
+            }
         });
 
         ui.add_space(10.0);
@@ -190,17 +220,102 @@ impl App {
         ui.horizontal(|ui| {
             ui.label("Safe Address:");
             let response = ui::address_input(ui, &mut self.tx_state.safe_address);
-            // Cache address when it loses focus or user presses enter
-            if response.lost_focus() || response.changed() {
+            
+            // Cache address and fetch Safe info when focus leaves the field
+            let should_fetch = response.lost_focus() && !response.ctx.input(|i| i.key_pressed(egui::Key::Escape));
+            
+            if should_fetch {
                 crate::state::save_safe_address(&self.tx_state.safe_address);
+                // Trigger Safe info fetch if address looks valid
+                if self.tx_state.safe_address.starts_with("0x") && self.tx_state.safe_address.len() == 42 {
+                    self.trigger_safe_info_fetch();
+                }
+            }
+            
+            if self.safe_info_loading {
+                ui.spinner();
             }
         });
+
+        // Show Safe info if available
+        if let Some(ref info) = self.safe_info {
+            ui.add_space(5.0);
+            
+            // Threshold info
+            ui.horizontal(|ui| {
+                ui.add_space(100.0);
+                ui.label(egui::RichText::new(format!(
+                    "Threshold: {}/{}",
+                    info.threshold,
+                    info.owners.len()
+                )).size(14.0));
+            });
+            
+            // List signers
+            for (i, owner) in info.owners.iter().enumerate() {
+                ui.horizontal(|ui| {
+                    ui.add_space(120.0);
+                    ui.label(egui::RichText::new(format!("{:?}", owner)).monospace().small());
+                });
+            }
+            
+            // Modules info (if any)
+            if !info.modules.is_empty() {
+                ui.add_space(3.0);
+                ui.horizontal(|ui| {
+                    ui.add_space(100.0);
+                    ui.label(egui::RichText::new(format!(
+                        "Modules: {}",
+                        info.modules.len()
+                    )).size(14.0));
+                });
+                
+                for (i, module) in info.modules.iter().enumerate() {
+                    ui.horizontal(|ui| {
+                        ui.add_space(120.0);
+                        ui.label(egui::RichText::new(format!("  {}. {:?}", i + 1, module)).monospace().small());
+                    });
+                }
+            }
+        }
 
         ui.add_space(5.0);
 
         ui.horizontal(|ui| {
             ui.label("Nonce:");
+            
+            // Decrement button
+            if ui.small_button("◀").on_hover_text("Previous nonce").clicked() {
+                if let Ok(n) = self.tx_state.nonce.parse::<u64>() {
+                    if n > 0 {
+                        self.tx_state.nonce = (n - 1).to_string();
+                    }
+                }
+            }
+            
             ui::number_input(ui, &mut self.tx_state.nonce, "e.g., 42");
+            
+            // Increment button
+            if ui.small_button("▶").on_hover_text("Next nonce").clicked() {
+                if let Ok(n) = self.tx_state.nonce.parse::<u64>() {
+                    self.tx_state.nonce = (n + 1).to_string();
+                }
+            }
+            
+            // Show latest nonce info
+            if let Some(ref info) = self.safe_info {
+                if ui.small_button(format!("⟳ Latest: {}", info.nonce))
+                    .on_hover_text("Click to use latest nonce (next available)")
+                    .clicked() 
+                {
+                    // Set to latest - 1 since we want the most recent queued tx
+                    if info.nonce > 0 {
+                        self.tx_state.nonce = (info.nonce - 1).to_string();
+                    } else {
+                        self.tx_state.nonce = "0".to_string();
+                    }
+                }
+            }
         });
 
         ui.add_space(10.0);
@@ -1008,5 +1123,71 @@ impl App {
             "None of {} signatures decoded successfully",
             signatures.len()
         ))
+    }
+    
+    fn check_safe_info_result(&mut self) {
+        let result = {
+            let mut guard = self.safe_info_result.lock().unwrap();
+            guard.take()
+        };
+
+        if let Some(result) = result {
+            self.safe_info_loading = false;
+            match result {
+                SafeInfoResult::Success(info) => {
+                    debug_log!("Fetched Safe info: version={}, nonce={}, threshold={}/{}", 
+                        info.version, info.nonce, info.threshold, info.owners.len());
+                    
+                    // Auto-fill version if it matches a supported version
+                    let version_str = info.version.as_str();
+                    if crate::state::SAFE_VERSIONS.contains(&version_str) {
+                        self.tx_state.safe_version = version_str.to_string();
+                    }
+                    
+                    self.safe_info = Some(info);
+                }
+                SafeInfoResult::Error(e) => {
+                    debug_log!("Failed to fetch Safe info: {}", e);
+                    // Don't clear safe_info on error, keep previous value
+                }
+            }
+        }
+    }
+    
+    fn trigger_safe_info_fetch(&mut self) {
+        if self.safe_info_loading {
+            return;
+        }
+        
+        self.safe_info_loading = true;
+        let chain_name = self.tx_state.chain_name.clone();
+        let safe_address = self.tx_state.safe_address.clone();
+        let result = Arc::clone(&self.safe_info_result);
+
+        #[cfg(target_arch = "wasm32")]
+        {
+            use wasm_bindgen_futures::spawn_local;
+            spawn_local(async move {
+                let fetch_result = crate::hasher::fetch_safe_info(&chain_name, &safe_address).await;
+                let mut guard = result.lock().unwrap();
+                *guard = Some(match fetch_result {
+                    Ok(info) => SafeInfoResult::Success(info),
+                    Err(e) => SafeInfoResult::Error(format!("{:#}", e)),
+                });
+            });
+        }
+
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            std::thread::spawn(move || {
+                let rt = tokio::runtime::Runtime::new().unwrap();
+                let fetch_result = rt.block_on(crate::hasher::fetch_safe_info(&chain_name, &safe_address));
+                let mut guard = result.lock().unwrap();
+                *guard = Some(match fetch_result {
+                    Ok(info) => SafeInfoResult::Success(info),
+                    Err(e) => SafeInfoResult::Error(format!("{:#}", e)),
+                });
+            });
+        }
     }
 }
