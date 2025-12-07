@@ -215,9 +215,10 @@ fn render_multisend_section(
 
 /// Verification status for coloring
 enum VerifyStatus {
-    Match,
-    Mismatch,
-    Pending,
+    Match,        // Green  - independently verified
+    Mismatch,     // Red    - verification failed
+    Unverifiable, // Yellow - couldn't verify (OnlyApi, OnlyLocal, Failed)
+    Pending,      // Gray   - still loading
 }
 
 /// Build a compact header with color based on verification status
@@ -225,7 +226,15 @@ fn build_tx_header(tx: &MultiSendTx) -> egui::RichText {
     let (status_emoji, status) = match &tx.decode {
         Some(d) if d.comparison.is_match() => ("✓", VerifyStatus::Match),
         Some(d) if d.comparison.is_mismatch() => ("✗", VerifyStatus::Mismatch),
-        Some(_) => ("◇", VerifyStatus::Pending),
+        Some(d) => {
+            // Distinguish unverifiable from still-loading
+            match &d.comparison {
+                ComparisonResult::OnlyApi 
+                | ComparisonResult::OnlyLocal 
+                | ComparisonResult::Failed(_) => ("⚠", VerifyStatus::Unverifiable),
+                _ => ("◇", VerifyStatus::Pending),
+            }
+        }
         None => ("□", VerifyStatus::Pending),
     };
 
@@ -264,9 +273,10 @@ fn build_tx_header(tx: &MultiSendTx) -> egui::RichText {
     
     // Color based on verification status
     let color = match status {
-        VerifyStatus::Match => egui::Color32::from_rgb(100, 200, 100),    // Green
-        VerifyStatus::Mismatch => egui::Color32::from_rgb(220, 80, 80),   // Red
-        VerifyStatus::Pending => egui::Color32::GRAY,                      // Gray for pending
+        VerifyStatus::Match => egui::Color32::from_rgb(100, 200, 100),       // Green
+        VerifyStatus::Mismatch => egui::Color32::from_rgb(220, 80, 80),      // Red
+        VerifyStatus::Unverifiable => egui::Color32::from_rgb(220, 180, 50), // Yellow
+        VerifyStatus::Pending => egui::Color32::GRAY,                        // Gray
     };
     
     egui::RichText::new(header_text).color(color)
