@@ -213,13 +213,20 @@ fn render_multisend_section(
     }
 }
 
-/// Build a compact header string showing method + key params (Option B format)
-fn build_tx_header(tx: &MultiSendTx) -> String {
-    let status_emoji = match &tx.decode {
-        Some(d) if d.comparison.is_match() => "✓",
-        Some(d) if d.comparison.is_mismatch() => "✗",
-        Some(_) => "◇",
-        None => "□",
+/// Verification status for coloring
+enum VerifyStatus {
+    Match,
+    Mismatch,
+    Pending,
+}
+
+/// Build a compact header with color based on verification status
+fn build_tx_header(tx: &MultiSendTx) -> egui::RichText {
+    let (status_emoji, status) = match &tx.decode {
+        Some(d) if d.comparison.is_match() => ("✓", VerifyStatus::Match),
+        Some(d) if d.comparison.is_mismatch() => ("✗", VerifyStatus::Mismatch),
+        Some(_) => ("◇", VerifyStatus::Pending),
+        None => ("□", VerifyStatus::Pending),
     };
 
     // Try to get method name and params - prefer api_decode (always available), 
@@ -253,7 +260,16 @@ fn build_tx_header(tx: &MultiSendTx) -> String {
         format_wei(&tx.value)
     };
 
-    format!("#{} {} {} ({})", tx.index + 1, status_emoji, method_part, value_part)
+    let header_text = format!("#{} {} ({}) {}", tx.index + 1, method_part, value_part, status_emoji);
+    
+    // Color based on verification status
+    let color = match status {
+        VerifyStatus::Match => egui::Color32::from_rgb(100, 200, 100),    // Green
+        VerifyStatus::Mismatch => egui::Color32::from_rgb(220, 80, 80),   // Red
+        VerifyStatus::Pending => egui::Color32::GRAY,                      // Gray for pending
+    };
+    
+    egui::RichText::new(header_text).color(color)
 }
 
 /// Truncate a parameter value for display in header
@@ -423,8 +439,8 @@ fn render_comparison_message(ui: &mut egui::Ui, result: &ComparisonResult) {
         }
         ComparisonResult::OnlyLocal => {
             ui.label(
-                egui::RichText::new("✅ Decoded independently (API didn't provide decode)")
-                    .color(egui::Color32::from_rgb(100, 200, 100)),
+                egui::RichText::new("⚠️ Decoded independently (API didn't provide decode to verify against)")
+                    .color(egui::Color32::from_rgb(220, 180, 50)),
             );
         }
         ComparisonResult::Pending => {

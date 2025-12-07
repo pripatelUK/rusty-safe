@@ -84,8 +84,11 @@ impl MultiSendSummary {
                     ComparisonResult::Match => self.verified += 1,
                     ComparisonResult::MethodMismatch { .. }
                     | ComparisonResult::ParamMismatch(_) => self.mismatched += 1,
-                    ComparisonResult::OnlyApi | ComparisonResult::OnlyLocal => self.verified += 1,
-                    ComparisonResult::Pending | ComparisonResult::Failed(_) => self.pending += 1,
+                    // OnlyApi/OnlyLocal = no independent verification possible
+                    ComparisonResult::OnlyApi 
+                    | ComparisonResult::OnlyLocal 
+                    | ComparisonResult::Pending 
+                    | ComparisonResult::Failed(_) => self.pending += 1,
                 },
                 None => self.pending += 1,
             }
