@@ -43,6 +43,7 @@ tracing.workspace = true
 tokio.workspace = true
 arboard.workspace = true
 tracing-subscriber.workspace = true
+open = "5"
 
 # WASM-only dependencies
 [target.'cfg(target_arch = "wasm32")'.dependencies]

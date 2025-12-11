@@ -379,7 +379,13 @@ impl App {
                 .show(ui, |ui| {
                     ui.label("To:");
                     let to_str = format!("{}", tx.to);
-                    ui.label(egui::RichText::new(&to_str).monospace());
+                    let explorer_url = ui::get_explorer_address_url(&self.tx_state.chain_name, &to_str);
+                    if ui.link(egui::RichText::new(&to_str).monospace())
+                        .on_hover_text("Open in block explorer")
+                        .clicked() 
+                    {
+                        ui::open_url_new_tab(&explorer_url);
+                    }
                     if ui.small_button("📋").on_hover_text("Copy").clicked() {
                         ui::copy_to_clipboard(&to_str);
                     }

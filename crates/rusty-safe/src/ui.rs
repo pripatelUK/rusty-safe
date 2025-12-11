@@ -2,6 +2,38 @@
 
 use eframe::egui;
 
+/// Get block explorer URL for an address on a given chain
+pub fn get_explorer_address_url(chain_name: &str, address: &str) -> String {
+    let base = match chain_name.to_lowercase().as_str() {
+        "ethereum" | "mainnet" => "https://etherscan.io",
+        "polygon" => "https://polygonscan.com",
+        "arbitrum" => "https://arbiscan.io",
+        "optimism" => "https://optimistic.etherscan.io",
+        "gnosis" => "https://gnosisscan.io",
+        "base" => "https://basescan.org",
+        "avalanche" => "https://snowtrace.io",
+        "bsc" | "binance" => "https://bscscan.com",
+        "sepolia" => "https://sepolia.etherscan.io",
+        "goerli" => "https://goerli.etherscan.io",
+        "holesky" => "https://holesky.etherscan.io",
+        _ => "https://etherscan.io", // fallback to mainnet
+    };
+    format!("{}/address/{}", base, address)
+}
+
+/// Open URL in a new browser tab
+#[cfg(target_arch = "wasm32")]
+pub fn open_url_new_tab(url: &str) {
+    if let Some(window) = web_sys::window() {
+        let _ = window.open_with_url_and_target(url, "_blank");
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub fn open_url_new_tab(url: &str) {
+    let _ = open::that(url);
+}
+
 /// Styled heading with accent color
 pub fn styled_heading(ui: &mut egui::Ui, text: &str) {
     ui.heading(egui::RichText::new(text).color(egui::Color32::from_rgb(0, 212, 170)));
