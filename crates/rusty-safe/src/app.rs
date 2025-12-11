@@ -374,47 +374,20 @@ impl App {
             ui::section_header(ui, "Transaction Details");
 
             egui::Grid::new("tx_details")
-                .num_columns(2)
+                .num_columns(3)
                 .spacing([10.0, 6.0])
                 .show(ui, |ui| {
                     ui.label("To:");
-                    ui.label(egui::RichText::new(format!("{}", tx.to)).monospace());
+                    let to_str = format!("{}", tx.to);
+                    ui.label(egui::RichText::new(&to_str).monospace());
+                    if ui.small_button("📋").on_hover_text("Copy").clicked() {
+                        ui::copy_to_clipboard(&to_str);
+                    }
                     ui.end_row();
 
                     ui.label("Value:");
                     ui.label(format!("{} wei", tx.value));
-                    ui.end_row();
-
-                    ui.label("Data:");
-                    let data = &tx.data;
-                    if data.is_empty() || data == "0x" {
-                        ui.label(egui::RichText::new("0x (empty)").monospace());
-                    } else if data.len() > 66 {
-                        // Long data - show preview with toggle
-                        ui.vertical(|ui| {
-                            if self.tx_state.show_full_data {
-                                // Show full data with word wrap
-                                let wrapped = data.chars()
-                                    .collect::<Vec<_>>()
-                                    .chunks(64)
-                                    .map(|c| c.iter().collect::<String>())
-                                    .collect::<Vec<_>>()
-                                    .join("\n");
-                                ui.label(egui::RichText::new(&wrapped).monospace().small());
-                                if ui.small_button("▲ Show less").clicked() {
-                                    self.tx_state.show_full_data = false;
-                                }
-                            } else {
-                                // Show preview
-                                ui.label(egui::RichText::new(format!("{}...", &data[..66])).monospace());
-                                if ui.small_button("▼ Show more").clicked() {
-                                    self.tx_state.show_full_data = true;
-                                }
-                            }
-                        });
-                    } else {
-                        ui.label(egui::RichText::new(data).monospace());
-                    }
+                    ui.label(""); // Empty for alignment
                     ui.end_row();
 
                     ui.label("Operation:");
@@ -423,12 +396,66 @@ impl App {
                     } else {
                         "DelegateCall (1)"
                     });
+                    ui.label(""); // Empty for alignment
                     ui.end_row();
 
                     ui.label("Confirmations:");
                     ui.label(format!("{} / {}", tx.confirmations.len(), tx.confirmations_required));
+                    ui.label(""); // Empty for alignment
                     ui.end_row();
                 });
+            
+            // Data field - full width outside grid
+            let data = &tx.data;
+            ui.add_space(8.0);
+            ui.label(egui::RichText::new("Data:").strong());
+            
+            if data.is_empty() || data == "0x" {
+                ui.label(egui::RichText::new("0x (empty)").monospace());
+            } else {
+                // 3 lines = 64 chars * 3 = 192 chars
+                let preview_len = 192.min(data.len());
+                let needs_toggle = data.len() > preview_len;
+                
+                if self.tx_state.show_full_data || !needs_toggle {
+                    // Show full data with word wrap
+                    let wrapped = data.chars()
+                        .collect::<Vec<_>>()
+                        .chunks(64)
+                        .map(|c| c.iter().collect::<String>())
+                        .collect::<Vec<_>>()
+                        .join("\n");
+                    ui.label(egui::RichText::new(&wrapped).monospace().size(11.0));
+                    
+                    ui.horizontal(|ui| {
+                        if ui.small_button("📋 Copy").on_hover_text("Copy data").clicked() {
+                            ui::copy_to_clipboard(data);
+                        }
+                        if needs_toggle && ui.small_button("▲ Show less").clicked() {
+                            self.tx_state.show_full_data = false;
+                        }
+                    });
+                } else {
+                    // Show 3-line preview
+                    let preview = &data[..preview_len];
+                    let wrapped = preview.chars()
+                        .collect::<Vec<_>>()
+                        .chunks(64)
+                        .map(|c| c.iter().collect::<String>())
+                        .collect::<Vec<_>>()
+                        .join("\n");
+                    ui.label(egui::RichText::new(format!("{}...", wrapped)).monospace().size(11.0));
+                    
+                    ui.horizontal(|ui| {
+                        if ui.small_button("📋 Copy").on_hover_text("Copy data").clicked() {
+                            ui::copy_to_clipboard(data);
+                        }
+                        if ui.small_button("▼ Show more").clicked() {
+                            self.tx_state.show_full_data = true;
+                        }
+                    });
+                }
+            }
 
             // Calldata decode section
             if let Some(decode_state) = &mut self.tx_state.decode {
@@ -1181,7 +1208,7 @@ impl App {
                 ui.end_row();
                 
                 ui.label("Data (hex):");
-                ui::multiline_input(ui, &mut self.offline_state.data, "0x...", 3);
+                ui::multiline_input(ui, &mut self.offline_state.data, "0x...", 10);
                 ui.end_row();
                 
                 ui.label("Operation:");

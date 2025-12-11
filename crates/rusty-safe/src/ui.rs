@@ -67,15 +67,24 @@ pub fn number_input(ui: &mut egui::Ui, value: &mut String, hint: &str) -> egui::
     )
 }
 
-/// Create a styled multiline text edit
+/// Create a styled multiline text edit with fixed height and internal scrolling
 pub fn multiline_input(ui: &mut egui::Ui, value: &mut String, hint: &str, rows: usize) -> egui::Response {
-    ui.add(
-        egui::TextEdit::multiline(value)
-            .hint_text(hint)
-            .desired_width(f32::INFINITY)
-            .desired_rows(rows)
-            .font(egui::TextStyle::Monospace),
-    )
+    // Calculate height based on row count (approximate line height)
+    let row_height = ui.text_style_height(&egui::TextStyle::Monospace);
+    let height = row_height * rows as f32 + ui.spacing().item_spacing.y * 5.0;
+    
+    let mut response = None;
+    egui::ScrollArea::vertical()
+        .max_height(height)
+        .show(ui, |ui| {
+            response = Some(ui.add(
+                egui::TextEdit::multiline(value)
+                    .hint_text(hint)
+                    .desired_width(f32::INFINITY)
+                    .font(egui::TextStyle::Monospace),
+            ));
+        });
+    response.unwrap()
 }
 
 /// Loading spinner
