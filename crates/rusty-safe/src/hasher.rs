@@ -128,11 +128,19 @@ pub fn compute_hashes(
         .parse()
         .wrap_err("Invalid refund receiver address")?;
 
-    // Normalize data - remove 0x prefix if present
-    let data_normalized = data.strip_prefix("0x").unwrap_or(data);
+    // Normalize and validate data - must be valid hex
+    let data_normalized = data.strip_prefix("0x").unwrap_or(data).trim();
     let data_with_prefix = if data_normalized.is_empty() {
         "0x".to_string()
     } else {
+        // Validate hex characters
+        if !data_normalized.chars().all(|c| c.is_ascii_hexdigit()) {
+            eyre::bail!("Invalid data: contains non-hex characters");
+        }
+        // Validate even length (each byte is 2 hex chars)
+        if data_normalized.len() % 2 != 0 {
+            eyre::bail!("Invalid data: odd number of hex characters");
+        }
         format!("0x{}", data_normalized)
     };
 

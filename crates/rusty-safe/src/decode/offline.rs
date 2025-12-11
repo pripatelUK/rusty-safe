@@ -22,6 +22,19 @@ pub async fn decode_offline(
         return OfflineDecodeResult::Empty;
     }
     
+    // Validate hex format
+    let hex_data = raw_data.strip_prefix("0x").unwrap_or(raw_data);
+    if !hex_data.chars().all(|c| c.is_ascii_hexdigit()) {
+        return OfflineDecodeResult::Single {
+            local: LocalDecode {
+                signature: String::new(),
+                method: "Invalid data".to_string(),
+                params: vec![],
+            },
+            status: OfflineDecodeStatus::Failed("Data contains non-hex characters".to_string()),
+        };
+    }
+    
     // Need at least selector (4 bytes = 8 chars + 0x)
     if raw_data.len() < 10 {
         return OfflineDecodeResult::RawHex(raw_data.to_string());

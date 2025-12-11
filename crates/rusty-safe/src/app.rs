@@ -1371,23 +1371,31 @@ impl App {
             
             // Hashes
             if let Some(ref hashes) = self.offline_state.hashes {
-                ui::section_header(ui, "Transaction Hashes");
-                ui.add_space(5.0);
+                ui::section_header(ui, "Hash Results");
                 
-                egui::Grid::new("offline_hashes")
-                    .num_columns(2)
-                    .spacing([10.0, 4.0])
+                egui::Grid::new("offline_hash_results")
+                    .num_columns(3)
+                    .spacing([10.0, 8.0])
                     .show(ui, |ui| {
-                        ui.label("SafeTxHash:");
-                        ui::copyable_hash(ui, &hashes.safe_tx_hash);
+                        ui.label(egui::RichText::new("Domain Hash:").strong());
+                        ui.label(egui::RichText::new(&hashes.domain_hash).monospace().size(12.0));
+                        if ui.small_button("📋").on_hover_text("Copy").clicked() {
+                            ui::copy_to_clipboard(&hashes.domain_hash);
+                        }
                         ui.end_row();
                         
-                        ui.label("Domain Hash:");
-                        ui::copyable_hash(ui, &hashes.domain_hash);
+                        ui.label(egui::RichText::new("Message Hash:").strong());
+                        ui.label(egui::RichText::new(&hashes.message_hash).monospace().size(12.0));
+                        if ui.small_button("📋").on_hover_text("Copy").clicked() {
+                            ui::copy_to_clipboard(&hashes.message_hash);
+                        }
                         ui.end_row();
                         
-                        ui.label("Message Hash:");
-                        ui::copyable_hash(ui, &hashes.message_hash);
+                        ui.label(egui::RichText::new("Safe Tx Hash:").strong());
+                        ui.label(egui::RichText::new(&hashes.safe_tx_hash).monospace().size(12.0));
+                        if ui.small_button("📋").on_hover_text("Copy").clicked() {
+                            ui::copy_to_clipboard(&hashes.safe_tx_hash);
+                        }
                         ui.end_row();
                     });
             }
