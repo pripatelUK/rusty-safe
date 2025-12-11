@@ -1,13 +1,36 @@
 //! Calldata decode UI rendering
 
 use eframe::egui;
+use crate::ui;
 
 use super::types::*;
+
+/// Check if a value looks like an Ethereum address
+fn is_address(value: &str) -> bool {
+    value.starts_with("0x") && value.len() == 42 && value[2..].chars().all(|c| c.is_ascii_hexdigit())
+}
+
+/// Render a parameter value - as hyperlink if it's an address, otherwise as label
+fn render_param_value(ui_ctx: &mut egui::Ui, value: &str, chain_name: &str, color: Option<egui::Color32>) {
+    if is_address(value) {
+        let explorer_url = ui::get_explorer_address_url(chain_name, value);
+        let text = egui::RichText::new(value).monospace().small();
+        let text = if let Some(c) = color { text.color(c) } else { text };
+        if ui_ctx.link(text).on_hover_text("Open in block explorer").clicked() {
+            ui::open_url_new_tab(&explorer_url);
+        }
+    } else {
+        let text = egui::RichText::new(value).monospace().small();
+        let text = if let Some(c) = color { text.color(c) } else { text };
+        ui_ctx.label(text);
+    }
+}
 
 /// Render the full decode section
 pub fn render_decode_section(
     ui: &mut egui::Ui,
     decode: &mut DecodedTransaction,
+    chain_name: &str,
 ) {
     ui.add_space(10.0);
 
@@ -19,10 +42,10 @@ pub fn render_decode_section(
             });
         }
         TransactionKind::Single(single) => {
-            render_single_section(ui, single, &decode.selector);
+            render_single_section(ui, single, &decode.selector, chain_name);
         }
         TransactionKind::MultiSend(multi) => {
-            render_multisend_section(ui, multi);
+            render_multisend_section(ui, multi, chain_name);
         }
         TransactionKind::Unknown => {
             ui.horizontal(|ui| {
@@ -36,7 +59,7 @@ pub fn render_decode_section(
 }
 
 /// Render single function call decode
-fn render_single_section(ui: &mut egui::Ui, decode: &SingleDecode, selector: &str) {
+fn render_single_section(ui: &mut egui::Ui, decode: &SingleDecode, selector: &str, chain_name: &str) {
     // Header
     ui.horizontal(|ui| {
         ui.label(egui::RichText::new("📦 Calldata Decoding").strong());
@@ -46,11 +69,16 @@ fn render_single_section(ui: &mut egui::Ui, decode: &SingleDecode, selector: &st
 
     ui.add_space(8.0);
 
-    render_single_comparison(ui, decode);
+    render_single_comparison_with_chain(ui, decode, chain_name);
 }
 
-/// Render side-by-side comparison for a single decode
+/// Render side-by-side comparison for a single decode (no chain awareness - for backwards compat)
 pub fn render_single_comparison(ui: &mut egui::Ui, decode: &SingleDecode) {
+    render_single_comparison_with_chain(ui, decode, "ethereum");
+}
+
+/// Render side-by-side comparison for a single decode with chain-aware address links
+fn render_single_comparison_with_chain(ui: &mut egui::Ui, decode: &SingleDecode, chain_name: &str) {
     egui::Grid::new(format!("decode_compare_{:p}", decode))
         .num_columns(2)
         .spacing([30.0, 4.0])
@@ -70,7 +98,7 @@ pub fn render_single_comparison(ui: &mut egui::Ui, decode: &SingleDecode) {
             ui.end_row();
 
             // Parameter rows
-            render_params_rows(ui, decode);
+            render_params_rows(ui, decode, chain_name);
         });
 
     // Status message
@@ -110,7 +138,7 @@ fn render_method_row(ui: &mut egui::Ui, decode: &SingleDecode) {
 }
 
 /// Render parameter comparison rows
-fn render_params_rows(ui: &mut egui::Ui, decode: &SingleDecode) {
+fn render_params_rows(ui: &mut egui::Ui, decode: &SingleDecode, chain_name: &str) {
     static EMPTY_API: Vec<ApiParam> = Vec::new();
     static EMPTY_LOCAL: Vec<LocalParam> = Vec::new();
 
@@ -131,12 +159,12 @@ fn render_params_rows(ui: &mut egui::Ui, decode: &SingleDecode) {
             let label = format!("{} ({}):", ap.name, ap.typ);
             ui.vertical(|ui| {
                 ui.label(egui::RichText::new(label).weak().small());
-                let value_text = egui::RichText::new(&ap.value).monospace().small();
-                if has_mismatch {
-                    ui.label(value_text.color(egui::Color32::from_rgb(220, 80, 80)));
-                } else {
-                    ui.label(value_text);
-                }
+                let color = if has_mismatch { 
+                    Some(egui::Color32::from_rgb(220, 80, 80)) 
+                } else { 
+                    None 
+                };
+                render_param_value(ui, &ap.value, chain_name, color);
             });
         } else {
             ui.label(egui::RichText::new("—").weak());
@@ -147,12 +175,12 @@ fn render_params_rows(ui: &mut egui::Ui, decode: &SingleDecode) {
             let label = format!("param{} ({}):", i, lp.typ);
             ui.vertical(|ui| {
                 ui.label(egui::RichText::new(label).weak().small());
-                let value_text = egui::RichText::new(&lp.value).monospace().small();
-                if has_mismatch {
-                    ui.label(value_text.color(egui::Color32::from_rgb(100, 200, 100)));
-                } else {
-                    ui.label(value_text);
-                }
+                let color = if has_mismatch { 
+                    Some(egui::Color32::from_rgb(100, 200, 100)) 
+                } else { 
+                    None 
+                };
+                render_param_value(ui, &lp.value, chain_name, color);
             });
         } else {
             ui.label(egui::RichText::new("—").weak());
@@ -166,6 +194,7 @@ fn render_params_rows(ui: &mut egui::Ui, decode: &SingleDecode) {
 fn render_multisend_section(
     ui: &mut egui::Ui,
     multi: &mut MultiSendDecode,
+    chain_name: &str,
 ) {
     // Header with summary and expand/collapse buttons
     ui.horizontal(|ui| {
@@ -209,7 +238,7 @@ fn render_multisend_section(
 
     // Collapsible transactions
     for tx in &mut multi.transactions {
-        render_multisend_tx(ui, tx);
+        render_multisend_tx(ui, tx, chain_name);
     }
 }
 
@@ -323,6 +352,7 @@ fn format_wei(wei: &str) -> String {
 fn render_multisend_tx(
     ui: &mut egui::Ui,
     tx: &mut MultiSendTx,
+    chain_name: &str,
 ) {
     let header = build_tx_header(tx);
 
@@ -339,7 +369,14 @@ fn render_multisend_tx(
                 .spacing([10.0, 4.0])
                 .show(ui, |ui| {
                     ui.label("To:");
-                    ui.label(egui::RichText::new(&tx.to).monospace());
+                    // Make To address a clickable link
+                    let explorer_url = crate::ui::get_explorer_address_url(chain_name, &tx.to);
+                    if ui.link(egui::RichText::new(&tx.to).monospace())
+                        .on_hover_text("Open in block explorer")
+                        .clicked() 
+                    {
+                        crate::ui::open_url_new_tab(&explorer_url);
+                    }
                     ui.end_row();
 
                     ui.label("Value:");
@@ -355,7 +392,7 @@ fn render_multisend_tx(
 
             // Decode comparison (results already available from bulk verification)
             if let Some(decode) = &tx.decode {
-                render_single_comparison(ui, decode);
+                render_single_comparison_with_chain(ui, decode, chain_name);
             } else if tx.data == "0x" || tx.data.is_empty() {
                 ui.label(egui::RichText::new("No calldata").weak());
             } else {
@@ -487,6 +524,7 @@ fn render_raw_data(ui: &mut egui::Ui, data: &str) {
 pub fn render_offline_decode_section(
     ui: &mut egui::Ui,
     result: &mut OfflineDecodeResult,
+    chain_name: &str,
 ) {
     ui.add_space(10.0);
     
@@ -499,10 +537,10 @@ pub fn render_offline_decode_section(
             });
         }
         OfflineDecodeResult::Single { local, status } => {
-            render_offline_single_section(ui, local, status);
+            render_offline_single_section(ui, local, status, chain_name);
         }
         OfflineDecodeResult::MultiSend(txs) => {
-            render_offline_multisend_section(ui, txs);
+            render_offline_multisend_section(ui, txs, chain_name);
         }
         OfflineDecodeResult::RawHex(data) => {
             ui.horizontal(|ui| {
@@ -520,6 +558,7 @@ fn render_offline_single_section(
     ui: &mut egui::Ui,
     local: &LocalDecode,
     status: &OfflineDecodeStatus,
+    chain_name: &str,
 ) {
     // Header with status
     ui.horizontal(|ui| {
@@ -532,7 +571,7 @@ fn render_offline_single_section(
     // Show decode result
     match status {
         OfflineDecodeStatus::Decoded => {
-            render_offline_decode(ui, local);
+            render_offline_decode(ui, local, chain_name);
         }
         OfflineDecodeStatus::Unknown(selector) => {
             ui.label(
@@ -550,7 +589,7 @@ fn render_offline_single_section(
 }
 
 /// Render offline local decode (method + params)
-fn render_offline_decode(ui: &mut egui::Ui, local: &LocalDecode) {
+fn render_offline_decode(ui: &mut egui::Ui, local: &LocalDecode, chain_name: &str) {
     // Method name
     ui.label(egui::RichText::new(&local.method).monospace().strong());
     
@@ -567,17 +606,12 @@ fn render_offline_decode(ui: &mut egui::Ui, local: &LocalDecode) {
             .show(ui, |ui| {
                 for (i, param) in local.params.iter().enumerate() {
                     ui.label(egui::RichText::new(format!("param{} ({}):", i, param.typ)).weak().small());
-                    ui.label(egui::RichText::new(&param.value).monospace().small());
+                    render_param_value(ui, &param.value, chain_name, None);
                     ui.end_row();
                 }
             });
     }
     
-    ui.add_space(4.0);
-    ui.label(
-        egui::RichText::new("✅ Decoded via 4byte signature lookup")
-            .color(egui::Color32::from_rgb(100, 200, 100)),
-    );
 }
 
 /// Render offline status badge
@@ -596,6 +630,7 @@ fn render_offline_status_badge(ui: &mut egui::Ui, status: &OfflineDecodeStatus) 
 fn render_offline_multisend_section(
     ui: &mut egui::Ui,
     txs: &mut [OfflineMultiSendTx],
+    chain_name: &str,
 ) {
     // Header with count and expand/collapse buttons
     ui.horizontal(|ui| {
@@ -642,7 +677,7 @@ fn render_offline_multisend_section(
     
     // Render each transaction
     for tx in txs.iter_mut() {
-        render_offline_multisend_tx(ui, tx);
+        render_offline_multisend_tx(ui, tx, chain_name);
     }
 }
 
@@ -698,6 +733,7 @@ fn build_offline_tx_header(tx: &OfflineMultiSendTx) -> egui::RichText {
 fn render_offline_multisend_tx(
     ui: &mut egui::Ui,
     tx: &mut OfflineMultiSendTx,
+    chain_name: &str,
 ) {
     let header = build_offline_tx_header(tx);
     
@@ -713,7 +749,14 @@ fn render_offline_multisend_tx(
                 .spacing([10.0, 4.0])
                 .show(ui, |ui| {
                     ui.label("To:");
-                    ui.label(egui::RichText::new(&tx.to).monospace());
+                    // Make To address a clickable link
+                    let explorer_url = crate::ui::get_explorer_address_url(chain_name, &tx.to);
+                    if ui.link(egui::RichText::new(&tx.to).monospace())
+                        .on_hover_text("Open in block explorer")
+                        .clicked() 
+                    {
+                        crate::ui::open_url_new_tab(&explorer_url);
+                    }
                     ui.end_row();
                     
                     ui.label("Value:");
@@ -731,7 +774,7 @@ fn render_offline_multisend_tx(
             match &tx.status {
                 OfflineDecodeStatus::Decoded => {
                     if let Some(local) = &tx.local_decode {
-                        render_offline_decode(ui, local);
+                        render_offline_decode(ui, local, chain_name);
                     } else if tx.data == "0x" || tx.data.is_empty() {
                         ui.label(egui::RichText::new("No calldata (ETH transfer)").weak());
                     }

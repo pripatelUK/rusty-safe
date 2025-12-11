@@ -467,7 +467,7 @@ impl App {
             if let Some(decode_state) = &mut self.tx_state.decode {
                 ui.add_space(15.0);
                 ui::section_header(ui, "Calldata Verification");
-                decode::render_decode_section(ui, decode_state);
+                decode::render_decode_section(ui, decode_state, &self.tx_state.chain_name);
             }
         }
 
@@ -1348,7 +1348,7 @@ impl App {
             // Decode result
             if let Some(ref mut decode_result) = self.offline_state.decode_result {
                 ui.add_space(15.0);
-                decode::render_offline_decode_section(ui, decode_result);
+                decode::render_offline_decode_section(ui, decode_result, &self.offline_state.chain_name);
             }
         }
     }
