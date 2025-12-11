@@ -227,3 +227,81 @@ pub struct Eip712Hashes {
     pub message_hash: String,
     pub full_hash: String,
 }
+
+// =============================================================================
+// OFFLINE MODE STATE
+// =============================================================================
+
+use crate::decode::OfflineDecodeResult;
+
+/// Offline verification UI state (manual transaction input)
+pub struct OfflineState {
+    /// Selected chain name
+    pub chain_name: String,
+    /// Safe address (pre-filled from cache)
+    pub safe_address: String,
+    /// Safe version
+    pub safe_version: String,
+    
+    // Transaction inputs
+    pub to: String,
+    pub value: String,
+    pub data: String,
+    pub operation: u8,
+    pub nonce: String,
+    pub safe_tx_gas: String,
+    pub base_gas: String,
+    pub gas_price: String,
+    pub gas_token: String,
+    pub refund_receiver: String,
+    
+    // Results
+    pub decode_result: Option<OfflineDecodeResult>,
+    pub hashes: Option<ComputedHashes>,
+    
+    // State
+    pub is_loading: bool,
+    pub error: Option<String>,
+}
+
+impl Default for OfflineState {
+    fn default() -> Self {
+        let chains = get_all_supported_chain_names();
+        let default_chain = chains
+            .iter()
+            .find(|c| *c == "ethereum")
+            .cloned()
+            .unwrap_or_else(|| chains.first().cloned().unwrap_or_default());
+        
+        // Pre-fill from cached address
+        let cached_address = load_cached_safe_address().unwrap_or_default();
+        
+        Self {
+            chain_name: default_chain,
+            safe_address: cached_address,
+            safe_version: SAFE_VERSIONS[0].to_string(),
+            to: String::new(),
+            value: "0".to_string(),
+            data: String::new(),
+            operation: 0,
+            nonce: "0".to_string(),
+            safe_tx_gas: "0".to_string(),
+            base_gas: "0".to_string(),
+            gas_price: "0".to_string(),
+            gas_token: "0x0000000000000000000000000000000000000000".to_string(),
+            refund_receiver: "0x0000000000000000000000000000000000000000".to_string(),
+            decode_result: None,
+            hashes: None,
+            is_loading: false,
+            error: None,
+        }
+    }
+}
+
+impl OfflineState {
+    pub fn clear_results(&mut self) {
+        self.decode_result = None;
+        self.hashes = None;
+        self.error = None;
+    }
+}

@@ -209,4 +209,73 @@ impl SignatureCache {
     }
 }
 
+// =============================================================================
+// OFFLINE MODE TYPES
+// =============================================================================
+
+/// Status of offline decode (no API comparison, just 4byte lookup result)
+#[derive(Debug, Clone)]
+pub enum OfflineDecodeStatus {
+    /// Successfully decoded via 4byte lookup (green ✅)
+    Decoded,
+    /// Selector not found in 4byte database (red ❌)
+    Unknown(String),
+    /// Decode failed with error (red ❌)
+    Failed(String),
+}
+
+impl Default for OfflineDecodeStatus {
+    fn default() -> Self {
+        Self::Unknown(String::new())
+    }
+}
+
+impl OfflineDecodeStatus {
+    pub fn is_decoded(&self) -> bool {
+        matches!(self, OfflineDecodeStatus::Decoded)
+    }
+
+    pub fn is_error(&self) -> bool {
+        matches!(self, OfflineDecodeStatus::Unknown(_) | OfflineDecodeStatus::Failed(_))
+    }
+}
+
+/// Single transaction within an offline MultiSend batch
+#[derive(Debug, Clone)]
+pub struct OfflineMultiSendTx {
+    pub index: usize,
+    pub operation: u8,
+    pub to: String,
+    pub value: String,
+    pub data: String,
+    /// Local decode from 4byte lookup
+    pub local_decode: Option<LocalDecode>,
+    /// Decode status
+    pub status: OfflineDecodeStatus,
+    /// UI-only: whether this item is expanded
+    pub is_expanded: bool,
+}
+
+/// Result of offline calldata decode
+#[derive(Debug, Clone)]
+pub enum OfflineDecodeResult {
+    /// Empty calldata (native ETH transfer)
+    Empty,
+    /// Single function call
+    Single {
+        local: LocalDecode,
+        status: OfflineDecodeStatus,
+    },
+    /// MultiSend batch
+    MultiSend(Vec<OfflineMultiSendTx>),
+    /// Could not parse calldata (shows raw hex)
+    RawHex(String),
+}
+
+impl Default for OfflineDecodeResult {
+    fn default() -> Self {
+        Self::Empty
+    }
+}
+
 

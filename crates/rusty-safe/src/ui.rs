@@ -110,3 +110,13 @@ pub fn warning_message(ui: &mut egui::Ui, message: &str, color: egui::Color32) {
     });
 }
 
+/// Display a hash value with copy button
+pub fn copyable_hash(ui: &mut egui::Ui, hash: &str) {
+    ui.horizontal(|ui| {
+        ui.label(egui::RichText::new(hash).monospace().small());
+        if ui.small_button("📋").on_hover_text("Copy to clipboard").clicked() {
+            copy_to_clipboard(hash);
+        }
+    });
+}
+

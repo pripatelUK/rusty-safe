@@ -24,7 +24,7 @@ macro_rules! debug_log {
 }
 use crate::expected;
 use crate::hasher::{get_warnings_for_tx, get_warnings_from_api_tx, compute_hashes, compute_hashes_from_api_tx, fetch_transaction};
-use crate::state::{Eip712State, MsgVerifyState, TxVerifyState, SAFE_VERSIONS};
+use crate::state::{Eip712State, MsgVerifyState, TxVerifyState, OfflineState, SAFE_VERSIONS};
 use crate::ui;
 
 /// Result from async fetch operation
@@ -53,6 +53,13 @@ pub enum SafeInfoResult {
     Error(String),
 }
 
+/// Result from async offline decode
+#[derive(Clone)]
+pub enum OfflineDecodeResult {
+    Success(decode::OfflineDecodeResult),
+    Error(String),
+}
+
 /// The main application state
 pub struct App {
     /// Current active tab
@@ -63,6 +70,8 @@ pub struct App {
     msg_state: MsgVerifyState,
     /// EIP-712 state
     eip712_state: Eip712State,
+    /// Offline verification state
+    offline_state: OfflineState,
     /// Cached chain names from safe_utils
     chain_names: Vec<String>,
     /// Async fetch result receiver
@@ -73,6 +82,8 @@ pub struct App {
     decode_result: Arc<Mutex<Option<DecodeResult>>>,
     /// Async Safe info fetch result receiver
     safe_info_result: Arc<Mutex<Option<SafeInfoResult>>>,
+    /// Async offline decode result receiver
+    offline_decode_result: Arc<Mutex<Option<OfflineDecodeResult>>>,
     /// Fetched Safe info
     safe_info: Option<crate::hasher::SafeInfo>,
     /// Whether Safe info fetch is in progress
@@ -86,6 +97,7 @@ pub enum Tab {
     Transaction,
     Message,
     Eip712,
+    Offline,
 }
 
 impl App {
@@ -97,12 +109,14 @@ impl App {
         let mut tx_state = TxVerifyState::default();
         let mut msg_state = MsgVerifyState::default();
         let mut eip712_state = Eip712State::default();
+        let mut offline_state = OfflineState::default();
         
         // Apply cached address to all states
         if !cached_address.is_empty() {
             tx_state.safe_address = cached_address.clone();
             msg_state.safe_address = cached_address.clone();
-            eip712_state.safe_address = cached_address;
+            eip712_state.safe_address = cached_address.clone();
+            offline_state.safe_address = cached_address;
         }
         
         Self {
@@ -110,11 +124,13 @@ impl App {
             tx_state,
             msg_state,
             eip712_state,
+            offline_state,
             chain_names: get_all_supported_chain_names(),
             fetch_result: Arc::new(Mutex::new(None)),
             signature_lookup: SignatureLookup::new(),
             decode_result: Arc::new(Mutex::new(None)),
             safe_info_result: Arc::new(Mutex::new(None)),
+            offline_decode_result: Arc::new(Mutex::new(None)),
             safe_info: None,
             safe_info_loading: false,
         }
@@ -133,6 +149,9 @@ impl eframe::App for App {
         
         // Check for async Safe info results
         self.check_safe_info_result();
+        
+        // Check for async offline decode results
+        self.check_offline_decode_result();
 
         egui::TopBottomPanel::top("header").show(ctx, |ui| {
             ui.add_space(8.0);
@@ -148,6 +167,7 @@ impl eframe::App for App {
                 ui.selectable_value(&mut self.active_tab, Tab::Transaction, "📝 Transaction");
                 ui.selectable_value(&mut self.active_tab, Tab::Message, "💬 Message");
                 ui.selectable_value(&mut self.active_tab, Tab::Eip712, "🔢 EIP-712");
+                ui.selectable_value(&mut self.active_tab, Tab::Offline, "📴 Offline");
             });
             ui.add_space(4.0);
         });
@@ -159,6 +179,7 @@ impl eframe::App for App {
                     Tab::Transaction => self.render_transaction_tab(ui, ctx),
                     Tab::Message => self.render_message_tab(ui),
                     Tab::Eip712 => self.render_eip712_tab(ui),
+                    Tab::Offline => self.render_offline_tab(ui, ctx),
                 }
                 ui.add_space(20.0);
             });
@@ -1187,6 +1208,325 @@ impl App {
                     Ok(info) => SafeInfoResult::Success(info),
                     Err(e) => SafeInfoResult::Error(format!("{:#}", e)),
                 });
+            });
+        }
+    }
+    
+    // =========================================================================
+    // OFFLINE TAB
+    // =========================================================================
+    
+    fn render_offline_tab(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
+        ui::styled_heading(ui, "Offline Verification");
+        ui.label("Manually input transaction data for offline verification (uses 4byte signature lookup).");
+        ui.add_space(15.0);
+        
+        // Chain and Version row
+        ui.horizontal(|ui| {
+            ui.label("Chain:");
+            egui::ComboBox::from_id_salt("offline_chain_select")
+                .selected_text(&self.offline_state.chain_name)
+                .width(120.0)
+                .show_ui(ui, |ui| {
+                    for chain in &self.chain_names {
+                        ui.selectable_value(
+                            &mut self.offline_state.chain_name,
+                            chain.clone(),
+                            chain,
+                        );
+                    }
+                });
+
+            ui.add_space(20.0);
+            ui.label("Safe Version:");
+            egui::ComboBox::from_id_salt("offline_version_select")
+                .selected_text(&self.offline_state.safe_version)
+                .width(100.0)
+                .show_ui(ui, |ui| {
+                    for version in SAFE_VERSIONS {
+                        ui.selectable_value(
+                            &mut self.offline_state.safe_version,
+                            version.to_string(),
+                            *version,
+                        );
+                    }
+                });
+        });
+        ui.add_space(10.0);
+        
+        // Safe Address
+        ui.horizontal(|ui| {
+            ui.label("Safe Address:");
+            let resp = ui.add(
+                egui::TextEdit::singleline(&mut self.offline_state.safe_address)
+                    .hint_text("0x...")
+                    .desired_width(400.0)
+                    .font(egui::TextStyle::Monospace),
+            );
+            if resp.lost_focus() || resp.changed() {
+                // Cache the address
+                crate::state::save_safe_address(&self.offline_state.safe_address);
+            }
+        });
+        ui.add_space(10.0);
+        
+        // Transaction inputs
+        ui::section_header(ui, "Transaction Details");
+        ui.add_space(5.0);
+        
+        // To address
+        ui.horizontal(|ui| {
+            ui.label("To:");
+            ui.add(
+                egui::TextEdit::singleline(&mut self.offline_state.to)
+                    .hint_text("0x...")
+                    .desired_width(400.0)
+                    .font(egui::TextStyle::Monospace),
+            );
+        });
+        
+        // Value
+        ui.horizontal(|ui| {
+            ui.label("Value (wei):");
+            ui.add(
+                egui::TextEdit::singleline(&mut self.offline_state.value)
+                    .hint_text("0")
+                    .desired_width(200.0)
+                    .font(egui::TextStyle::Monospace),
+            );
+        });
+        
+        // Data
+        ui.horizontal(|ui| {
+            ui.label("Data:");
+            ui.add(
+                egui::TextEdit::multiline(&mut self.offline_state.data)
+                    .hint_text("0x... (calldata)")
+                    .desired_width(500.0)
+                    .desired_rows(3)
+                    .font(egui::TextStyle::Monospace),
+            );
+        });
+        
+        // Operation
+        ui.horizontal(|ui| {
+            ui.label("Operation:");
+            egui::ComboBox::from_id_salt("offline_operation_select")
+                .selected_text(if self.offline_state.operation == 0 { "Call (0)" } else { "DelegateCall (1)" })
+                .width(150.0)
+                .show_ui(ui, |ui| {
+                    ui.selectable_value(&mut self.offline_state.operation, 0, "Call (0)");
+                    ui.selectable_value(&mut self.offline_state.operation, 1, "DelegateCall (1)");
+                });
+        });
+        
+        // Nonce
+        ui.horizontal(|ui| {
+            ui.label("Nonce:");
+            ui.add(
+                egui::TextEdit::singleline(&mut self.offline_state.nonce)
+                    .hint_text("0")
+                    .desired_width(100.0)
+                    .font(egui::TextStyle::Monospace),
+            );
+        });
+        
+        ui.add_space(10.0);
+        
+        // Advanced: Gas Parameters (collapsed by default)
+        egui::CollapsingHeader::new("⚙️ Advanced: Gas Parameters")
+            .default_open(false)
+            .show(ui, |ui| {
+                ui.add_space(5.0);
+                
+                ui.horizontal(|ui| {
+                    ui.label("SafeTxGas:");
+                    ui.add(
+                        egui::TextEdit::singleline(&mut self.offline_state.safe_tx_gas)
+                            .hint_text("0")
+                            .desired_width(100.0)
+                            .font(egui::TextStyle::Monospace),
+                    );
+                    
+                    ui.add_space(20.0);
+                    ui.label("BaseGas:");
+                    ui.add(
+                        egui::TextEdit::singleline(&mut self.offline_state.base_gas)
+                            .hint_text("0")
+                            .desired_width(100.0)
+                            .font(egui::TextStyle::Monospace),
+                    );
+                    
+                    ui.add_space(20.0);
+                    ui.label("GasPrice:");
+                    ui.add(
+                        egui::TextEdit::singleline(&mut self.offline_state.gas_price)
+                            .hint_text("0")
+                            .desired_width(100.0)
+                            .font(egui::TextStyle::Monospace),
+                    );
+                });
+                
+                ui.horizontal(|ui| {
+                    ui.label("GasToken:");
+                    ui.add(
+                        egui::TextEdit::singleline(&mut self.offline_state.gas_token)
+                            .hint_text("0x0000...0000")
+                            .desired_width(400.0)
+                            .font(egui::TextStyle::Monospace),
+                    );
+                });
+                
+                ui.horizontal(|ui| {
+                    ui.label("RefundReceiver:");
+                    ui.add(
+                        egui::TextEdit::singleline(&mut self.offline_state.refund_receiver)
+                            .hint_text("0x0000...0000")
+                            .desired_width(400.0)
+                            .font(egui::TextStyle::Monospace),
+                    );
+                });
+                
+                ui.add_space(5.0);
+                ui.label(egui::RichText::new("Most transactions use default values (all zeros)").weak().small());
+            });
+        
+        ui.add_space(15.0);
+        
+        // Compute button
+        let can_compute = !self.offline_state.safe_address.is_empty()
+            && !self.offline_state.to.is_empty()
+            && !self.offline_state.is_loading;
+        
+        ui.horizontal(|ui| {
+            if ui.add_enabled(can_compute, egui::Button::new("🔐 Compute Hash & Decode")).clicked() {
+                self.trigger_offline_compute(ctx.clone());
+            }
+            
+            if self.offline_state.is_loading {
+                ui.spinner();
+                ui.label("Computing...");
+            }
+        });
+        
+        // Error display
+        if let Some(ref error) = self.offline_state.error {
+            ui.add_space(10.0);
+            ui.label(egui::RichText::new(format!("❌ {}", error)).color(egui::Color32::from_rgb(220, 80, 80)));
+        }
+        
+        // Results
+        if self.offline_state.hashes.is_some() || self.offline_state.decode_result.is_some() {
+            ui.add_space(20.0);
+            ui.separator();
+            ui.add_space(10.0);
+            
+            // Hashes
+            if let Some(ref hashes) = self.offline_state.hashes {
+                ui::section_header(ui, "Transaction Hashes");
+                ui.add_space(5.0);
+                
+                egui::Grid::new("offline_hashes")
+                    .num_columns(2)
+                    .spacing([10.0, 4.0])
+                    .show(ui, |ui| {
+                        ui.label("SafeTxHash:");
+                        ui::copyable_hash(ui, &hashes.safe_tx_hash);
+                        ui.end_row();
+                        
+                        ui.label("Domain Hash:");
+                        ui::copyable_hash(ui, &hashes.domain_hash);
+                        ui.end_row();
+                        
+                        ui.label("Message Hash:");
+                        ui::copyable_hash(ui, &hashes.message_hash);
+                        ui.end_row();
+                    });
+            }
+            
+            // Decode result
+            if let Some(ref mut decode_result) = self.offline_state.decode_result {
+                ui.add_space(15.0);
+                decode::render_offline_decode_section(ui, decode_result);
+            }
+        }
+    }
+    
+    fn check_offline_decode_result(&mut self) {
+        let result = {
+            let mut guard = self.offline_decode_result.lock().unwrap();
+            guard.take()
+        };
+        
+        if let Some(result) = result {
+            self.offline_state.is_loading = false;
+            match result {
+                OfflineDecodeResult::Success(decode) => {
+                    self.offline_state.decode_result = Some(decode);
+                }
+                OfflineDecodeResult::Error(e) => {
+                    self.offline_state.error = Some(e);
+                }
+            }
+        }
+    }
+    
+    fn trigger_offline_compute(&mut self, ctx: egui::Context) {
+        self.offline_state.is_loading = true;
+        self.offline_state.error = None;
+        self.offline_state.hashes = None;
+        self.offline_state.decode_result = None;
+        
+        // Compute hashes synchronously (fast, doesn't need async)
+        match crate::hasher::compute_hashes(
+            &self.offline_state.chain_name,
+            &self.offline_state.safe_address,
+            &self.offline_state.safe_version,
+            &self.offline_state.to,
+            &self.offline_state.value,
+            &self.offline_state.data,
+            self.offline_state.operation,
+            &self.offline_state.safe_tx_gas,
+            &self.offline_state.base_gas,
+            &self.offline_state.gas_price,
+            &self.offline_state.gas_token,
+            &self.offline_state.refund_receiver,
+            &self.offline_state.nonce,
+        ) {
+            Ok(hashes) => {
+                self.offline_state.hashes = Some(hashes);
+            }
+            Err(e) => {
+                self.offline_state.is_loading = false;
+                self.offline_state.error = Some(format!("{:#}", e));
+                return;
+            }
+        }
+        
+        // Decode async (uses 4byte API)
+        let data = self.offline_state.data.clone();
+        let lookup = self.signature_lookup.clone();
+        let result = Arc::clone(&self.offline_decode_result);
+        
+        #[cfg(target_arch = "wasm32")]
+        {
+            use wasm_bindgen_futures::spawn_local;
+            spawn_local(async move {
+                let decode = decode::decode_offline(&data, &lookup).await;
+                let mut guard = result.lock().unwrap();
+                *guard = Some(OfflineDecodeResult::Success(decode));
+                ctx.request_repaint();
+            });
+        }
+        
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            std::thread::spawn(move || {
+                let rt = tokio::runtime::Runtime::new().unwrap();
+                let decode = rt.block_on(decode::decode_offline(&data, &lookup));
+                let mut guard = result.lock().unwrap();
+                *guard = Some(OfflineDecodeResult::Success(decode));
+                ctx.request_repaint();
             });
         }
     }

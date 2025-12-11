@@ -479,4 +479,286 @@ fn render_raw_data(ui: &mut egui::Ui, data: &str) {
     }
 }
 
+// =============================================================================
+// OFFLINE MODE UI RENDERING
+// =============================================================================
+
+/// Render offline decode section (4byte lookup only, no API comparison)
+pub fn render_offline_decode_section(
+    ui: &mut egui::Ui,
+    result: &mut OfflineDecodeResult,
+) {
+    ui.add_space(10.0);
+    
+    match result {
+        OfflineDecodeResult::Empty => {
+            ui.horizontal(|ui| {
+                ui.label(egui::RichText::new("📦 Calldata").strong());
+                ui.label(egui::RichText::new("(empty - native ETH transfer)").weak());
+                ui.label(egui::RichText::new("✅").color(egui::Color32::from_rgb(100, 200, 100)));
+            });
+        }
+        OfflineDecodeResult::Single { local, status } => {
+            render_offline_single_section(ui, local, status);
+        }
+        OfflineDecodeResult::MultiSend(txs) => {
+            render_offline_multisend_section(ui, txs);
+        }
+        OfflineDecodeResult::RawHex(data) => {
+            ui.horizontal(|ui| {
+                ui.label(egui::RichText::new("📦 Calldata").strong());
+                ui.label(egui::RichText::new("(could not parse)").weak());
+            });
+            ui.add_space(5.0);
+            render_raw_data(ui, data);
+        }
+    }
+}
+
+/// Render single function call for offline mode
+fn render_offline_single_section(
+    ui: &mut egui::Ui,
+    local: &LocalDecode,
+    status: &OfflineDecodeStatus,
+) {
+    // Header with status
+    ui.horizontal(|ui| {
+        ui.label(egui::RichText::new("📦 Calldata Decoding").strong());
+        render_offline_status_badge(ui, status);
+    });
+    
+    ui.add_space(8.0);
+    
+    // Show decode result
+    match status {
+        OfflineDecodeStatus::Decoded => {
+            render_offline_decode(ui, local);
+        }
+        OfflineDecodeStatus::Unknown(selector) => {
+            ui.label(
+                egui::RichText::new(format!("❌ Unknown function {}", selector))
+                    .color(egui::Color32::from_rgb(220, 80, 80)),
+            );
+        }
+        OfflineDecodeStatus::Failed(err) => {
+            ui.label(
+                egui::RichText::new(format!("❌ Decode failed: {}", err))
+                    .color(egui::Color32::from_rgb(220, 80, 80)),
+            );
+        }
+    }
+}
+
+/// Render offline local decode (method + params)
+fn render_offline_decode(ui: &mut egui::Ui, local: &LocalDecode) {
+    // Method name
+    ui.label(egui::RichText::new(&local.method).monospace().strong());
+    
+    ui.add_space(4.0);
+    
+    // Parameters
+    if local.params.is_empty() {
+        ui.label(egui::RichText::new("(no parameters)").weak());
+    } else {
+        egui::Grid::new("offline_params")
+            .num_columns(2)
+            .spacing([10.0, 4.0])
+            .striped(true)
+            .show(ui, |ui| {
+                for (i, param) in local.params.iter().enumerate() {
+                    ui.label(egui::RichText::new(format!("param{} ({}):", i, param.typ)).weak().small());
+                    ui.label(egui::RichText::new(&param.value).monospace().small());
+                    ui.end_row();
+                }
+            });
+    }
+    
+    ui.add_space(4.0);
+    ui.label(
+        egui::RichText::new("✅ Decoded via 4byte signature lookup")
+            .color(egui::Color32::from_rgb(100, 200, 100)),
+    );
+}
+
+/// Render offline status badge
+fn render_offline_status_badge(ui: &mut egui::Ui, status: &OfflineDecodeStatus) {
+    match status {
+        OfflineDecodeStatus::Decoded => {
+            ui.label(egui::RichText::new("✅").color(egui::Color32::from_rgb(100, 200, 100)));
+        }
+        OfflineDecodeStatus::Unknown(_) | OfflineDecodeStatus::Failed(_) => {
+            ui.label(egui::RichText::new("❌").color(egui::Color32::from_rgb(220, 80, 80)));
+        }
+    }
+}
+
+/// Render MultiSend section for offline mode
+fn render_offline_multisend_section(
+    ui: &mut egui::Ui,
+    txs: &mut [OfflineMultiSendTx],
+) {
+    // Header with count and expand/collapse buttons
+    ui.horizontal(|ui| {
+        ui.label(egui::RichText::new(format!(
+            "📦 MultiSend ({} transactions)",
+            txs.len()
+        )).strong());
+        
+        // Summary badges
+        let decoded = txs.iter().filter(|t| t.status.is_decoded()).count();
+        let errors = txs.iter().filter(|t| t.status.is_error()).count();
+        
+        if decoded > 0 {
+            ui.label(
+                egui::RichText::new(format!("✅ {}", decoded))
+                    .color(egui::Color32::from_rgb(100, 200, 100)),
+            );
+        }
+        if errors > 0 {
+            ui.label(
+                egui::RichText::new(format!("❌ {}", errors))
+                    .color(egui::Color32::from_rgb(220, 80, 80)),
+            );
+        }
+        
+        ui.add_space(20.0);
+        
+        // Expand All button
+        if ui.small_button("⬇ Expand All").clicked() {
+            for tx in txs.iter_mut() {
+                tx.is_expanded = true;
+            }
+        }
+        
+        // Collapse All button
+        if ui.small_button("⬆ Collapse All").clicked() {
+            for tx in txs.iter_mut() {
+                tx.is_expanded = false;
+            }
+        }
+    });
+    
+    ui.add_space(8.0);
+    
+    // Render each transaction
+    for tx in txs.iter_mut() {
+        render_offline_multisend_tx(ui, tx);
+    }
+}
+
+/// Build header for offline MultiSend transaction
+fn build_offline_tx_header(tx: &OfflineMultiSendTx) -> egui::RichText {
+    let (status_emoji, color) = match &tx.status {
+        OfflineDecodeStatus::Decoded => ("✓", egui::Color32::from_rgb(100, 200, 100)),
+        OfflineDecodeStatus::Unknown(_) | OfflineDecodeStatus::Failed(_) => {
+            ("✗", egui::Color32::from_rgb(220, 80, 80))
+        }
+    };
+    
+    // Method part
+    let method_part = tx.local_decode.as_ref()
+        .map(|d| {
+            let params_str = d.params
+                .iter()
+                .take(3)
+                .map(|p| truncate_param(&p.value, 12))
+                .collect::<Vec<_>>()
+                .join(", ");
+            
+            if d.params.len() > 3 {
+                format!("{}({}, ...)", d.method, params_str)
+            } else if params_str.is_empty() {
+                d.method.clone()
+            } else {
+                format!("{}({})", d.method, params_str)
+            }
+        })
+        .unwrap_or_else(|| {
+            if tx.data.len() >= 10 {
+                format!("Unknown {}", &tx.data[..10])
+            } else if tx.data == "0x" || tx.data.is_empty() {
+                "ETH transfer".to_string()
+            } else {
+                truncate_address(&tx.to)
+            }
+        });
+    
+    let value_part = if tx.value == "0" {
+        "0 ETH".to_string()
+    } else {
+        format_wei(&tx.value)
+    };
+    
+    let header_text = format!("#{} {} ({}) {}", tx.index + 1, method_part, value_part, status_emoji);
+    
+    egui::RichText::new(header_text).color(color)
+}
+
+/// Render a single offline MultiSend transaction (collapsible)
+fn render_offline_multisend_tx(
+    ui: &mut egui::Ui,
+    tx: &mut OfflineMultiSendTx,
+) {
+    let header = build_offline_tx_header(tx);
+    
+    let response = egui::CollapsingHeader::new(header)
+        .id_salt(format!("offline_multisend_tx_{}", tx.index))
+        .open(Some(tx.is_expanded))
+        .show(ui, |ui| {
+            ui.add_space(4.0);
+            
+            // Transaction details
+            egui::Grid::new(format!("offline_multisend_details_{}", tx.index))
+                .num_columns(2)
+                .spacing([10.0, 4.0])
+                .show(ui, |ui| {
+                    ui.label("To:");
+                    ui.label(egui::RichText::new(&tx.to).monospace());
+                    ui.end_row();
+                    
+                    ui.label("Value:");
+                    ui.label(format!("{} wei", tx.value));
+                    ui.end_row();
+                    
+                    ui.label("Operation:");
+                    ui.label(if tx.operation == 0 { "Call" } else { "DelegateCall" });
+                    ui.end_row();
+                });
+            
+            ui.add_space(8.0);
+            
+            // Decode result
+            match &tx.status {
+                OfflineDecodeStatus::Decoded => {
+                    if let Some(local) = &tx.local_decode {
+                        render_offline_decode(ui, local);
+                    } else if tx.data == "0x" || tx.data.is_empty() {
+                        ui.label(egui::RichText::new("No calldata (ETH transfer)").weak());
+                    }
+                }
+                OfflineDecodeStatus::Unknown(selector) => {
+                    ui.label(
+                        egui::RichText::new(format!("❌ Unknown function {}", selector))
+                            .color(egui::Color32::from_rgb(220, 80, 80)),
+                    );
+                    if !tx.data.is_empty() && tx.data != "0x" {
+                        ui.add_space(4.0);
+                        ui.label(egui::RichText::new("Raw calldata:").weak().small());
+                        render_raw_data(ui, &tx.data);
+                    }
+                }
+                OfflineDecodeStatus::Failed(err) => {
+                    ui.label(
+                        egui::RichText::new(format!("❌ Decode failed: {}", err))
+                            .color(egui::Color32::from_rgb(220, 80, 80)),
+                    );
+                }
+            }
+        });
+    
+    if response.header_response.clicked() {
+        tx.is_expanded = !tx.is_expanded;
+    }
+}
+
 

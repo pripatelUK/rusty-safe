@@ -135,7 +135,7 @@ fn parse_multisend(
 }
 
 /// Decode multiSend(bytes) ABI encoding to get the packed bytes
-fn decode_multisend_bytes(raw_data: &str) -> Result<Vec<u8>> {
+pub fn decode_multisend_bytes(raw_data: &str) -> Result<Vec<u8>> {
     // Skip selector (4 bytes = 8 hex chars + 2 for "0x")
     let encoded = raw_data
         .strip_prefix("0x")
@@ -169,7 +169,7 @@ fn decode_multisend_bytes(raw_data: &str) -> Result<Vec<u8>> {
 }
 
 /// Unpack MultiSend packed transactions
-fn unpack_multisend_transactions(packed: &[u8]) -> Result<Vec<MultiSendTx>> {
+pub fn unpack_multisend_transactions(packed: &[u8]) -> Result<Vec<MultiSendTx>> {
     let mut transactions = Vec::new();
     let mut offset = 0;
 
@@ -233,19 +233,7 @@ fn unpack_multisend_transactions(packed: &[u8]) -> Result<Vec<MultiSendTx>> {
     Ok(transactions)
 }
 
-/// Log to console (works in both WASM and native)
-macro_rules! decode_log {
-    ($($arg:tt)*) => {
-        #[cfg(target_arch = "wasm32")]
-        {
-            web_sys::console::log_1(&format!($($arg)*).into());
-        }
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            eprintln!("[decode] {}", format!($($arg)*));
-        }
-    };
-}
+use super::decode_log;
 
 /// Decode calldata using a function signature
 ///
