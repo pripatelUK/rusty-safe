@@ -219,7 +219,7 @@ impl App {
             if version_from_api.is_some() {
                 // Show as disabled/read-only
                 ui.add_enabled(false, egui::Button::new(&self.tx_state.safe_version).min_size(egui::vec2(100.0, 0.0)));
-                ui.label(egui::RichText::new("(from API)").weak().small());
+                ui.label(egui::RichText::new("(from API)").weak());
             } else {
                 egui::ComboBox::from_id_salt("version_select")
                     .selected_text(&self.tx_state.safe_version)
@@ -276,7 +276,7 @@ impl App {
             for (i, owner) in info.owners.iter().enumerate() {
                 ui.horizontal(|ui| {
                     ui.add_space(120.0);
-                    ui.label(egui::RichText::new(format!("{:?}", owner)).monospace().small());
+                    ui.label(egui::RichText::new(format!("{:?}", owner)).monospace());
                 });
             }
             
@@ -294,7 +294,7 @@ impl App {
                 for (i, module) in info.modules.iter().enumerate() {
                     ui.horizontal(|ui| {
                         ui.add_space(120.0);
-                        ui.label(egui::RichText::new(format!("{:?}", module)).monospace().small());
+                        ui.label(egui::RichText::new(format!("{:?}", module)).monospace());
                     });
                 }
             }
@@ -1263,7 +1263,7 @@ impl App {
                     });
                 
                 ui.add_space(5.0);
-                ui.label(egui::RichText::new("Most transactions use default values (all zeros)").weak().small());
+                ui.label(egui::RichText::new("Most transactions use default values (all zeros)").weak());
             });
         
         ui.add_space(15.0);

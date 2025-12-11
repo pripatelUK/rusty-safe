@@ -14,13 +14,13 @@ fn is_address(value: &str) -> bool {
 fn render_param_value(ui_ctx: &mut egui::Ui, value: &str, chain_name: &str, color: Option<egui::Color32>) {
     if is_address(value) {
         let explorer_url = ui::get_explorer_address_url(chain_name, value);
-        let text = egui::RichText::new(value).monospace().small();
+        let text = egui::RichText::new(value).monospace();
         let text = if let Some(c) = color { text.color(c) } else { text };
         if ui_ctx.link(text).on_hover_text("Open in block explorer").clicked() {
             ui::open_url_new_tab(&explorer_url);
         }
     } else {
-        let text = egui::RichText::new(value).monospace().small();
+        let text = egui::RichText::new(value).monospace();
         let text = if let Some(c) = color { text.color(c) } else { text };
         ui_ctx.label(text);
     }
@@ -158,7 +158,7 @@ fn render_params_rows(ui: &mut egui::Ui, decode: &SingleDecode, chain_name: &str
         if let Some(ap) = api_param {
             let label = format!("{} ({}):", ap.name, ap.typ);
             ui.vertical(|ui| {
-                ui.label(egui::RichText::new(label).weak().small());
+                ui.label(egui::RichText::new(label).weak());
                 let color = if has_mismatch { 
                     Some(egui::Color32::from_rgb(220, 80, 80)) 
                 } else { 
@@ -174,7 +174,7 @@ fn render_params_rows(ui: &mut egui::Ui, decode: &SingleDecode, chain_name: &str
         if let Some(lp) = local_param {
             let label = format!("param{} ({}):", i, lp.typ);
             ui.vertical(|ui| {
-                ui.label(egui::RichText::new(label).weak().small());
+                ui.label(egui::RichText::new(label).weak());
                 let color = if has_mismatch { 
                     Some(egui::Color32::from_rgb(100, 200, 100)) 
                 } else { 
@@ -474,8 +474,7 @@ fn render_comparison_message(ui: &mut egui::Ui, result: &ComparisonResult) {
             );
             ui.label(
                 egui::RichText::new("Trust the Independent column - this is what will execute")
-                    .weak()
-                    .small(),
+                    .weak(),
             );
         }
         ComparisonResult::OnlyApi => {
@@ -509,10 +508,10 @@ fn render_raw_data(ui: &mut egui::Ui, data: &str) {
         egui::ScrollArea::horizontal()
             .max_width(400.0)
             .show(ui, |ui| {
-                ui.label(egui::RichText::new(data).monospace().small());
+                ui.label(egui::RichText::new(data).monospace());
             });
     } else {
-        ui.label(egui::RichText::new(data).monospace().small());
+        ui.label(egui::RichText::new(data).monospace());
     }
 }
 
@@ -605,7 +604,7 @@ fn render_offline_decode(ui: &mut egui::Ui, local: &LocalDecode, chain_name: &st
             .striped(true)
             .show(ui, |ui| {
                 for (i, param) in local.params.iter().enumerate() {
-                    ui.label(egui::RichText::new(format!("param{} ({}):", i, param.typ)).weak().small());
+                    ui.label(egui::RichText::new(format!("param{} ({}):", i, param.typ)).weak());
                     render_param_value(ui, &param.value, chain_name, None);
                     ui.end_row();
                 }
@@ -786,7 +785,7 @@ fn render_offline_multisend_tx(
                     );
                     if !tx.data.is_empty() && tx.data != "0x" {
                         ui.add_space(4.0);
-                        ui.label(egui::RichText::new("Raw calldata:").weak().small());
+                        ui.label(egui::RichText::new("Raw calldata:").weak());
                         render_raw_data(ui, &tx.data);
                     }
                 }
