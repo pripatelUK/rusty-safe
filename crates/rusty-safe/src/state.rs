@@ -55,19 +55,6 @@ pub struct TxVerifyState {
     pub safe_version: String,
     /// Transaction nonce
     pub nonce: String,
-    /// Offline mode
-    pub offline_mode: bool,
-
-    // Offline mode inputs
-    pub to: String,
-    pub value: String,
-    pub data: String,
-    pub operation: u8,
-    pub safe_tx_gas: String,
-    pub base_gas: String,
-    pub gas_price: String,
-    pub gas_token: String,
-    pub refund_receiver: String,
 
     // Expected values for API validation
     pub expected: ExpectedState,
@@ -117,16 +104,6 @@ impl Default for TxVerifyState {
             safe_address: String::new(),
             safe_version: SAFE_VERSIONS[0].to_string(),
             nonce: String::new(),
-            offline_mode: false,
-            to: String::new(),
-            value: "0".to_string(),
-            data: String::new(),
-            operation: 0,
-            safe_tx_gas: "0".to_string(),
-            base_gas: "0".to_string(),
-            gas_price: "0".to_string(),
-            gas_token: "0x0000000000000000000000000000000000000000".to_string(),
-            refund_receiver: "0x0000000000000000000000000000000000000000".to_string(),
             expected: ExpectedState::default(),
             decode: None,
             show_full_data: false,
@@ -258,6 +235,7 @@ pub struct OfflineState {
     // Results
     pub decode_result: Option<OfflineDecodeResult>,
     pub hashes: Option<ComputedHashes>,
+    pub warnings: SafeWarnings,
     
     // State
     pub is_loading: bool,
@@ -292,6 +270,7 @@ impl Default for OfflineState {
             refund_receiver: "0x0000000000000000000000000000000000000000".to_string(),
             decode_result: None,
             hashes: None,
+            warnings: SafeWarnings::new(),
             is_loading: false,
             error: None,
         }
@@ -302,6 +281,7 @@ impl OfflineState {
     pub fn clear_results(&mut self) {
         self.decode_result = None;
         self.hashes = None;
+        self.warnings = SafeWarnings::new();
         self.error = None;
     }
 }

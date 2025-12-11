@@ -23,7 +23,7 @@ macro_rules! debug_log {
     };
 }
 use crate::expected;
-use crate::hasher::{get_warnings_for_tx, get_warnings_from_api_tx, compute_hashes, compute_hashes_from_api_tx, fetch_transaction};
+use crate::hasher::{get_warnings_for_tx, get_warnings_from_api_tx, compute_hashes_from_api_tx, fetch_transaction};
 use crate::state::{Eip712State, MsgVerifyState, TxVerifyState, OfflineState, SAFE_VERSIONS};
 use crate::ui;
 
@@ -339,67 +339,9 @@ impl App {
             }
         });
 
+        // Expected values section
         ui.add_space(10.0);
-
-        ui.checkbox(
-            &mut self.tx_state.offline_mode,
-            "Offline Mode (manually provide all parameters)",
-        );
-
-        if self.tx_state.offline_mode {
-            ui.add_space(10.0);
-            ui::section_header(ui, "Transaction Parameters");
-
-            egui::Grid::new("offline_inputs")
-                .num_columns(2)
-                .spacing([10.0, 8.0])
-                .show(ui, |ui| {
-                    ui.label("To:");
-                    ui::address_input(ui, &mut self.tx_state.to);
-                    ui.end_row();
-
-                    ui.label("Value (wei):");
-                    ui::number_input(ui, &mut self.tx_state.value, "0");
-                    ui.end_row();
-
-                    ui.label("Data (hex):");
-                    ui::multiline_input(ui, &mut self.tx_state.data, "0x...", 3);
-                    ui.end_row();
-
-                    ui.label("Operation:");
-                    ui.horizontal(|ui| {
-                        ui.selectable_value(&mut self.tx_state.operation, 0, "Call (0)");
-                        ui.selectable_value(&mut self.tx_state.operation, 1, "DelegateCall (1)");
-                    });
-                    ui.end_row();
-
-                    ui.label("Safe Tx Gas:");
-                    ui::number_input(ui, &mut self.tx_state.safe_tx_gas, "0");
-                    ui.end_row();
-
-                    ui.label("Base Gas:");
-                    ui::number_input(ui, &mut self.tx_state.base_gas, "0");
-                    ui.end_row();
-
-                    ui.label("Gas Price:");
-                    ui::number_input(ui, &mut self.tx_state.gas_price, "0");
-                    ui.end_row();
-
-                    ui.label("Gas Token:");
-                    ui::address_input(ui, &mut self.tx_state.gas_token);
-                    ui.end_row();
-
-                    ui.label("Refund Receiver:");
-                    ui::address_input(ui, &mut self.tx_state.refund_receiver);
-                    ui.end_row();
-                });
-        }
-
-        // Expected values section (only shown when NOT in offline mode)
-        if !self.tx_state.offline_mode {
-            ui.add_space(10.0);
-            expected::render_section(ui, &mut self.tx_state.expected);
-        }
+        expected::render_section(ui, &mut self.tx_state.expected);
 
         ui.add_space(15.0);
 
@@ -408,14 +350,8 @@ impl App {
                 && !self.tx_state.nonce.is_empty()
                 && !self.tx_state.is_loading;
 
-            if self.tx_state.offline_mode {
-                if ui.button("🔐 Compute Hashes").clicked() && can_compute {
-                    self.compute_offline_hashes();
-                }
-            } else {
-                if ui.button("🔍 Fetch & Verify").clicked() && can_compute {
-                    self.fetch_and_verify(ctx);
-                }
+            if ui.button("🔍 Fetch & Verify").clicked() && can_compute {
+                self.fetch_and_verify(ctx);
             }
 
             if ui.button("🗑 Clear").clicked() {
@@ -745,48 +681,6 @@ impl App {
         if let Some(error) = &self.eip712_state.error {
             ui.add_space(10.0);
             ui::error_message(ui, error);
-        }
-    }
-
-    fn compute_offline_hashes(&mut self) {
-        self.tx_state.error = None;
-        self.tx_state.warnings = SafeWarnings::new();
-
-        // Check warnings using safe_hash::check_suspicious_content
-        self.tx_state.warnings = get_warnings_for_tx(
-            &self.tx_state.to,
-            &self.tx_state.value,
-            &self.tx_state.data,
-            self.tx_state.operation,
-            &self.tx_state.safe_tx_gas,
-            &self.tx_state.base_gas,
-            &self.tx_state.gas_price,
-            &self.tx_state.gas_token,
-            &self.tx_state.refund_receiver,
-        );
-
-        // Compute hashes using safe_hash::tx_signing_hashes
-        match compute_hashes(
-            &self.tx_state.chain_name,
-            &self.tx_state.safe_address,
-            &self.tx_state.safe_version,
-            &self.tx_state.to,
-            &self.tx_state.value,
-            &self.tx_state.data,
-            self.tx_state.operation,
-            &self.tx_state.safe_tx_gas,
-            &self.tx_state.base_gas,
-            &self.tx_state.gas_price,
-            &self.tx_state.gas_token,
-            &self.tx_state.refund_receiver,
-            &self.tx_state.nonce,
-        ) {
-            Ok(hashes) => {
-                self.tx_state.hashes = Some(hashes);
-            }
-            Err(e) => {
-                self.tx_state.error = Some(format!("{:#}", e));
-            }
         }
     }
 
@@ -1369,6 +1263,24 @@ impl App {
             ui.separator();
             ui.add_space(10.0);
             
+            // Warnings
+            if self.offline_state.warnings.has_warnings() {
+                ui::section_header(ui, "⚠️ Warnings");
+                
+                let w = &self.offline_state.warnings;
+                if w.delegatecall {
+                    ui::warning_message(ui, "⚠️ DELEGATECALL - can modify Safe state!", egui::Color32::from_rgb(220, 50, 50));
+                }
+                if w.non_zero_gas_token {
+                    ui::warning_message(ui, "Non-zero gas token", egui::Color32::from_rgb(220, 180, 50));
+                }
+                if w.non_zero_refund_receiver {
+                    ui::warning_message(ui, "Non-zero refund receiver", egui::Color32::from_rgb(220, 180, 50));
+                }
+                
+                ui.add_space(10.0);
+            }
+            
             // Hashes
             if let Some(ref hashes) = self.offline_state.hashes {
                 ui::section_header(ui, "Hash Results");
@@ -1451,6 +1363,18 @@ impl App {
         ) {
             Ok(hashes) => {
                 self.offline_state.hashes = Some(hashes);
+                // Compute warnings
+                self.offline_state.warnings = get_warnings_for_tx(
+                    &self.offline_state.to,
+                    &self.offline_state.value,
+                    &self.offline_state.data,
+                    self.offline_state.operation,
+                    &self.offline_state.safe_tx_gas,
+                    &self.offline_state.base_gas,
+                    &self.offline_state.gas_price,
+                    &self.offline_state.gas_token,
+                    &self.offline_state.refund_receiver,
+                );
             }
             Err(e) => {
                 self.offline_state.is_loading = false;
