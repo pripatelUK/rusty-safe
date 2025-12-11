@@ -34,6 +34,17 @@ pub fn open_url_new_tab(url: &str) {
     let _ = open::that(url);
 }
 
+/// Render an address as a clickable hyperlink that opens in block explorer
+pub fn address_link(ui: &mut egui::Ui, chain_name: &str, address: &str) -> egui::Response {
+    let explorer_url = get_explorer_address_url(chain_name, address);
+    let response = ui.link(egui::RichText::new(address).monospace())
+        .on_hover_text("Open in block explorer");
+    if response.clicked() {
+        open_url_new_tab(&explorer_url);
+    }
+    response
+}
+
 /// Styled heading with accent color
 pub fn styled_heading(ui: &mut egui::Ui, text: &str) {
     ui.heading(egui::RichText::new(text).color(egui::Color32::from_rgb(0, 212, 170)));

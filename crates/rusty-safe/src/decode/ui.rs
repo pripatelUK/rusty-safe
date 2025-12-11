@@ -13,11 +13,17 @@ fn is_address(value: &str) -> bool {
 /// Render a parameter value - as hyperlink if it's an address, otherwise as label
 fn render_param_value(ui_ctx: &mut egui::Ui, value: &str, chain_name: &str, color: Option<egui::Color32>) {
     if is_address(value) {
-        let explorer_url = ui::get_explorer_address_url(chain_name, value);
-        let text = egui::RichText::new(value).monospace();
-        let text = if let Some(c) = color { text.color(c) } else { text };
-        if ui_ctx.link(text).on_hover_text("Open in block explorer").clicked() {
-            ui::open_url_new_tab(&explorer_url);
+        // For colored address links, we need custom handling
+        if let Some(c) = color {
+            let explorer_url = ui::get_explorer_address_url(chain_name, value);
+            if ui_ctx.link(egui::RichText::new(value).monospace().color(c))
+                .on_hover_text("Open in block explorer")
+                .clicked() 
+            {
+                ui::open_url_new_tab(&explorer_url);
+            }
+        } else {
+            ui::address_link(ui_ctx, chain_name, value);
         }
     } else {
         let text = egui::RichText::new(value).monospace();
@@ -369,14 +375,7 @@ fn render_multisend_tx(
                 .spacing([10.0, 4.0])
                 .show(ui, |ui| {
                     ui.label("To:");
-                    // Make To address a clickable link
-                    let explorer_url = crate::ui::get_explorer_address_url(chain_name, &tx.to);
-                    if ui.link(egui::RichText::new(&tx.to).monospace())
-                        .on_hover_text("Open in block explorer")
-                        .clicked() 
-                    {
-                        crate::ui::open_url_new_tab(&explorer_url);
-                    }
+                    ui::address_link(ui, chain_name, &tx.to);
                     ui.end_row();
 
                     ui.label("Value:");
@@ -748,14 +747,7 @@ fn render_offline_multisend_tx(
                 .spacing([10.0, 4.0])
                 .show(ui, |ui| {
                     ui.label("To:");
-                    // Make To address a clickable link
-                    let explorer_url = crate::ui::get_explorer_address_url(chain_name, &tx.to);
-                    if ui.link(egui::RichText::new(&tx.to).monospace())
-                        .on_hover_text("Open in block explorer")
-                        .clicked() 
-                    {
-                        crate::ui::open_url_new_tab(&explorer_url);
-                    }
+                    ui::address_link(ui, chain_name, &tx.to);
                     ui.end_row();
                     
                     ui.label("Value:");

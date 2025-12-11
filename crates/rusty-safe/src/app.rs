@@ -262,42 +262,44 @@ impl App {
         if let Some(ref info) = self.safe_info {
             ui.add_space(5.0);
             
-            // Threshold info
-            ui.horizontal(|ui| {
-                ui.add_space(100.0);
-                ui.label(egui::RichText::new(format!(
-                    "Threshold: {}/{}",
-                    info.threshold,
-                    info.owners.len()
-                )).size(14.0));
-            });
-            
-            // List signers
-            for (i, owner) in info.owners.iter().enumerate() {
-                ui.horizontal(|ui| {
-                    ui.add_space(120.0);
-                    ui.label(egui::RichText::new(format!("{:?}", owner)).monospace());
+            egui::Grid::new("safe_info_grid")
+                .num_columns(2)
+                .spacing([10.0, 4.0])
+                .show(ui, |ui| {
+                    // Threshold with signers
+                    ui.label(format!("Threshold ({}/{}):", info.threshold, info.owners.len()));
+                    if let Some(first_owner) = info.owners.first() {
+                        let addr = format!("{:?}", first_owner);
+                        ui::address_link(ui, &self.tx_state.chain_name, &addr);
+                    }
+                    ui.end_row();
+                    
+                    // Additional signers
+                    for owner in info.owners.iter().skip(1) {
+                        ui.label(""); // Empty label for alignment
+                        let addr = format!("{:?}", owner);
+                        ui::address_link(ui, &self.tx_state.chain_name, &addr);
+                        ui.end_row();
+                    }
+                    
+                    // Modules (if any)
+                    if !info.modules.is_empty() {
+                        ui.label(format!("Modules ({}):", info.modules.len()));
+                        if let Some(first_module) = info.modules.first() {
+                            let addr = format!("{:?}", first_module);
+                            ui::address_link(ui, &self.tx_state.chain_name, &addr);
+                        }
+                        ui.end_row();
+                        
+                        // Additional modules
+                        for module in info.modules.iter().skip(1) {
+                            ui.label(""); // Empty label for alignment
+                            let addr = format!("{:?}", module);
+                            ui::address_link(ui, &self.tx_state.chain_name, &addr);
+                            ui.end_row();
+                        }
+                    }
                 });
-            }
-            
-            // Modules info (if any)
-            if !info.modules.is_empty() {
-                ui.add_space(3.0);
-                ui.horizontal(|ui| {
-                    ui.add_space(100.0);
-                    ui.label(egui::RichText::new(format!(
-                        "Modules: {}",
-                        info.modules.len()
-                    )).size(14.0));
-                });
-                
-                for (i, module) in info.modules.iter().enumerate() {
-                    ui.horizontal(|ui| {
-                        ui.add_space(120.0);
-                        ui.label(egui::RichText::new(format!("{:?}", module)).monospace());
-                    });
-                }
-            }
         }
 
         ui.add_space(5.0);
@@ -379,13 +381,7 @@ impl App {
                 .show(ui, |ui| {
                     ui.label("To:");
                     let to_str = format!("{}", tx.to);
-                    let explorer_url = ui::get_explorer_address_url(&self.tx_state.chain_name, &to_str);
-                    if ui.link(egui::RichText::new(&to_str).monospace())
-                        .on_hover_text("Open in block explorer")
-                        .clicked() 
-                    {
-                        ui::open_url_new_tab(&explorer_url);
-                    }
+                    ui::address_link(ui, &self.tx_state.chain_name, &to_str);
                     if ui.small_button("📋").on_hover_text("Copy").clicked() {
                         ui::copy_to_clipboard(&to_str);
                     }
