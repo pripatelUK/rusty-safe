@@ -1274,62 +1274,33 @@ impl App {
         ui::section_header(ui, "Transaction Details");
         ui.add_space(5.0);
         
-        // To address
-        ui.horizontal(|ui| {
-            ui.label("To:");
-            ui.add(
-                egui::TextEdit::singleline(&mut self.offline_state.to)
-                    .hint_text("0x...")
-                    .desired_width(400.0)
-                    .font(egui::TextStyle::Monospace),
-            );
-        });
-        
-        // Value
-        ui.horizontal(|ui| {
-            ui.label("Value (wei):");
-            ui.add(
-                egui::TextEdit::singleline(&mut self.offline_state.value)
-                    .hint_text("0")
-                    .desired_width(200.0)
-                    .font(egui::TextStyle::Monospace),
-            );
-        });
-        
-        // Data
-        ui.horizontal(|ui| {
-            ui.label("Data:");
-            ui.add(
-                egui::TextEdit::multiline(&mut self.offline_state.data)
-                    .hint_text("0x... (calldata)")
-                    .desired_width(500.0)
-                    .desired_rows(3)
-                    .font(egui::TextStyle::Monospace),
-            );
-        });
-        
-        // Operation
-        ui.horizontal(|ui| {
-            ui.label("Operation:");
-            egui::ComboBox::from_id_salt("offline_operation_select")
-                .selected_text(if self.offline_state.operation == 0 { "Call (0)" } else { "DelegateCall (1)" })
-                .width(150.0)
-                .show_ui(ui, |ui| {
+        egui::Grid::new("offline_tx_inputs")
+            .num_columns(2)
+            .spacing([10.0, 8.0])
+            .show(ui, |ui| {
+                ui.label("To:");
+                ui::address_input(ui, &mut self.offline_state.to);
+                ui.end_row();
+                
+                ui.label("Value (wei):");
+                ui::number_input(ui, &mut self.offline_state.value, "0");
+                ui.end_row();
+                
+                ui.label("Data (hex):");
+                ui::multiline_input(ui, &mut self.offline_state.data, "0x...", 3);
+                ui.end_row();
+                
+                ui.label("Operation:");
+                ui.horizontal(|ui| {
                     ui.selectable_value(&mut self.offline_state.operation, 0, "Call (0)");
                     ui.selectable_value(&mut self.offline_state.operation, 1, "DelegateCall (1)");
                 });
-        });
-        
-        // Nonce
-        ui.horizontal(|ui| {
-            ui.label("Nonce:");
-            ui.add(
-                egui::TextEdit::singleline(&mut self.offline_state.nonce)
-                    .hint_text("0")
-                    .desired_width(100.0)
-                    .font(egui::TextStyle::Monospace),
-            );
-        });
+                ui.end_row();
+                
+                ui.label("Nonce:");
+                ui::number_input(ui, &mut self.offline_state.nonce, "0");
+                ui.end_row();
+            });
         
         ui.add_space(10.0);
         
@@ -1339,53 +1310,30 @@ impl App {
             .show(ui, |ui| {
                 ui.add_space(5.0);
                 
-                ui.horizontal(|ui| {
-                    ui.label("SafeTxGas:");
-                    ui.add(
-                        egui::TextEdit::singleline(&mut self.offline_state.safe_tx_gas)
-                            .hint_text("0")
-                            .desired_width(100.0)
-                            .font(egui::TextStyle::Monospace),
-                    );
-                    
-                    ui.add_space(20.0);
-                    ui.label("BaseGas:");
-                    ui.add(
-                        egui::TextEdit::singleline(&mut self.offline_state.base_gas)
-                            .hint_text("0")
-                            .desired_width(100.0)
-                            .font(egui::TextStyle::Monospace),
-                    );
-                    
-                    ui.add_space(20.0);
-                    ui.label("GasPrice:");
-                    ui.add(
-                        egui::TextEdit::singleline(&mut self.offline_state.gas_price)
-                            .hint_text("0")
-                            .desired_width(100.0)
-                            .font(egui::TextStyle::Monospace),
-                    );
-                });
-                
-                ui.horizontal(|ui| {
-                    ui.label("GasToken:");
-                    ui.add(
-                        egui::TextEdit::singleline(&mut self.offline_state.gas_token)
-                            .hint_text("0x0000...0000")
-                            .desired_width(400.0)
-                            .font(egui::TextStyle::Monospace),
-                    );
-                });
-                
-                ui.horizontal(|ui| {
-                    ui.label("RefundReceiver:");
-                    ui.add(
-                        egui::TextEdit::singleline(&mut self.offline_state.refund_receiver)
-                            .hint_text("0x0000...0000")
-                            .desired_width(400.0)
-                            .font(egui::TextStyle::Monospace),
-                    );
-                });
+                egui::Grid::new("offline_gas_inputs")
+                    .num_columns(2)
+                    .spacing([10.0, 8.0])
+                    .show(ui, |ui| {
+                        ui.label("SafeTxGas:");
+                        ui::number_input(ui, &mut self.offline_state.safe_tx_gas, "0");
+                        ui.end_row();
+                        
+                        ui.label("BaseGas:");
+                        ui::number_input(ui, &mut self.offline_state.base_gas, "0");
+                        ui.end_row();
+                        
+                        ui.label("GasPrice:");
+                        ui::number_input(ui, &mut self.offline_state.gas_price, "0");
+                        ui.end_row();
+                        
+                        ui.label("GasToken:");
+                        ui::address_input(ui, &mut self.offline_state.gas_token);
+                        ui.end_row();
+                        
+                        ui.label("RefundReceiver:");
+                        ui::address_input(ui, &mut self.offline_state.refund_receiver);
+                        ui.end_row();
+                    });
                 
                 ui.add_space(5.0);
                 ui.label(egui::RichText::new("Most transactions use default values (all zeros)").weak().small());
