@@ -242,15 +242,23 @@ impl App {
             ui.label("Safe Address:");
             let response = ui::address_input(ui, &mut self.tx_state.safe_address);
             
-            // Cache address and fetch Safe info when focus leaves the field
-            let should_fetch = response.lost_focus() && !response.ctx.input(|i| i.key_pressed(egui::Key::Escape));
-            
-            if should_fetch {
+            // Cache address when focus leaves the field
+            if response.lost_focus() && !response.ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
                 crate::state::save_safe_address(&self.tx_state.safe_address);
-                // Trigger Safe info fetch if address looks valid
-                if self.tx_state.safe_address.starts_with("0x") && self.tx_state.safe_address.len() == 42 {
-                    self.trigger_safe_info_fetch();
-                }
+            }
+            
+            // Fetch Details button
+            let is_valid_address = self.tx_state.safe_address.starts_with("0x") 
+                && self.tx_state.safe_address.len() == 42;
+            
+            if ui.add_enabled(
+                is_valid_address && !self.safe_info_loading,
+                egui::Button::new("⟳ Fetch Details")
+            ).on_hover_text("Fetch Safe info (threshold, owners, modules, nonce)")
+             .clicked() 
+            {
+                crate::state::save_safe_address(&self.tx_state.safe_address);
+                self.trigger_safe_info_fetch();
             }
             
             if self.safe_info_loading {
