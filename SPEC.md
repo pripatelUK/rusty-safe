@@ -117,7 +117,7 @@ rusty-safe/
 │   │       ├── main.rs     # Entry point (native + WASM)
 │   │       ├── app.rs      # Main App struct
 │   │       └── ui/
-│   │           ├── tx_verify.rs    # Transaction verification tab
+│   │           ├── tx_verify.rs    # Verify Safe API tab
 │   │           ├── msg_verify.rs   # Message verification tab
 │   │           ├── eip712.rs       # EIP-712 tab
 │   │           └── components/     # Reusable widgets
@@ -458,8 +458,8 @@ pub struct TxVerifyState {
 | 1.0.1 | Cargo workspace setup | 1h |
 | 1.0.2 | Add dependencies (eframe, alloy, safe-utils, reqwest) | 30m |
 | 1.0.3 | Basic eframe app scaffold with window | 1h |
-| 1.0.4 | Tab navigation (Transaction / Message / EIP-712) | 1h |
-| 1.0.5 | Transaction tab UI layout | 2h |
+| 1.0.4 | Tab navigation (Verify Safe API / Message / EIP-712) | 1h |
+| 1.0.5 | Verify Safe API tab UI layout | 2h |
 | 1.0.6 | Chain dropdown with all supported chains | 1h |
 | 1.0.7 | Safe version dropdown (1.0.0 - 1.4.1) | 30m |
 | 1.0.8 | Input fields (Safe address, nonce) | 1h |

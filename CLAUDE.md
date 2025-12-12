@@ -244,7 +244,7 @@ Follow [Conventional Commits](https://www.conventionalcommits.org/):
 - `chore`: Maintenance
 
 ### Examples
-- `feat(ui): add transaction verification tab`
+- `feat(ui): add Verify Safe API tab`
 - `fix(api): handle rate limiting from Safe service`
 - `refactor(hash): simplify domain hash computation`
 - `chore(deps): update egui to 0.29`

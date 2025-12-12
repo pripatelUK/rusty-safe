@@ -94,7 +94,7 @@ pub struct App {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Tab {
     #[default]
-    Transaction,
+    VerifySafeApi,
     Message,
     Eip712,
     Offline,
@@ -164,7 +164,7 @@ impl eframe::App for App {
                 ui.add_space(30.0);
                 ui.separator();
                 ui.add_space(10.0);
-                ui.selectable_value(&mut self.active_tab, Tab::Transaction, "📝 Transaction");
+                ui.selectable_value(&mut self.active_tab, Tab::VerifySafeApi, "🔍 Verify Safe API");
                 ui.selectable_value(&mut self.active_tab, Tab::Message, "💬 Message");
                 ui.selectable_value(&mut self.active_tab, Tab::Eip712, "🔢 EIP-712");
                 ui.selectable_value(&mut self.active_tab, Tab::Offline, "📴 Offline");
@@ -176,7 +176,7 @@ impl eframe::App for App {
             egui::ScrollArea::vertical().show(ui, |ui| {
                 ui.add_space(10.0);
                 match self.active_tab {
-                    Tab::Transaction => self.render_transaction_tab(ui, ctx),
+                    Tab::VerifySafeApi => self.render_verify_safe_api_tab(ui, ctx),
                     Tab::Message => self.render_message_tab(ui),
                     Tab::Eip712 => self.render_eip712_tab(ui),
                     Tab::Offline => self.render_offline_tab(ui, ctx),
@@ -188,8 +188,8 @@ impl eframe::App for App {
 }
 
 impl App {
-    fn render_transaction_tab(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
-        ui::styled_heading(ui, "Transaction Verification");
+    fn render_verify_safe_api_tab(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
+        ui::styled_heading(ui, "Verify Safe API");
         ui.label("Verify Safe transaction hashes before signing.");
         ui.add_space(15.0);
 
