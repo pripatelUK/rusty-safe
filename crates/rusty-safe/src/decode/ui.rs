@@ -10,10 +10,57 @@ fn is_address(value: &str) -> bool {
     value.starts_with("0x") && value.len() == 42 && value[2..].chars().all(|c| c.is_ascii_hexdigit())
 }
 
-/// Render a parameter value - as hyperlink if it's an address, with decimal popup if it's a large uint, otherwise as label
-fn render_param_value(ui_ctx: &mut egui::Ui, value: &str, chain_name: &str, color: Option<egui::Color32>, id_salt: &str) {
+/// Check if a value looks like a tuple/array (starts with [ and ends with ])
+fn is_tuple_or_array(value: &str) -> bool {
+    let trimmed = value.trim();
+    trimmed.starts_with('[') && trimmed.ends_with(']') && trimmed.len() > 2
+}
+
+/// Parse tuple/array elements, handling nested structures
+fn parse_tuple_elements(value: &str) -> Vec<String> {
+    let trimmed = value.trim();
+    // Remove outer brackets
+    let inner = &trimmed[1..trimmed.len()-1];
+    
+    if inner.is_empty() {
+        return vec![];
+    }
+    
+    let mut elements = Vec::new();
+    let mut current = String::new();
+    let mut bracket_depth = 0;
+    
+    for ch in inner.chars() {
+        match ch {
+            '[' | '(' => {
+                bracket_depth += 1;
+                current.push(ch);
+            }
+            ']' | ')' => {
+                bracket_depth -= 1;
+                current.push(ch);
+            }
+            ',' if bracket_depth == 0 => {
+                elements.push(current.trim().to_string());
+                current = String::new();
+            }
+            _ => {
+                current.push(ch);
+            }
+        }
+    }
+    
+    // Don't forget the last element
+    if !current.trim().is_empty() {
+        elements.push(current.trim().to_string());
+    }
+    
+    elements
+}
+
+/// Render a single value element with smart type detection
+fn render_single_value(ui_ctx: &mut egui::Ui, value: &str, chain_name: &str, color: Option<egui::Color32>, id_salt: &str) {
     if is_address(value) {
-        // For colored address links, we need custom handling
         if let Some(c) = color {
             let explorer_url = ui::get_explorer_address_url(chain_name, value);
             if ui_ctx.link(egui::RichText::new(value).monospace().color(c))
@@ -26,12 +73,39 @@ fn render_param_value(ui_ctx: &mut egui::Ui, value: &str, chain_name: &str, colo
             ui::address_link(ui_ctx, chain_name, value);
         }
     } else if ui::is_large_uint(value) {
-        // Large uint - show with decimal popup
         ui::render_uint_with_popup(ui_ctx, value, id_salt);
     } else {
         let text = egui::RichText::new(value).monospace();
         let text = if let Some(c) = color { text.color(c) } else { text };
         ui_ctx.label(text);
+    }
+}
+
+/// Render tuple/array elements with individual type handling
+fn render_tuple_value(ui_ctx: &mut egui::Ui, value: &str, chain_name: &str, color: Option<egui::Color32>, id_salt: &str) {
+    let elements = parse_tuple_elements(value);
+    
+    ui_ctx.vertical(|ui| {
+        for (i, elem) in elements.iter().enumerate() {
+            // Use horizontal_wrapped to allow long values to wrap
+            ui.horizontal_wrapped(|ui| {
+                ui.label(egui::RichText::new(format!("[{}]:", i)).weak().small());
+                let elem_id = format!("{}_{}", id_salt, i);
+                // Recursively handle nested tuples
+                render_param_value(ui, elem, chain_name, color, &elem_id);
+            });
+        }
+    });
+}
+
+/// Render a parameter value - handles addresses, large uints, tuples/arrays
+fn render_param_value(ui_ctx: &mut egui::Ui, value: &str, chain_name: &str, color: Option<egui::Color32>, id_salt: &str) {
+    if is_tuple_or_array(value) {
+        // Tuple/array - render each element separately
+        render_tuple_value(ui_ctx, value, chain_name, color, id_salt);
+    } else {
+        // Single value
+        render_single_value(ui_ctx, value, chain_name, color, id_salt);
     }
 }
 
