@@ -11,6 +11,10 @@ use safe_utils::get_all_supported_chain_names;
 
 /// LocalStorage key for cached Safe address
 const SAFE_ADDRESS_KEY: &str = "rusty-safe-address-v1";
+/// LocalStorage key for recent addresses
+const RECENT_ADDRESSES_KEY: &str = "rusty-safe-recent-v1";
+/// Max recent addresses to keep
+const MAX_RECENT_ADDRESSES: usize = 10;
 
 /// Load cached Safe address from LocalStorage (WASM only)
 #[cfg(target_arch = "wasm32")]
@@ -40,6 +44,47 @@ pub fn save_safe_address(_address: &str) {
     // No-op
 }
 
+/// Load recent addresses from LocalStorage (WASM only)
+#[cfg(target_arch = "wasm32")]
+pub fn load_recent_addresses() -> Vec<String> {
+    use gloo_storage::{LocalStorage, Storage};
+    LocalStorage::get::<Vec<String>>(RECENT_ADDRESSES_KEY).unwrap_or_default()
+}
+
+/// Load recent addresses - returns empty on native
+#[cfg(not(target_arch = "wasm32"))]
+pub fn load_recent_addresses() -> Vec<String> {
+    Vec::new()
+}
+
+/// Save recent addresses to LocalStorage (WASM only)
+#[cfg(target_arch = "wasm32")]
+pub fn save_recent_addresses(addresses: &[String]) {
+    use gloo_storage::{LocalStorage, Storage};
+    let _ = LocalStorage::set(RECENT_ADDRESSES_KEY, addresses);
+}
+
+/// Save recent addresses - no-op on native
+#[cfg(not(target_arch = "wasm32"))]
+pub fn save_recent_addresses(_addresses: &[String]) {
+    // No-op
+}
+
+/// Add address to recent list (most recent first, deduped, capped)
+pub fn add_recent_address(addresses: &mut Vec<String>, address: &str) {
+    if address.is_empty() || !address.starts_with("0x") || address.len() != 42 {
+        return;
+    }
+    // Remove if already exists (will re-add at front)
+    addresses.retain(|a| a.to_lowercase() != address.to_lowercase());
+    // Insert at front
+    addresses.insert(0, address.to_string());
+    // Cap at max
+    addresses.truncate(MAX_RECENT_ADDRESSES);
+    // Persist
+    save_recent_addresses(addresses);
+}
+
 /// Safe versions supported
 pub const SAFE_VERSIONS: &[&str] = &[
     "1.4.1", "1.4.0", "1.3.0", "1.2.0", "1.1.1", "1.1.0", "1.0.0",
@@ -54,6 +99,7 @@ pub struct SafeContext {
     pub chain_name: String,
     pub safe_address: String,
     pub safe_version: String,
+    pub recent_addresses: Vec<String>,
 }
 
 impl Default for SafeContext {
@@ -68,6 +114,7 @@ impl Default for SafeContext {
             chain_name: default_chain,
             safe_address: load_cached_safe_address().unwrap_or_default(),
             safe_version: SAFE_VERSIONS[0].to_string(),
+            recent_addresses: load_recent_addresses(),
         }
     }
 }

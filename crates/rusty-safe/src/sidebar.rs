@@ -60,7 +60,7 @@ pub fn render(
                 });
                 ui.add_space(8.0);
                 
-                // Safe Address
+                // Safe Address with recent suggestions
                 ui.label("Safe Address:");
                 let addr_response = ui.add(
                     egui::TextEdit::singleline(&mut safe_ctx.safe_address)
@@ -69,10 +69,65 @@ pub fn render(
                         .font(egui::TextStyle::Monospace),
                 );
                 
+                // Track popup visibility in memory
+                let popup_id = ui.make_persistent_id("recent_addresses_popup");
+                let mut show_popup = ui.memory(|m| m.data.get_temp::<bool>(popup_id).unwrap_or(false));
+                
+                // Show popup when input gains focus
+                if addr_response.gained_focus() {
+                    show_popup = true;
+                }
+                
+                // Hide popup on Escape or when clicking outside
+                if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+                    show_popup = false;
+                }
+                
                 // Cache on blur
                 if addr_response.lost_focus() && !addr_response.ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
                     crate::state::save_safe_address(&safe_ctx.safe_address);
                 }
+                
+                // Show recent addresses popup
+                if show_popup && !safe_ctx.recent_addresses.is_empty() {
+                    let below_rect = egui::Rect::from_min_size(
+                        addr_response.rect.left_bottom(),
+                        egui::vec2(addr_response.rect.width(), 0.0),
+                    );
+                    
+                    let area_response = egui::Area::new(popup_id)
+                        .order(egui::Order::Foreground)
+                        .fixed_pos(below_rect.left_top())
+                        .show(ui.ctx(), |ui| {
+                            egui::Frame::popup(ui.style())
+                                .show(ui, |ui| {
+                                    ui.set_min_width(below_rect.width());
+                                    for addr in &safe_ctx.recent_addresses.clone() {
+                                        let response = ui.selectable_label(
+                                            safe_ctx.safe_address.to_lowercase() == addr.to_lowercase(),
+                                            egui::RichText::new(addr).monospace().size(11.0)
+                                        );
+                                        if response.clicked() {
+                                            safe_ctx.safe_address = addr.clone();
+                                            crate::state::save_safe_address(addr);
+                                            show_popup = false;
+                                        }
+                                    }
+                                });
+                        });
+                    
+                    // Close popup if clicked outside
+                    if ui.input(|i| i.pointer.any_click()) 
+                        && !area_response.response.rect.contains(ui.input(|i| i.pointer.interact_pos().unwrap_or_default()))
+                        && !addr_response.rect.contains(ui.input(|i| i.pointer.interact_pos().unwrap_or_default()))
+                    {
+                        show_popup = false;
+                    }
+                }
+                
+                // Store popup state
+                ui.memory_mut(|m| m.data.insert_temp(popup_id, show_popup));
+                
                 ui.add_space(8.0);
                 
                 // Version display

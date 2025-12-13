@@ -1061,6 +1061,12 @@ impl App {
                         self.safe_context.safe_version = version_str.to_string();
                     }
                     
+                    // Add to recent addresses
+                    crate::state::add_recent_address(
+                        &mut self.safe_context.recent_addresses,
+                        &self.safe_context.safe_address,
+                    );
+                    
                     self.safe_info = Some(info);
                 }
                 SafeInfoResult::Error(e) => {
