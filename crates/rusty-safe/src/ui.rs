@@ -3,20 +3,37 @@
 use eframe::egui;
 
 /// Get block explorer URL for an address on a given chain
+/// Supports all chains from safe-utils: arbitrum, aurora, avalanche, base, blast, bsc,
+/// celo, ethereum, gnosis, linea, mantle, monad, optimism, polygon, scroll, sepolia,
+/// worldchain, xlayer, zksync, base-sepolia, gnosis-chiado, polygon-zkevm
 pub fn get_explorer_address_url(chain_name: &str, address: &str) -> String {
     let base = match chain_name.to_lowercase().as_str() {
+        // Mainnets
         "ethereum" | "mainnet" => "https://etherscan.io",
-        "polygon" => "https://polygonscan.com",
         "arbitrum" => "https://arbiscan.io",
-        "optimism" => "https://optimistic.etherscan.io",
-        "gnosis" => "https://gnosisscan.io",
-        "base" => "https://basescan.org",
+        "aurora" => "https://explorer.aurora.dev",
         "avalanche" => "https://snowtrace.io",
+        "base" => "https://basescan.org",
+        "blast" => "https://blastscan.io",
         "bsc" | "binance" => "https://bscscan.com",
+        "celo" => "https://celoscan.io",
+        "gnosis" => "https://gnosisscan.io",
+        "linea" => "https://lineascan.build",
+        "mantle" => "https://mantlescan.xyz",
+        "monad" => "https://monadvision.com",
+        "optimism" => "https://optimistic.etherscan.io",
+        "polygon" => "https://polygonscan.com",
+        "scroll" => "https://scrollscan.com",
+        "worldchain" => "https://worldscan.org",
+        "xlayer" => "https://www.okx.com/web3/explorer/xlayer",
+        "zksync" => "https://explorer.zksync.io",
+        "polygon-zkevm" => "https://zkevm.polygonscan.com",
+        // Testnets
         "sepolia" => "https://sepolia.etherscan.io",
-        "goerli" => "https://goerli.etherscan.io",
-        "holesky" => "https://holesky.etherscan.io",
-        _ => "https://etherscan.io", // fallback to mainnet
+        "base-sepolia" => "https://sepolia.basescan.org",
+        "gnosis-chiado" => "https://gnosis-chiado.blockscout.com",
+        // Fallback
+        _ => "https://etherscan.io",
     };
     format!("{}/address/{}", base, address)
 }
