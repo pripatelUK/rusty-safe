@@ -4,10 +4,14 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Rusty-Safe</title>
+    <title>Rusty Safe</title>
     <link data-trunk rel="copy-file" href="assets/favicon.ico" />
+    <link data-trunk rel="copy-file" href="assets/KumarOne-Regular.ttf" />
     <link data-trunk rel="rust" data-wasm-opt="0" />
     <link rel="icon" href="favicon.ico">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Kumar+One&display=swap" rel="stylesheet">
     <style>
         html,
         body {
@@ -16,7 +20,7 @@
             width: 100%;
             height: 100%;
             overflow: hidden;
-            background: #1a1a2e;
+            background: #1c1c1c;
         }
 
         canvas {
@@ -35,13 +39,14 @@
             flex-direction: column;
             align-items: center;
             justify-content: center;
-            background: #1a1a2e;
+            background: #1c1c1c;
             color: #e0e0e0;
             font-family: 'Segoe UI', system-ui, sans-serif;
         }
 
         .loading h1 {
-            font-size: 2rem;
+            font-family: 'Kumar One';
+            font-size: 2.5rem;
             margin-bottom: 1rem;
             color: #00d4aa;
         }
@@ -66,7 +71,8 @@
 <body>
     <canvas id="the_canvas_id"></canvas>
     <div class="loading" id="loading">
-        <h1>🔐 Rusty-Safe</h1>
+        <h1>Rusty Safe</h1>
+        <!-- <p style="margin-bottom: 1rem;">Validate Gnosis Safe transactions</p> -->
         <div class="spinner"></div>
         <p style="margin-top: 1rem;">Loading WASM...</p>
     </div>

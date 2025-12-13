@@ -108,7 +108,19 @@ pub enum Tab {
 
 impl App {
     /// Create a new App instance
-    pub fn new(_cc: &eframe::CreationContext<'_>) -> Self {
+    pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
+        // Load custom font for logo
+        let mut fonts = egui::FontDefinitions::default();
+        fonts.font_data.insert(
+            "KumarOne".to_owned(),
+            egui::FontData::from_static(include_bytes!("../assets/KumarOne-Regular.ttf")),
+        );
+        fonts.families.insert(
+            egui::FontFamily::Name("KumarOne".into()),
+            vec!["KumarOne".to_owned()],
+        );
+        cc.egui_ctx.set_fonts(fonts);
+
         Self {
             active_tab: Tab::default(),
             safe_context: SafeContext::default(),
@@ -149,9 +161,10 @@ impl eframe::App for App {
         egui::TopBottomPanel::top("header").show(ctx, |ui| {
             ui.add_space(8.0);
             ui.horizontal(|ui| {
-                ui.heading(
-                    egui::RichText::new("🔐 Rusty-Safe")
-                        .size(22.0)
+                ui.label(
+                    egui::RichText::new("Rusty Safe")
+                        .size(26.0)
+                        .family(egui::FontFamily::Name("KumarOne".into()))
                         .color(egui::Color32::from_rgb(0, 212, 170)),
                 );
                 ui.add_space(30.0);
