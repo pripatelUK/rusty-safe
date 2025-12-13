@@ -136,15 +136,21 @@ pub struct MsgHashes {
 #[derive(Debug, Default)]
 pub struct Eip712State {
     pub json_input: String,
+    pub standalone: bool,
     pub hashes: Option<Eip712Hashes>,
     pub error: Option<String>,
 }
 
 #[derive(Debug, Clone)]
 pub struct Eip712Hashes {
-    pub domain_hash: String,
-    pub message_hash: String,
-    pub full_hash: String,
+    // Raw EIP-712 hashes (from the typed data itself)
+    pub eip712_hash: String,
+    pub eip712_domain_hash: String,
+    pub eip712_message_hash: String,
+    // Safe-wrapped hashes (when not standalone)
+    pub safe_domain_hash: Option<String>,
+    pub safe_message_hash: Option<String>,
+    pub safe_hash: Option<String>,
 }
 
 // =============================================================================

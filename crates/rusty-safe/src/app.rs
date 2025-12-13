@@ -1,9 +1,10 @@
 //! Main application state and update loop
 
+use alloy::hex;
 use alloy::primitives::ChainId;
 use eframe::egui;
 use safe_hash::SafeWarnings;
-use safe_utils::{get_all_supported_chain_names, DomainHasher, MessageHasher, Of, SafeHasher, SafeWalletVersion};
+use safe_utils::{get_all_supported_chain_names, DomainHasher, Eip712Hasher, MessageHasher, Of, SafeHasher, SafeWalletVersion};
 use std::sync::{Arc, Mutex};
 
 use crate::api::SafeTransaction;
@@ -504,24 +505,184 @@ impl App {
         ui.label("Hash and verify EIP-712 typed data structures.");
         ui.add_space(15.0);
 
+        ui.checkbox(&mut self.eip712_state.standalone, "Standalone mode (raw EIP-712 only, no Safe wrapping)");
+        ui.add_space(10.0);
+
         ui.label("EIP-712 JSON:");
         ui::multiline_input(
             ui,
             &mut self.eip712_state.json_input,
-            r#"{"types": {...}, "domain": {...}, "message": {...}}"#,
-            10,
+            r#"{"types": {...}, "domain": {...}, "primaryType": "...", "message": {...}}"#,
+            12,
         );
 
         ui.add_space(15.0);
 
         if ui.button("🔐 Compute Hash").clicked() {
-            // TODO: Implement using safe_utils::Eip712Hasher
-            self.eip712_state.error = Some("EIP-712 hashing coming soon".to_string());
+            self.compute_eip712_hash();
         }
 
         if let Some(error) = &self.eip712_state.error {
             ui.add_space(10.0);
             ui::error_message(ui, error);
+        }
+
+        if let Some(hashes) = &self.eip712_state.hashes {
+            ui.add_space(15.0);
+            ui::section_header(ui, "EIP-712 Hash Results");
+
+            egui::Grid::new("eip712_hash_results")
+                .num_columns(3)
+                .spacing([10.0, 8.0])
+                .show(ui, |ui| {
+                    ui.label(egui::RichText::new("EIP-712 Hash:").strong());
+                    ui.label(egui::RichText::new(&hashes.eip712_hash).monospace().size(12.0));
+                    if ui.small_button("📋").clicked() {
+                        ui::copy_to_clipboard(&hashes.eip712_hash);
+                    }
+                    ui.end_row();
+
+                    ui.label(egui::RichText::new("Domain Hash:").strong());
+                    ui.label(egui::RichText::new(&hashes.eip712_domain_hash).monospace().size(12.0));
+                    if ui.small_button("📋").clicked() {
+                        ui::copy_to_clipboard(&hashes.eip712_domain_hash);
+                    }
+                    ui.end_row();
+
+                    ui.label(egui::RichText::new("Message Hash:").strong());
+                    ui.label(egui::RichText::new(&hashes.eip712_message_hash).monospace().size(12.0));
+                    if ui.small_button("📋").clicked() {
+                        ui::copy_to_clipboard(&hashes.eip712_message_hash);
+                    }
+                    ui.end_row();
+                });
+
+            // Show Safe-wrapped hashes if not standalone
+            if let (Some(safe_domain), Some(safe_msg), Some(safe_hash)) = 
+                (&hashes.safe_domain_hash, &hashes.safe_message_hash, &hashes.safe_hash) 
+            {
+                ui.add_space(15.0);
+                ui::section_header(ui, "Safe-Wrapped Hash Results");
+
+                egui::Grid::new("safe_eip712_hash_results")
+                    .num_columns(3)
+                    .spacing([10.0, 8.0])
+                    .show(ui, |ui| {
+                        ui.label(egui::RichText::new("Safe Domain Hash:").strong());
+                        ui.label(egui::RichText::new(safe_domain).monospace().size(12.0));
+                        if ui.small_button("📋").clicked() {
+                            ui::copy_to_clipboard(safe_domain);
+                        }
+                        ui.end_row();
+
+                        ui.label(egui::RichText::new("Safe Message Hash:").strong());
+                        ui.label(egui::RichText::new(safe_msg).monospace().size(12.0));
+                        if ui.small_button("📋").clicked() {
+                            ui::copy_to_clipboard(safe_msg);
+                        }
+                        ui.end_row();
+
+                        ui.label(egui::RichText::new("Safe Hash:").strong().color(egui::Color32::from_rgb(0, 212, 170)));
+                        ui.label(egui::RichText::new(safe_hash).monospace().size(12.0).color(egui::Color32::from_rgb(0, 212, 170)));
+                        if ui.small_button("📋").clicked() {
+                            ui::copy_to_clipboard(safe_hash);
+                        }
+                        ui.end_row();
+                    });
+            }
+        }
+    }
+
+    fn compute_eip712_hash(&mut self) {
+        self.eip712_state.error = None;
+        self.eip712_state.hashes = None;
+
+        if self.eip712_state.json_input.trim().is_empty() {
+            self.eip712_state.error = Some("Please enter EIP-712 JSON data".to_string());
+            return;
+        }
+
+        // Parse and hash the EIP-712 typed data
+        let hasher = Eip712Hasher::new(self.eip712_state.json_input.clone());
+        let eip712_result = match hasher.hash() {
+            Ok(r) => r,
+            Err(e) => {
+                self.eip712_state.error = Some(format!("Failed to parse EIP-712 data: {}", e));
+                return;
+            }
+        };
+
+        if self.eip712_state.standalone {
+            // Standalone mode - just return the raw EIP-712 hashes
+            self.eip712_state.hashes = Some(crate::state::Eip712Hashes {
+                eip712_hash: eip712_result.eip_712_hash,
+                eip712_domain_hash: eip712_result.domain_hash,
+                eip712_message_hash: eip712_result.message_hash,
+                safe_domain_hash: None,
+                safe_message_hash: None,
+                safe_hash: None,
+            });
+        } else {
+            // Safe-wrapped mode - wrap the EIP-712 hash in a Safe message
+            let chain_id = match ChainId::of(&self.safe_context.chain_name) {
+                Ok(id) => id,
+                Err(e) => {
+                    self.eip712_state.error = Some(format!("Invalid chain: {}", e));
+                    return;
+                }
+            };
+
+            let safe_version = match SafeWalletVersion::parse(&self.safe_context.safe_version) {
+                Ok(v) => v,
+                Err(e) => {
+                    self.eip712_state.error = Some(format!("Invalid version: {}", e));
+                    return;
+                }
+            };
+
+            let safe_addr: alloy::primitives::Address = match self.safe_context.safe_address.parse() {
+                Ok(a) => a,
+                Err(e) => {
+                    self.eip712_state.error = Some(format!("Invalid Safe address: {}", e));
+                    return;
+                }
+            };
+
+            // Create message hash from the EIP-712 hash
+            let eip712_hash_bytes = match hex::decode(eip712_result.eip_712_hash.trim_start_matches("0x")) {
+                Ok(b) => b,
+                Err(e) => {
+                    self.eip712_state.error = Some(format!("Failed to decode EIP-712 hash: {}", e));
+                    return;
+                }
+            };
+
+            if eip712_hash_bytes.len() != 32 {
+                self.eip712_state.error = Some("EIP-712 hash must be 32 bytes".to_string());
+                return;
+            }
+
+            let mut hash_arr = [0u8; 32];
+            hash_arr.copy_from_slice(&eip712_hash_bytes);
+            let msg_hasher = MessageHasher::new_from_bytes(alloy::primitives::B256::from(hash_arr));
+            let safe_message_hash = msg_hasher.hash();
+
+            // Compute Safe domain hash
+            let domain_hasher = DomainHasher::new(safe_version, chain_id, safe_addr);
+            let safe_domain_hash = domain_hasher.hash();
+
+            // Compute final Safe hash
+            let safe_hasher = SafeHasher::new(safe_domain_hash, safe_message_hash);
+            let safe_hash = safe_hasher.hash();
+
+            self.eip712_state.hashes = Some(crate::state::Eip712Hashes {
+                eip712_hash: eip712_result.eip_712_hash,
+                eip712_domain_hash: eip712_result.domain_hash,
+                eip712_message_hash: eip712_result.message_hash,
+                safe_domain_hash: Some(format!("{:?}", safe_domain_hash)),
+                safe_message_hash: Some(format!("{:?}", safe_message_hash)),
+                safe_hash: Some(format!("{:?}", safe_hash)),
+            });
         }
     }
 
