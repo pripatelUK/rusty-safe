@@ -273,30 +273,45 @@ fn build_tx_header(tx: &MultiSendTx) -> egui::RichText {
         None => ("□", VerifyStatus::Pending),
     };
 
-    // Try to get method name and params - prefer api_decode (always available), 
-    // fall back to decode.api if available
+    // Try to get method name and params - prefer api_decode, then decode.api, then decode.local
     let api_data = tx.api_decode.as_ref()
         .or_else(|| tx.decode.as_ref().and_then(|d| d.api.as_ref()));
     
-    let method_part = api_data
-        .map(|api| {
-            // Build compact params: method(val1, val2, ...)
-            let params_str = api.params
-                .iter()
-                .take(3) // Limit to first 3 params for compactness
-                .map(|p| truncate_param(&p.value, 12))
-                .collect::<Vec<_>>()
-                .join(", ");
-            
-            if api.params.len() > 3 {
-                format!("{}({}, ...)", api.method, params_str)
-            } else if params_str.is_empty() {
-                api.method.clone()
-            } else {
-                format!("{}({})", api.method, params_str)
-            }
-        })
-        .unwrap_or_else(|| truncate_address(&tx.to));
+    let method_part = if let Some(api) = api_data {
+        // Build compact params from API decode: method(val1, val2, ...)
+        let params_str = api.params
+            .iter()
+            .take(3)
+            .map(|p| truncate_param(&p.value, 12))
+            .collect::<Vec<_>>()
+            .join(", ");
+        
+        if api.params.len() > 3 {
+            format!("{}({}, ...)", api.method, params_str)
+        } else if params_str.is_empty() {
+            api.method.clone()
+        } else {
+            format!("{}({})", api.method, params_str)
+        }
+    } else if let Some(local) = tx.decode.as_ref().and_then(|d| d.local.as_ref()) {
+        // Fall back to local 4byte decode
+        let params_str = local.params
+            .iter()
+            .take(3)
+            .map(|p| truncate_param(&p.value, 12))
+            .collect::<Vec<_>>()
+            .join(", ");
+        
+        if local.params.len() > 3 {
+            format!("{}({}, ...)", local.method, params_str)
+        } else if params_str.is_empty() {
+            local.method.clone()
+        } else {
+            format!("{}({})", local.method, params_str)
+        }
+    } else {
+        truncate_address(&tx.to)
+    };
 
     let value_part = if tx.value == "0" {
         "0 ETH".to_string()
