@@ -27,6 +27,23 @@ pub fn render(
         .default_width(280.0)
         .min_width(60.0)
         .show_animated(ctx, !sidebar.collapsed, |ui| {
+            // Footer with GitHub link
+            egui::TopBottomPanel::bottom("sidebar_footer")
+                .frame(egui::Frame::none().inner_margin(egui::Margin::symmetric(8.0, 8.0)))
+                .show_inside(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        if ui.add(
+                            egui::Button::new(egui::RichText::new("").size(20.0))
+                                .frame(false)
+                        ).on_hover_text("View on GitHub").clicked() {
+                            ui::open_url_new_tab("https://github.com/pripatelUK/rusty-safe");
+                        }
+                        if ui.link(egui::RichText::new("GitHub")).clicked() {
+                            ui::open_url_new_tab("https://github.com/pripatelUK/rusty-safe");
+                        }
+                    });
+                });
+            
             egui::ScrollArea::vertical().show(ui, |ui| {
                 ui.add_space(10.0);
                 
@@ -196,7 +213,7 @@ pub fn render(
                         for owner in &info.owners {
                             let addr = format!("{:?}", owner);
                             ui.horizontal(|ui| {
-                                ui.label("└");
+                                // ui.label("└");
                                 ui::address_link(ui, &safe_ctx.chain_name, &addr);
                             });
                         }
@@ -212,7 +229,7 @@ pub fn render(
                             for module in &info.modules {
                                 let addr = format!("{:?}", module);
                                 ui.horizontal(|ui| {
-                                    ui.label("└");
+                                    // ui.label("└");
                                     ui::address_link(ui, &safe_ctx.chain_name, &addr);
                                 });
                             }
