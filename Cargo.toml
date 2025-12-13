@@ -7,7 +7,7 @@ version = "0.1.0"
 edition = "2021"
 rust-version = "1.80"
 license = "MIT"
-repository = "https://github.com/example/rusty-safe"
+repository = "https://github.com/pripatelUK/rusty-safe"
 
 [workspace.dependencies]
 # GUI
@@ -19,9 +19,9 @@ eframe = { version = "0.29", default-features = false, features = [
 egui = "0.29"
 egui_extras = { version = "0.29", features = ["image"] }
 
-# Safe hash computation from safe-hash-rs (local path)
-safe-utils = { path = "../safe-hash-rs/crates/safe-utils" }
-safe-hash = { path = "../safe-hash-rs/crates/safe-hash", default-features = false }
+# Safe hash computation from safe-hash-rs
+safe-utils = { git = "https://github.com/pripatelUK/safe-hash-rs", branch = "main" }
+safe-hash = { git = "https://github.com/pripatelUK/safe-hash-rs", branch = "main", default-features = false }
 
 # Ethereum types (match safe-utils version)
 alloy = "0.11"
