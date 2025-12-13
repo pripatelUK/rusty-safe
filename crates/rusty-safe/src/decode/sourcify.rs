@@ -3,7 +3,7 @@
 //! Uses Sourcify's Signature Database API:
 //! https://docs.sourcify.dev/docs/api/#/Signature%20Database/get_signature_database_v1_lookup
 //!
-//! Cache is persisted to LocalStorage on WASM for cross-session persistence.
+//! Cache is persisted via eframe storage (works on both WASM and native).
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -16,8 +16,8 @@ const SOURCIFY_API: &str = "https://api.4byte.sourcify.dev/signature-database/v1
 /// How many requests can fail before we mark the connection as spurious
 const MAX_FAILED_REQUESTS: usize = 3;
 
-/// LocalStorage key for signature cache
-const STORAGE_KEY: &str = "rusty-safe-signatures-v1";
+/// Storage key for signature cache
+const SIGNATURES_STORAGE_KEY: &str = "signatures_cache";
 
 /// Maximum cached selectors (to prevent unbounded storage growth)
 const MAX_CACHED_SELECTORS: usize = 1000;
@@ -79,7 +79,7 @@ impl Default for SignatureLookup {
     }
 }
 
-/// Serializable cache format for LocalStorage
+/// Serializable cache format for storage
 #[derive(Serialize, Deserialize, Default)]
 struct StoredCache {
     signatures: HashMap<String, Vec<String>>,
@@ -87,43 +87,39 @@ struct StoredCache {
 
 impl SignatureLookup {
     pub fn new() -> Self {
-        // Load cached signatures from LocalStorage (WASM only)
-        let cached = Self::load_from_storage();
-        debug_log!("Loaded {} cached signatures from storage", cached.len());
-        
         Self {
-            cache: Arc::new(Mutex::new(cached)),
+            cache: Arc::new(Mutex::new(HashMap::new())),
             is_spurious: Arc::new(AtomicBool::new(false)),
             failed_count: Arc::new(AtomicUsize::new(0)),
         }
     }
     
-    /// Load cache from LocalStorage (WASM only)
-    #[cfg(target_arch = "wasm32")]
-    fn load_from_storage() -> HashMap<String, Vec<String>> {
-        use gloo_storage::{LocalStorage, Storage};
+    /// Load cache from eframe storage
+    pub fn load(storage: Option<&dyn eframe::Storage>) -> Self {
+        let cache = if let Some(storage) = storage {
+            storage.get_string(SIGNATURES_STORAGE_KEY)
+                .and_then(|s| serde_json::from_str::<StoredCache>(&s).ok())
+                .map(|c| c.signatures)
+                .unwrap_or_default()
+        } else {
+            HashMap::new()
+        };
         
-        LocalStorage::get::<StoredCache>(STORAGE_KEY)
-            .map(|c| c.signatures)
-            .unwrap_or_default()
+        debug_log!("Loaded {} cached signatures from storage", cache.len());
+        
+        Self {
+            cache: Arc::new(Mutex::new(cache)),
+            is_spurious: Arc::new(AtomicBool::new(false)),
+            failed_count: Arc::new(AtomicUsize::new(0)),
+        }
     }
     
-    /// Load cache - no-op on native
-    #[cfg(not(target_arch = "wasm32"))]
-    fn load_from_storage() -> HashMap<String, Vec<String>> {
-        HashMap::new()
-    }
-    
-    /// Save cache to LocalStorage (WASM only)
-    #[cfg(target_arch = "wasm32")]
-    fn save_to_storage(&self) {
-        use gloo_storage::{LocalStorage, Storage};
-        
+    /// Save cache to eframe storage
+    pub fn save(&self, storage: &mut dyn eframe::Storage) {
         let cache = self.cache.lock().unwrap();
         
         // Limit cache size to prevent unbounded growth
         let signatures: HashMap<String, Vec<String>> = if cache.len() > MAX_CACHED_SELECTORS {
-            // Keep only the most recently added (take last N)
             cache.iter()
                 .take(MAX_CACHED_SELECTORS)
                 .map(|(k, v)| (k.clone(), v.clone()))
@@ -133,17 +129,10 @@ impl SignatureLookup {
         };
         
         let stored = StoredCache { signatures };
-        if let Err(e) = LocalStorage::set(STORAGE_KEY, &stored) {
-            debug_log!("Failed to save cache to LocalStorage: {}", e);
-        } else {
-            debug_log!("Saved {} signatures to LocalStorage", stored.signatures.len());
+        if let Ok(json) = serde_json::to_string(&stored) {
+            storage.set_string(SIGNATURES_STORAGE_KEY, json);
+            debug_log!("Saved {} signatures to storage", stored.signatures.len());
         }
-    }
-    
-    /// Save cache - no-op on native
-    #[cfg(not(target_arch = "wasm32"))]
-    fn save_to_storage(&self) {
-        // No-op on native
     }
 
     /// Check if the API appears to be down
@@ -205,12 +194,11 @@ impl SignatureLookup {
         let sigs = self.fetch_single(&selector).await?;
         debug_log!("Fetched {} signatures for {}", sigs.len(), selector);
 
-        // Cache result and persist to storage
+        // Cache result
         {
             let mut cache = self.cache.lock().unwrap();
             cache.insert(selector, sigs.clone());
         }
-        self.save_to_storage();
 
         Ok(sigs)
     }
@@ -243,15 +231,11 @@ impl SignatureLookup {
         // Fetch all uncached in one request
         match self.fetch_batch(&to_fetch).await {
             Ok(fetched) => {
-                {
-                    let mut cache = self.cache.lock().unwrap();
-                    for (sel, sigs) in fetched {
-                        cache.insert(sel.clone(), sigs.clone());
-                        results.insert(sel, sigs);
-                    }
+                let mut cache = self.cache.lock().unwrap();
+                for (sel, sigs) in fetched {
+                    cache.insert(sel.clone(), sigs.clone());
+                    results.insert(sel, sigs);
                 }
-                // Persist to storage after batch update
-                self.save_to_storage();
             }
             Err(e) => {
                 debug_log!("Batch fetch error: {}", e);

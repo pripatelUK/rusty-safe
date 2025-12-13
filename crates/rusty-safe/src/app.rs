@@ -123,7 +123,7 @@ impl App {
 
         Self {
             active_tab: Tab::default(),
-            safe_context: SafeContext::default(),
+            safe_context: SafeContext::load(cc.storage),
             sidebar_state: SidebarState::default(),
             tx_state: TxVerifyState::default(),
             msg_state: MsgVerifyState::default(),
@@ -131,7 +131,7 @@ impl App {
             offline_state: OfflineState::default(),
             chain_names: get_all_supported_chain_names(),
             fetch_result: Arc::new(Mutex::new(None)),
-            signature_lookup: SignatureLookup::new(),
+            signature_lookup: SignatureLookup::load(cc.storage),
             decode_result: Arc::new(Mutex::new(None)),
             safe_info_result: Arc::new(Mutex::new(None)),
             offline_decode_result: Arc::new(Mutex::new(None)),
@@ -142,6 +142,12 @@ impl App {
 }
 
 impl eframe::App for App {
+    /// Called by eframe to save state before shutdown
+    fn save(&mut self, storage: &mut dyn eframe::Storage) {
+        self.safe_context.save(storage);
+        self.signature_lookup.save(storage);
+    }
+    
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         ctx.set_visuals(egui::Visuals::dark());
 
@@ -194,9 +200,8 @@ impl eframe::App for App {
                 self.trigger_safe_info_fetch();
             }
             sidebar::SidebarAction::ClearStorage => {
-                crate::state::clear_all_storage();
-                self.safe_context.safe_address.clear();
-                self.safe_context.recent_addresses.clear();
+                self.safe_context.clear();
+                self.signature_lookup = SignatureLookup::new();
             }
             sidebar::SidebarAction::None => {}
         }

@@ -2,6 +2,8 @@
 //!
 //! Uses types from safe-hash library where possible.
 //! UI state structs are rusty-safe specific.
+//!
+//! Storage is handled via eframe's built-in persistence (works on both WASM and native).
 
 use crate::api::SafeTransaction;
 use crate::decode::DecodedTransaction;
@@ -9,80 +11,12 @@ use crate::expected::ExpectedState;
 use safe_hash::SafeWarnings;
 use safe_utils::get_all_supported_chain_names;
 
-/// LocalStorage key for cached Safe address
-const SAFE_ADDRESS_KEY: &str = "rusty-safe-address-v1";
-/// LocalStorage key for recent addresses
-const RECENT_ADDRESSES_KEY: &str = "rusty-safe-recent-v1";
+/// Storage key for cached Safe address
+const SAFE_ADDRESS_KEY: &str = "safe_address";
+/// Storage key for recent addresses  
+const RECENT_ADDRESSES_KEY: &str = "recent_addresses";
 /// Max recent addresses to keep
 const MAX_RECENT_ADDRESSES: usize = 10;
-
-/// Load cached Safe address from LocalStorage (WASM only)
-#[cfg(target_arch = "wasm32")]
-pub fn load_cached_safe_address() -> Option<String> {
-    use gloo_storage::{LocalStorage, Storage};
-    LocalStorage::get::<String>(SAFE_ADDRESS_KEY).ok().filter(|s| !s.is_empty())
-}
-
-/// Load cached Safe address - returns None on native
-#[cfg(not(target_arch = "wasm32"))]
-pub fn load_cached_safe_address() -> Option<String> {
-    None
-}
-
-/// Save Safe address to LocalStorage (WASM only)
-#[cfg(target_arch = "wasm32")]
-pub fn save_safe_address(address: &str) {
-    use gloo_storage::{LocalStorage, Storage};
-    if !address.is_empty() {
-        let _ = LocalStorage::set(SAFE_ADDRESS_KEY, address);
-    }
-}
-
-/// Save Safe address - no-op on native
-#[cfg(not(target_arch = "wasm32"))]
-pub fn save_safe_address(_address: &str) {
-    // No-op
-}
-
-/// Load recent addresses from LocalStorage (WASM only)
-#[cfg(target_arch = "wasm32")]
-pub fn load_recent_addresses() -> Vec<String> {
-    use gloo_storage::{LocalStorage, Storage};
-    LocalStorage::get::<Vec<String>>(RECENT_ADDRESSES_KEY).unwrap_or_default()
-}
-
-/// Load recent addresses - returns empty on native
-#[cfg(not(target_arch = "wasm32"))]
-pub fn load_recent_addresses() -> Vec<String> {
-    Vec::new()
-}
-
-/// Save recent addresses to LocalStorage (WASM only)
-#[cfg(target_arch = "wasm32")]
-pub fn save_recent_addresses(addresses: &[String]) {
-    use gloo_storage::{LocalStorage, Storage};
-    let _ = LocalStorage::set(RECENT_ADDRESSES_KEY, addresses);
-}
-
-/// Save recent addresses - no-op on native
-#[cfg(not(target_arch = "wasm32"))]
-pub fn save_recent_addresses(_addresses: &[String]) {
-    // No-op
-}
-
-/// Clear all application storage (WASM only)
-#[cfg(target_arch = "wasm32")]
-pub fn clear_all_storage() {
-    use gloo_storage::{LocalStorage, Storage};
-    let _ = LocalStorage::delete(SAFE_ADDRESS_KEY);
-    let _ = LocalStorage::delete(RECENT_ADDRESSES_KEY);
-}
-
-/// Clear all storage - no-op on native
-#[cfg(not(target_arch = "wasm32"))]
-pub fn clear_all_storage() {
-    // No-op
-}
 
 /// Add address to recent list (most recent first, deduped, capped)
 pub fn add_recent_address(addresses: &mut Vec<String>, address: &str) {
@@ -95,8 +29,6 @@ pub fn add_recent_address(addresses: &mut Vec<String>, address: &str) {
     addresses.insert(0, address.to_string());
     // Cap at max
     addresses.truncate(MAX_RECENT_ADDRESSES);
-    // Persist
-    save_recent_addresses(addresses);
 }
 
 /// Safe versions supported
@@ -116,20 +48,51 @@ pub struct SafeContext {
     pub recent_addresses: Vec<String>,
 }
 
-impl Default for SafeContext {
-    fn default() -> Self {
+impl SafeContext {
+    /// Load SafeContext from eframe storage
+    pub fn load(storage: Option<&dyn eframe::Storage>) -> Self {
         let chains = get_all_supported_chain_names();
         let default_chain = chains.iter()
             .find(|c| *c == "ethereum")
             .cloned()
             .unwrap_or_else(|| chains.first().cloned().unwrap_or_default());
         
+        let (safe_address, recent_addresses) = if let Some(storage) = storage {
+            let addr = storage.get_string(SAFE_ADDRESS_KEY).unwrap_or_default();
+            let recent: Vec<String> = storage.get_string(RECENT_ADDRESSES_KEY)
+                .and_then(|s| serde_json::from_str(&s).ok())
+                .unwrap_or_default();
+            (addr, recent)
+        } else {
+            (String::new(), Vec::new())
+        };
+        
         Self {
             chain_name: default_chain,
-            safe_address: load_cached_safe_address().unwrap_or_default(),
+            safe_address,
             safe_version: SAFE_VERSIONS[0].to_string(),
-            recent_addresses: load_recent_addresses(),
+            recent_addresses,
         }
+    }
+    
+    /// Save SafeContext to eframe storage
+    pub fn save(&self, storage: &mut dyn eframe::Storage) {
+        storage.set_string(SAFE_ADDRESS_KEY, self.safe_address.clone());
+        if let Ok(json) = serde_json::to_string(&self.recent_addresses) {
+            storage.set_string(RECENT_ADDRESSES_KEY, json);
+        }
+    }
+    
+    /// Clear all stored data
+    pub fn clear(&mut self) {
+        self.safe_address.clear();
+        self.recent_addresses.clear();
+    }
+}
+
+impl Default for SafeContext {
+    fn default() -> Self {
+        Self::load(None)
     }
 }
 

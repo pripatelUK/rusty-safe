@@ -45,7 +45,7 @@ pub fn render(
                         
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             if ui.add(
-                                egui::Button::new(egui::RichText::new("🗑").size(14.0))
+                                egui::Button::new(egui::RichText::new("🗑 Delete Data").size(14.0))
                                     .frame(false)
                             ).on_hover_text("Clear cached data").clicked() {
                                 action = SidebarAction::ClearStorage;
@@ -110,9 +110,9 @@ pub fn render(
                     show_popup = false;
                 }
                 
-                // Cache on blur
+                // Add to recent on blur (will be persisted by eframe auto-save)
                 if addr_response.lost_focus() && !addr_response.ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
-                    crate::state::save_safe_address(&safe_ctx.safe_address);
+                    crate::state::add_recent_address(&mut safe_ctx.recent_addresses, &safe_ctx.safe_address);
                 }
                 
                 // Show recent addresses popup
@@ -136,7 +136,6 @@ pub fn render(
                                         );
                                         if response.clicked() {
                                             safe_ctx.safe_address = addr.clone();
-                                            crate::state::save_safe_address(addr);
                                             show_popup = false;
                                         }
                                     }
@@ -199,7 +198,7 @@ pub fn render(
                     ).on_hover_text("Fetch Safe info (threshold, owners, modules, nonce)")
                      .clicked() 
                     {
-                        crate::state::save_safe_address(&safe_ctx.safe_address);
+                        crate::state::add_recent_address(&mut safe_ctx.recent_addresses, &safe_ctx.safe_address);
                         action = SidebarAction::FetchDetails;
                     }
                     
