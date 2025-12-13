@@ -449,6 +449,15 @@ impl App {
                         ui::copy_to_clipboard(&hashes.safe_tx_hash);
                     }
                     ui.end_row();
+                    
+                    // Ledger binary format
+                    let binary_literal = ui::hash_to_binary_literal(&hashes.safe_tx_hash);
+                    ui.label(egui::RichText::new("Ledger Binary:").strong());
+                    ui.label(egui::RichText::new(&binary_literal).monospace().size(12.0));
+                    if ui.small_button("📋").on_hover_text("Copy").clicked() {
+                        ui::copy_to_clipboard(&binary_literal);
+                    }
+                    ui.end_row();
                 });
 
             ui.add_space(10.0);
@@ -1292,6 +1301,15 @@ impl App {
                         ui.label(egui::RichText::new(&hashes.safe_tx_hash).monospace().size(12.0));
                         if ui.small_button("📋").on_hover_text("Copy").clicked() {
                             ui::copy_to_clipboard(&hashes.safe_tx_hash);
+                        }
+                        ui.end_row();
+                        
+                        // Ledger binary format
+                        let binary_literal = ui::hash_to_binary_literal(&hashes.safe_tx_hash);
+                        ui.label(egui::RichText::new("Ledger Binary:").strong());
+                        ui.label(egui::RichText::new(&binary_literal).monospace().size(12.0));
+                        if ui.small_button("📋").on_hover_text("Copy").clicked() {
+                            ui::copy_to_clipboard(&binary_literal);
                         }
                         ui.end_row();
                     });

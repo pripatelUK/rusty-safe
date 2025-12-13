@@ -190,6 +190,45 @@ pub fn copyable_hash(ui: &mut egui::Ui, hash: &str) {
 }
 
 // =============================================================================
+// LEDGER BINARY FORMAT
+// =============================================================================
+
+/// Convert a hex hash to binary literal format for Ledger display
+/// Matches the shell script behavior: printable ASCII (32-126) shown as-is,
+/// non-printable bytes escaped as \xNN
+/// e.g., "0xad06b099..." -> "\xad\x06\xb0\x99..."
+pub fn hash_to_binary_literal(hash: &str) -> String {
+    let hex = hash.strip_prefix("0x").unwrap_or(hash);
+    let mut result = String::new();
+    
+    // Convert hex pairs to bytes
+    let bytes: Vec<u8> = hex.as_bytes()
+        .chunks(2)
+        .filter_map(|chunk| {
+            if chunk.len() == 2 {
+                let s = std::str::from_utf8(chunk).ok()?;
+                u8::from_str_radix(s, 16).ok()
+            } else {
+                None
+            }
+        })
+        .collect();
+    
+    // Format each byte: printable ASCII as-is, others as \xNN
+    for byte in bytes {
+        if (32..=126).contains(&byte) {
+            // Printable ASCII - show as character
+            result.push(byte as char);
+        } else {
+            // Non-printable - escape as \xNN
+            result.push_str(&format!("\\x{:02x}", byte));
+        }
+    }
+    
+    result
+}
+
+// =============================================================================
 // UINT DECIMAL POPUP
 // =============================================================================
 
