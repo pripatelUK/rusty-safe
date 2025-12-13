@@ -189,3 +189,144 @@ pub fn copyable_hash(ui: &mut egui::Ui, hash: &str) {
     });
 }
 
+// =============================================================================
+// UINT DECIMAL POPUP
+// =============================================================================
+
+/// State for uint decimal popup
+#[derive(Default, Clone)]
+struct UintPopupState {
+    decimals: u8,
+}
+
+/// Check if a value looks like a large uint (numeric, no decimals, > 1e6)
+pub fn is_large_uint(value: &str) -> bool {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return false;
+    }
+    // Check if it's purely numeric
+    if !trimmed.chars().all(|c| c.is_ascii_digit()) {
+        return false;
+    }
+    // Must be larger than 1,000,000 to be interesting
+    trimmed.len() > 6
+}
+
+/// Format a uint value with the given number of decimals
+pub fn format_uint_with_decimals(value: &str, decimals: u8) -> String {
+    if decimals == 0 {
+        return add_thousand_separators(value);
+    }
+    
+    let trimmed = value.trim();
+    let len = trimmed.len();
+    let dec = decimals as usize;
+    
+    if len <= dec {
+        // Value is smaller than the decimal places
+        let zeros = "0".repeat(dec - len);
+        format!("0.{}{}", zeros, trimmed.trim_start_matches('0'))
+    } else {
+        // Split into integer and decimal parts
+        let int_part = &trimmed[..len - dec];
+        let dec_part = &trimmed[len - dec..];
+        
+        // Trim trailing zeros from decimal part
+        let dec_trimmed = dec_part.trim_end_matches('0');
+        
+        let int_formatted = add_thousand_separators(int_part);
+        
+        if dec_trimmed.is_empty() {
+            format!("{}.0", int_formatted)
+        } else {
+            format!("{}.{}", int_formatted, dec_trimmed)
+        }
+    }
+}
+
+/// Add thousand separators to a numeric string
+fn add_thousand_separators(s: &str) -> String {
+    let chars: Vec<char> = s.chars().collect();
+    let mut result = String::new();
+    
+    for (i, c) in chars.iter().enumerate() {
+        if i > 0 && (chars.len() - i) % 3 == 0 {
+            result.push(',');
+        }
+        result.push(*c);
+    }
+    
+    result
+}
+
+/// Render a clickable uint value with decimal popup
+pub fn render_uint_with_popup(ui: &mut egui::Ui, value: &str, id_salt: &str) {
+    let popup_id = ui.make_persistent_id(format!("uint_popup_{}", id_salt));
+    
+    // Get/create state for this popup
+    let mut state = ui.memory(|m| {
+        m.data.get_temp::<UintPopupState>(popup_id).unwrap_or(UintPopupState { decimals: 18 })
+    });
+    
+    // Clickable value label
+    let response = ui.add(
+        egui::Button::new(egui::RichText::new(value).monospace())
+            .frame(false)
+    );
+    
+    if response.clicked() {
+        ui.memory_mut(|m| m.toggle_popup(popup_id));
+    }
+    
+    // Show popup below the value
+    egui::popup_below_widget(ui, popup_id, &response, egui::PopupCloseBehavior::CloseOnClickOutside, |ui| {
+        ui.set_min_width(200.0);
+        
+        // Formatted value with copy button
+        let formatted = format_uint_with_decimals(value, state.decimals);
+        ui.horizontal(|ui| {
+            ui.label(egui::RichText::new(&formatted).monospace().strong());
+            if ui.small_button("📋").on_hover_text("Copy").clicked() {
+                copy_to_clipboard(&formatted);
+            }
+        });
+        
+        ui.separator();
+        
+        // Decimals input field
+        ui.horizontal(|ui| {
+            ui.label("Decimals:");
+            let mut dec_str = state.decimals.to_string();
+            let response = ui.add(
+                egui::TextEdit::singleline(&mut dec_str)
+                    .desired_width(40.0)
+                    .font(egui::TextStyle::Monospace)
+            );
+            if response.changed() {
+                if let Ok(d) = dec_str.parse::<u8>() {
+                    if d <= 77 {
+                        state.decimals = d;
+                    }
+                }
+            }
+        });
+        
+        // Preset buttons
+        ui.horizontal(|ui| {
+            for (label, dec) in [("18", 18), ("9", 9), ("8", 8), ("6", 6), ("0", 0)] {
+                let selected = state.decimals == dec;
+                if ui.selectable_label(selected, label).clicked() {
+                    state.decimals = dec;
+                }
+            }
+        });
+        
+        // Hint text
+        ui.label(egui::RichText::new("18=wei  9=gwei  6=USDC").weak().small());
+    });
+    
+    // Store state
+    ui.memory_mut(|m| m.data.insert_temp(popup_id, state));
+}
+

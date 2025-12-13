@@ -10,8 +10,8 @@ fn is_address(value: &str) -> bool {
     value.starts_with("0x") && value.len() == 42 && value[2..].chars().all(|c| c.is_ascii_hexdigit())
 }
 
-/// Render a parameter value - as hyperlink if it's an address, otherwise as label
-fn render_param_value(ui_ctx: &mut egui::Ui, value: &str, chain_name: &str, color: Option<egui::Color32>) {
+/// Render a parameter value - as hyperlink if it's an address, with decimal popup if it's a large uint, otherwise as label
+fn render_param_value(ui_ctx: &mut egui::Ui, value: &str, chain_name: &str, color: Option<egui::Color32>, id_salt: &str) {
     if is_address(value) {
         // For colored address links, we need custom handling
         if let Some(c) = color {
@@ -25,6 +25,9 @@ fn render_param_value(ui_ctx: &mut egui::Ui, value: &str, chain_name: &str, colo
         } else {
             ui::address_link(ui_ctx, chain_name, value);
         }
+    } else if ui::is_large_uint(value) {
+        // Large uint - show with decimal popup
+        ui::render_uint_with_popup(ui_ctx, value, id_salt);
     } else {
         let text = egui::RichText::new(value).monospace();
         let text = if let Some(c) = color { text.color(c) } else { text };
@@ -85,6 +88,8 @@ pub fn render_single_comparison(ui: &mut egui::Ui, decode: &SingleDecode) {
 
 /// Render side-by-side comparison for a single decode with chain-aware address links
 fn render_single_comparison_with_chain(ui: &mut egui::Ui, decode: &SingleDecode, chain_name: &str) {
+    let id_prefix = format!("decode_{:p}", decode);
+    
     egui::Grid::new(format!("decode_compare_{:p}", decode))
         .num_columns(2)
         .spacing([30.0, 4.0])
@@ -104,7 +109,7 @@ fn render_single_comparison_with_chain(ui: &mut egui::Ui, decode: &SingleDecode,
             ui.end_row();
 
             // Parameter rows
-            render_params_rows(ui, decode, chain_name);
+            render_params_rows(ui, decode, chain_name, &id_prefix);
         });
 
     // Status message
@@ -144,7 +149,7 @@ fn render_method_row(ui: &mut egui::Ui, decode: &SingleDecode) {
 }
 
 /// Render parameter comparison rows
-fn render_params_rows(ui: &mut egui::Ui, decode: &SingleDecode, chain_name: &str) {
+fn render_params_rows(ui: &mut egui::Ui, decode: &SingleDecode, chain_name: &str, id_prefix: &str) {
     static EMPTY_API: Vec<ApiParam> = Vec::new();
     static EMPTY_LOCAL: Vec<LocalParam> = Vec::new();
 
@@ -170,7 +175,8 @@ fn render_params_rows(ui: &mut egui::Ui, decode: &SingleDecode, chain_name: &str
                 } else { 
                     None 
                 };
-                render_param_value(ui, &ap.value, chain_name, color);
+                let id_salt = format!("{}_api_{}", id_prefix, i);
+                render_param_value(ui, &ap.value, chain_name, color, &id_salt);
             });
         } else {
             ui.label(egui::RichText::new("—").weak());
@@ -186,7 +192,8 @@ fn render_params_rows(ui: &mut egui::Ui, decode: &SingleDecode, chain_name: &str
                 } else { 
                     None 
                 };
-                render_param_value(ui, &lp.value, chain_name, color);
+                let id_salt = format!("{}_local_{}", id_prefix, i);
+                render_param_value(ui, &lp.value, chain_name, color, &id_salt);
             });
         } else {
             ui.label(egui::RichText::new("—").weak());
@@ -584,7 +591,7 @@ fn render_offline_single_section(
     // Show decode result
     match status {
         OfflineDecodeStatus::Decoded => {
-            render_offline_decode(ui, local, chain_name);
+            render_offline_decode(ui, local, chain_name, "offline_single");
         }
         OfflineDecodeStatus::Unknown(selector) => {
             ui.label(
@@ -602,7 +609,7 @@ fn render_offline_single_section(
 }
 
 /// Render offline local decode (method + params)
-fn render_offline_decode(ui: &mut egui::Ui, local: &LocalDecode, chain_name: &str) {
+fn render_offline_decode(ui: &mut egui::Ui, local: &LocalDecode, chain_name: &str, id_prefix: &str) {
     // Method name
     ui.label(egui::RichText::new(&local.method).monospace().strong());
     
@@ -612,14 +619,15 @@ fn render_offline_decode(ui: &mut egui::Ui, local: &LocalDecode, chain_name: &st
     if local.params.is_empty() {
         ui.label(egui::RichText::new("(no parameters)").weak());
     } else {
-        egui::Grid::new("offline_params")
+        egui::Grid::new(format!("offline_params_{}", id_prefix))
             .num_columns(2)
             .spacing([10.0, 4.0])
             .striped(true)
             .show(ui, |ui| {
                 for (i, param) in local.params.iter().enumerate() {
                     ui.label(egui::RichText::new(format!("param{} ({}):", i, param.typ)).weak());
-                    render_param_value(ui, &param.value, chain_name, None);
+                    let id_salt = format!("{}_{}", id_prefix, i);
+                    render_param_value(ui, &param.value, chain_name, None, &id_salt);
                     ui.end_row();
                 }
             });
@@ -780,7 +788,8 @@ fn render_offline_multisend_tx(
             match &tx.status {
                 OfflineDecodeStatus::Decoded => {
                     if let Some(local) = &tx.local_decode {
-                        render_offline_decode(ui, local, chain_name);
+                        let id_prefix = format!("offline_multi_{}", tx.index);
+                        render_offline_decode(ui, local, chain_name, &id_prefix);
                     } else if tx.data == "0x" || tx.data.is_empty() {
                         ui.label(egui::RichText::new("No calldata (ETH transfer)").weak());
                     }
