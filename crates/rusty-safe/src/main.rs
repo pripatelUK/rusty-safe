@@ -7,6 +7,7 @@ mod app;
 mod decode;
 mod expected;
 mod hasher;
+mod sidebar;
 mod state;
 mod ui;
 

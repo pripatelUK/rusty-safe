@@ -45,75 +45,55 @@ pub const SAFE_VERSIONS: &[&str] = &[
     "1.4.1", "1.4.0", "1.3.0", "1.2.0", "1.1.1", "1.1.0", "1.0.0",
 ];
 
-/// Transaction verification UI state
-pub struct TxVerifyState {
-    /// Selected chain name (from safe_utils)
+// =============================================================================
+// SHARED SAFE CONTEXT (used by sidebar, shared across all tabs)
+// =============================================================================
+
+/// Shared Safe context - displayed in sidebar, used by all tabs
+pub struct SafeContext {
     pub chain_name: String,
-    /// Safe address input
     pub safe_address: String,
-    /// Safe version
     pub safe_version: String,
-    /// Transaction nonce
-    pub nonce: String,
-
-    // Expected values for API validation
-    pub expected: ExpectedState,
-
-    // Calldata decode state
-    pub decode: Option<DecodedTransaction>,
-
-    // UI toggle for showing full data
-    pub show_full_data: bool,
-
-    // Fetched from API
-    pub fetched_tx: Option<SafeTransaction>,
-
-    // Computed hashes (display strings)
-    pub hashes: Option<ComputedHashes>,
-
-    // Warnings from safe_hash
-    pub warnings: SafeWarnings,
-
-    // Loading state
-    pub is_loading: bool,
-
-    // Error
-    pub error: Option<String>,
 }
 
-/// Computed hash results (display strings)
-#[derive(Debug, Clone)]
-pub struct ComputedHashes {
-    pub domain_hash: String,
-    pub message_hash: String,
-    pub safe_tx_hash: String,
-    pub matches_api: Option<bool>,
-}
-
-impl Default for TxVerifyState {
+impl Default for SafeContext {
     fn default() -> Self {
         let chains = get_all_supported_chain_names();
-        let default_chain = chains
-            .iter()
+        let default_chain = chains.iter()
             .find(|c| *c == "ethereum")
             .cloned()
             .unwrap_or_else(|| chains.first().cloned().unwrap_or_default());
-
+        
         Self {
             chain_name: default_chain,
-            safe_address: String::new(),
+            safe_address: load_cached_safe_address().unwrap_or_default(),
             safe_version: SAFE_VERSIONS[0].to_string(),
-            nonce: String::new(),
-            expected: ExpectedState::default(),
-            decode: None,
-            show_full_data: false,
-            fetched_tx: None,
-            hashes: None,
-            warnings: SafeWarnings::new(),
-            is_loading: false,
-            error: None,
         }
     }
+}
+
+/// Sidebar UI state
+#[derive(Default)]
+pub struct SidebarState {
+    pub collapsed: bool,
+}
+
+// =============================================================================
+// TAB-SPECIFIC STATES (no longer contain chain/address/version - use SafeContext)
+// =============================================================================
+
+/// Transaction verification UI state (Verify Safe API tab)
+#[derive(Default)]
+pub struct TxVerifyState {
+    pub nonce: String,
+    pub expected: ExpectedState,
+    pub decode: Option<DecodedTransaction>,
+    pub show_full_data: bool,
+    pub fetched_tx: Option<SafeTransaction>,
+    pub hashes: Option<ComputedHashes>,
+    pub warnings: SafeWarnings,
+    pub is_loading: bool,
+    pub error: Option<String>,
 }
 
 impl TxVerifyState {
@@ -127,37 +107,22 @@ impl TxVerifyState {
     }
 }
 
+/// Computed hash results (display strings)
+#[derive(Debug, Clone)]
+pub struct ComputedHashes {
+    pub domain_hash: String,
+    pub message_hash: String,
+    pub safe_tx_hash: String,
+    pub matches_api: Option<bool>,
+}
+
 /// Message verification UI state
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct MsgVerifyState {
-    pub chain_name: String,
-    pub safe_address: String,
-    pub safe_version: String,
     pub message: String,
     pub is_hex: bool,
     pub hashes: Option<MsgHashes>,
     pub error: Option<String>,
-}
-
-impl Default for MsgVerifyState {
-    fn default() -> Self {
-        let chains = get_all_supported_chain_names();
-        let default_chain = chains
-            .iter()
-            .find(|c| *c == "ethereum")
-            .cloned()
-            .unwrap_or_else(|| chains.first().cloned().unwrap_or_default());
-
-        Self {
-            chain_name: default_chain,
-            safe_address: String::new(),
-            safe_version: SAFE_VERSIONS[0].to_string(),
-            message: String::new(),
-            is_hex: false,
-            hashes: None,
-            error: None,
-        }
-    }
 }
 
 #[derive(Debug, Clone)]
@@ -168,34 +133,11 @@ pub struct MsgHashes {
 }
 
 /// EIP-712 verification UI state
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct Eip712State {
-    pub chain_name: String,
-    pub safe_address: String,
-    pub safe_version: String,
     pub json_input: String,
     pub hashes: Option<Eip712Hashes>,
     pub error: Option<String>,
-}
-
-impl Default for Eip712State {
-    fn default() -> Self {
-        let chains = get_all_supported_chain_names();
-        let default_chain = chains
-            .iter()
-            .find(|c| *c == "ethereum")
-            .cloned()
-            .unwrap_or_else(|| chains.first().cloned().unwrap_or_default());
-
-        Self {
-            chain_name: default_chain,
-            safe_address: String::new(),
-            safe_version: SAFE_VERSIONS[0].to_string(),
-            json_input: String::new(),
-            hashes: None,
-            error: None,
-        }
-    }
 }
 
 #[derive(Debug, Clone)]
@@ -213,13 +155,6 @@ use crate::decode::OfflineDecodeResult;
 
 /// Offline verification UI state (manual transaction input)
 pub struct OfflineState {
-    /// Selected chain name
-    pub chain_name: String,
-    /// Safe address (pre-filled from cache)
-    pub safe_address: String,
-    /// Safe version
-    pub safe_version: String,
-    
     // Transaction inputs
     pub to: String,
     pub value: String,
@@ -244,20 +179,7 @@ pub struct OfflineState {
 
 impl Default for OfflineState {
     fn default() -> Self {
-        let chains = get_all_supported_chain_names();
-        let default_chain = chains
-            .iter()
-            .find(|c| *c == "ethereum")
-            .cloned()
-            .unwrap_or_else(|| chains.first().cloned().unwrap_or_default());
-        
-        // Pre-fill from cached address
-        let cached_address = load_cached_safe_address().unwrap_or_default();
-        
         Self {
-            chain_name: default_chain,
-            safe_address: cached_address,
-            safe_version: SAFE_VERSIONS[0].to_string(),
             to: String::new(),
             value: "0".to_string(),
             data: String::new(),

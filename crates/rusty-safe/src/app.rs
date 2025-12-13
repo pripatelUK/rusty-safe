@@ -24,8 +24,9 @@ macro_rules! debug_log {
 }
 use crate::expected;
 use crate::hasher::{get_warnings_for_tx, get_warnings_from_api_tx, compute_hashes_from_api_tx, fetch_transaction};
-use crate::state::{Eip712State, MsgVerifyState, TxVerifyState, OfflineState, SAFE_VERSIONS};
+use crate::state::{Eip712State, MsgVerifyState, TxVerifyState, OfflineState, SafeContext, SidebarState, SAFE_VERSIONS};
 use crate::ui;
+use crate::sidebar;
 
 /// Result from async fetch operation
 #[derive(Clone)]
@@ -64,6 +65,10 @@ pub enum OfflineDecodeResult {
 pub struct App {
     /// Current active tab
     active_tab: Tab,
+    /// Shared Safe context (sidebar)
+    safe_context: SafeContext,
+    /// Sidebar UI state
+    sidebar_state: SidebarState,
     /// Transaction verification state
     tx_state: TxVerifyState,
     /// Message verification state
@@ -103,28 +108,14 @@ pub enum Tab {
 impl App {
     /// Create a new App instance
     pub fn new(_cc: &eframe::CreationContext<'_>) -> Self {
-        // Load cached Safe address from LocalStorage
-        let cached_address = crate::state::load_cached_safe_address().unwrap_or_default();
-        
-        let mut tx_state = TxVerifyState::default();
-        let mut msg_state = MsgVerifyState::default();
-        let mut eip712_state = Eip712State::default();
-        let mut offline_state = OfflineState::default();
-        
-        // Apply cached address to all states
-        if !cached_address.is_empty() {
-            tx_state.safe_address = cached_address.clone();
-            msg_state.safe_address = cached_address.clone();
-            eip712_state.safe_address = cached_address.clone();
-            offline_state.safe_address = cached_address;
-        }
-        
         Self {
             active_tab: Tab::default(),
-            tx_state,
-            msg_state,
-            eip712_state,
-            offline_state,
+            safe_context: SafeContext::default(),
+            sidebar_state: SidebarState::default(),
+            tx_state: TxVerifyState::default(),
+            msg_state: MsgVerifyState::default(),
+            eip712_state: Eip712State::default(),
+            offline_state: OfflineState::default(),
             chain_names: get_all_supported_chain_names(),
             fetch_result: Arc::new(Mutex::new(None)),
             signature_lookup: SignatureLookup::new(),
@@ -153,6 +144,7 @@ impl eframe::App for App {
         // Check for async offline decode results
         self.check_offline_decode_result();
 
+        // Header with tabs
         egui::TopBottomPanel::top("header").show(ctx, |ui| {
             ui.add_space(8.0);
             ui.horizontal(|ui| {
@@ -172,6 +164,22 @@ impl eframe::App for App {
             ui.add_space(4.0);
         });
 
+        // Sidebar with Safe context
+        let sidebar_action = sidebar::render(
+            ctx,
+            &mut self.sidebar_state,
+            &mut self.safe_context,
+            &self.safe_info,
+            self.safe_info_loading,
+            &self.chain_names,
+        );
+        
+        // Handle sidebar actions
+        if matches!(sidebar_action, sidebar::SidebarAction::FetchDetails) {
+            self.trigger_safe_info_fetch();
+        }
+
+        // Main content area
         egui::CentralPanel::default().show(ctx, |ui| {
             egui::ScrollArea::vertical().show(ui, |ui| {
                 ui.add_space(10.0);
@@ -193,125 +201,7 @@ impl App {
         ui.label("Verify Safe transaction hashes before signing.");
         ui.add_space(15.0);
 
-        // Chain and Version row - using safe_utils chain names
-        ui.horizontal(|ui| {
-            ui.label("Chain:");
-            egui::ComboBox::from_id_salt("chain_select")
-                .selected_text(&self.tx_state.chain_name)
-                .width(180.0)
-                .show_ui(ui, |ui| {
-                    for chain_name in &self.chain_names {
-                        ui.selectable_value(
-                            &mut self.tx_state.chain_name,
-                            chain_name.clone(),
-                            chain_name,
-                        );
-                    }
-                });
-
-            ui.add_space(20.0);
-            ui.label("Safe Version:");
-            
-            // If we have safe_info with a valid version, show it as read-only
-            let version_from_api = self.safe_info.as_ref()
-                .filter(|info| SAFE_VERSIONS.contains(&info.version.as_str()));
-            
-            if version_from_api.is_some() {
-                // Show as disabled/read-only
-                ui.add_enabled(false, egui::Button::new(&self.tx_state.safe_version).min_size(egui::vec2(100.0, 0.0)));
-                ui.label(egui::RichText::new("(from API)").weak());
-            } else {
-                egui::ComboBox::from_id_salt("version_select")
-                    .selected_text(&self.tx_state.safe_version)
-                    .width(100.0)
-                    .show_ui(ui, |ui| {
-                        for version in SAFE_VERSIONS {
-                            ui.selectable_value(
-                                &mut self.tx_state.safe_version,
-                                version.to_string(),
-                                *version,
-                            );
-                        }
-                    });
-            }
-        });
-
-        ui.add_space(10.0);
-
-        ui.horizontal(|ui| {
-            ui.label("Safe Address:");
-            let response = ui::address_input(ui, &mut self.tx_state.safe_address);
-            
-            // Cache address when focus leaves the field
-            if response.lost_focus() && !response.ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
-                crate::state::save_safe_address(&self.tx_state.safe_address);
-            }
-            
-            // Fetch Details button
-            let is_valid_address = self.tx_state.safe_address.starts_with("0x") 
-                && self.tx_state.safe_address.len() == 42;
-            
-            if ui.add_enabled(
-                is_valid_address && !self.safe_info_loading,
-                egui::Button::new("⟳ Fetch Details")
-            ).on_hover_text("Fetch Safe info (threshold, owners, modules, nonce)")
-             .clicked() 
-            {
-                crate::state::save_safe_address(&self.tx_state.safe_address);
-                self.trigger_safe_info_fetch();
-            }
-            
-            if self.safe_info_loading {
-                ui.spinner();
-            }
-        });
-
-        // Show Safe info if available
-        if let Some(ref info) = self.safe_info {
-            ui.add_space(5.0);
-            
-            egui::Grid::new("safe_info_grid")
-                .num_columns(2)
-                .spacing([10.0, 4.0])
-                .show(ui, |ui| {
-                    // Threshold with signers
-                    ui.label(format!("Threshold ({}/{}):", info.threshold, info.owners.len()));
-                    if let Some(first_owner) = info.owners.first() {
-                        let addr = format!("{:?}", first_owner);
-                        ui::address_link(ui, &self.tx_state.chain_name, &addr);
-                    }
-                    ui.end_row();
-                    
-                    // Additional signers
-                    for owner in info.owners.iter().skip(1) {
-                        ui.label(""); // Empty label for alignment
-                        let addr = format!("{:?}", owner);
-                        ui::address_link(ui, &self.tx_state.chain_name, &addr);
-                        ui.end_row();
-                    }
-                    
-                    // Modules (if any)
-                    if !info.modules.is_empty() {
-                        ui.label(format!("Modules ({}):", info.modules.len()));
-                        if let Some(first_module) = info.modules.first() {
-                            let addr = format!("{:?}", first_module);
-                            ui::address_link(ui, &self.tx_state.chain_name, &addr);
-                        }
-                        ui.end_row();
-                        
-                        // Additional modules
-                        for module in info.modules.iter().skip(1) {
-                            ui.label(""); // Empty label for alignment
-                            let addr = format!("{:?}", module);
-                            ui::address_link(ui, &self.tx_state.chain_name, &addr);
-                            ui.end_row();
-                        }
-                    }
-                });
-        }
-
-        ui.add_space(5.0);
-
+        // Nonce input
         ui.horizontal(|ui| {
             ui.label("Nonce:");
             
@@ -356,7 +246,7 @@ impl App {
         ui.add_space(15.0);
 
         ui.horizontal(|ui| {
-            let can_compute = !self.tx_state.safe_address.is_empty()
+            let can_compute = !self.safe_context.safe_address.is_empty()
                 && !self.tx_state.nonce.is_empty()
                 && !self.tx_state.is_loading;
 
@@ -389,7 +279,7 @@ impl App {
                 .show(ui, |ui| {
                     ui.label("To:");
                     let to_str = format!("{}", tx.to);
-                    ui::address_link(ui, &self.tx_state.chain_name, &to_str);
+                    ui::address_link(ui, &self.safe_context.chain_name, &to_str);
                     if ui.small_button("📋").on_hover_text("Copy").clicked() {
                         ui::copy_to_clipboard(&to_str);
                     }
@@ -471,7 +361,7 @@ impl App {
             if let Some(decode_state) = &mut self.tx_state.decode {
                 ui.add_space(15.0);
                 ui::section_header(ui, "Calldata Verification");
-                decode::render_decode_section(ui, decode_state, &self.tx_state.chain_name);
+                decode::render_decode_section(ui, decode_state, &self.safe_context.chain_name);
             }
         }
 
@@ -548,50 +438,7 @@ impl App {
     fn render_message_tab(&mut self, ui: &mut egui::Ui) {
         ui::styled_heading(ui, "Message Verification");
         ui.label("Verify Safe message signing hashes.");
-        ui.add_space(20.0);
-
-        ui.horizontal(|ui| {
-            ui.label("Chain:");
-            egui::ComboBox::from_id_salt("msg_chain_select")
-                .selected_text(&self.msg_state.chain_name)
-                .width(180.0)
-                .show_ui(ui, |ui| {
-                    for chain_name in &self.chain_names {
-                        ui.selectable_value(
-                            &mut self.msg_state.chain_name,
-                            chain_name.clone(),
-                            chain_name,
-                        );
-                    }
-                });
-
-            ui.add_space(20.0);
-            ui.label("Safe Version:");
-            egui::ComboBox::from_id_salt("msg_version_select")
-                .selected_text(&self.msg_state.safe_version)
-                .width(100.0)
-                .show_ui(ui, |ui| {
-                    for version in SAFE_VERSIONS {
-                        ui.selectable_value(
-                            &mut self.msg_state.safe_version,
-                            version.to_string(),
-                            *version,
-                        );
-                    }
-                });
-        });
-
-        ui.add_space(10.0);
-
-        ui.horizontal(|ui| {
-            ui.label("Safe Address:");
-            let response = ui::address_input(ui, &mut self.msg_state.safe_address);
-            if response.lost_focus() || response.changed() {
-                crate::state::save_safe_address(&self.msg_state.safe_address);
-            }
-        });
-
-        ui.add_space(10.0);
+        ui.add_space(15.0);
 
         ui.checkbox(&mut self.msg_state.is_hex, "Message is hex bytes");
 
@@ -655,50 +502,7 @@ impl App {
     fn render_eip712_tab(&mut self, ui: &mut egui::Ui) {
         ui::styled_heading(ui, "EIP-712 Typed Data");
         ui.label("Hash and verify EIP-712 typed data structures.");
-        ui.add_space(20.0);
-
-        ui.horizontal(|ui| {
-            ui.label("Chain:");
-            egui::ComboBox::from_id_salt("eip712_chain_select")
-                .selected_text(&self.eip712_state.chain_name)
-                .width(180.0)
-                .show_ui(ui, |ui| {
-                    for chain_name in &self.chain_names {
-                        ui.selectable_value(
-                            &mut self.eip712_state.chain_name,
-                            chain_name.clone(),
-                            chain_name,
-                        );
-                    }
-                });
-
-            ui.add_space(20.0);
-            ui.label("Safe Version:");
-            egui::ComboBox::from_id_salt("eip712_version_select")
-                .selected_text(&self.eip712_state.safe_version)
-                .width(100.0)
-                .show_ui(ui, |ui| {
-                    for version in SAFE_VERSIONS {
-                        ui.selectable_value(
-                            &mut self.eip712_state.safe_version,
-                            version.to_string(),
-                            *version,
-                        );
-                    }
-                });
-        });
-
-        ui.add_space(10.0);
-
-        ui.horizontal(|ui| {
-            ui.label("Safe Address:");
-            let response = ui::address_input(ui, &mut self.eip712_state.safe_address);
-            if response.lost_focus() || response.changed() {
-                crate::state::save_safe_address(&self.eip712_state.safe_address);
-            }
-        });
-
-        ui.add_space(10.0);
+        ui.add_space(15.0);
 
         ui.label("EIP-712 JSON:");
         ui::multiline_input(
@@ -726,7 +530,7 @@ impl App {
         self.msg_state.hashes = None;
 
         // Use safe_utils::Of to get chain ID from name
-        let chain_id = match ChainId::of(&self.msg_state.chain_name) {
+        let chain_id = match ChainId::of(&self.safe_context.chain_name) {
             Ok(id) => id,
             Err(e) => {
                 self.msg_state.error = Some(format!("Invalid chain: {}", e));
@@ -734,7 +538,7 @@ impl App {
             }
         };
 
-        let safe_version = match SafeWalletVersion::parse(&self.msg_state.safe_version) {
+        let safe_version = match SafeWalletVersion::parse(&self.safe_context.safe_version) {
             Ok(v) => v,
             Err(e) => {
                 self.msg_state.error = Some(format!("Invalid version: {}", e));
@@ -742,7 +546,7 @@ impl App {
             }
         };
 
-        let safe_addr: alloy::primitives::Address = match self.msg_state.safe_address.parse() {
+        let safe_addr: alloy::primitives::Address = match self.safe_context.safe_address.parse() {
             Ok(a) => a,
             Err(e) => {
                 self.msg_state.error = Some(format!("Invalid address: {}", e));
@@ -777,8 +581,8 @@ impl App {
         self.tx_state.hashes = None;
         self.tx_state.fetched_tx = None;
 
-        let chain_name = self.tx_state.chain_name.clone();
-        let safe_address = self.tx_state.safe_address.clone();
+        let chain_name = self.safe_context.chain_name.clone();
+        let safe_address = self.safe_context.safe_address.clone();
         let nonce: u64 = match self.tx_state.nonce.trim().parse() {
             Ok(n) => n,
             Err(_) => {
@@ -833,9 +637,9 @@ impl App {
                 FetchResult::Success(tx) => {
                     // Compute hashes from the fetched transaction using validate_safe_tx_hash
                     match compute_hashes_from_api_tx(
-                        &self.tx_state.chain_name,
-                        &self.tx_state.safe_address,
-                        &self.tx_state.safe_version,
+                        &self.safe_context.chain_name,
+                        &self.safe_context.safe_address,
+                        &self.safe_context.safe_version,
                         &tx,
                     ) {
                         Ok((hashes, mismatch)) => {
@@ -851,7 +655,7 @@ impl App {
                     }
 
                     // Get warnings using check_suspicious_content (via get_warnings_from_api_tx)
-                    let chain_id = ChainId::of(&self.tx_state.chain_name).ok();
+                    let chain_id = ChainId::of(&self.safe_context.chain_name).ok();
                     self.tx_state.warnings.union(get_warnings_from_api_tx(&tx, chain_id));
 
                     // Validate against expected values if any were provided
@@ -1093,7 +897,7 @@ impl App {
                     // Auto-fill version if it matches a supported version
                     let version_str = info.version.as_str();
                     if crate::state::SAFE_VERSIONS.contains(&version_str) {
-                        self.tx_state.safe_version = version_str.to_string();
+                        self.safe_context.safe_version = version_str.to_string();
                     }
                     
                     self.safe_info = Some(info);
@@ -1112,8 +916,8 @@ impl App {
         }
         
         self.safe_info_loading = true;
-        let chain_name = self.tx_state.chain_name.clone();
-        let safe_address = self.tx_state.safe_address.clone();
+        let chain_name = self.safe_context.chain_name.clone();
+        let safe_address = self.safe_context.safe_address.clone();
         let result = Arc::clone(&self.safe_info_result);
 
         #[cfg(target_arch = "wasm32")]
@@ -1151,55 +955,6 @@ impl App {
         ui::styled_heading(ui, "Offline Verification");
         ui.label("Manually input transaction data for offline verification (uses 4byte signature lookup).");
         ui.add_space(15.0);
-        
-        // Chain and Version row
-        ui.horizontal(|ui| {
-            ui.label("Chain:");
-            egui::ComboBox::from_id_salt("offline_chain_select")
-                .selected_text(&self.offline_state.chain_name)
-                .width(120.0)
-                .show_ui(ui, |ui| {
-                    for chain in &self.chain_names {
-                        ui.selectable_value(
-                            &mut self.offline_state.chain_name,
-                            chain.clone(),
-                            chain,
-                        );
-                    }
-                });
-
-            ui.add_space(20.0);
-            ui.label("Safe Version:");
-            egui::ComboBox::from_id_salt("offline_version_select")
-                .selected_text(&self.offline_state.safe_version)
-                .width(100.0)
-                .show_ui(ui, |ui| {
-                    for version in SAFE_VERSIONS {
-                        ui.selectable_value(
-                            &mut self.offline_state.safe_version,
-                            version.to_string(),
-                            *version,
-                        );
-                    }
-                });
-        });
-        ui.add_space(10.0);
-        
-        // Safe Address
-        ui.horizontal(|ui| {
-            ui.label("Safe Address:");
-            let resp = ui.add(
-                egui::TextEdit::singleline(&mut self.offline_state.safe_address)
-                    .hint_text("0x...")
-                    .desired_width(400.0)
-                    .font(egui::TextStyle::Monospace),
-            );
-            if resp.lost_focus() || resp.changed() {
-                // Cache the address
-                crate::state::save_safe_address(&self.offline_state.safe_address);
-            }
-        });
-        ui.add_space(10.0);
         
         // Transaction inputs
         ui::section_header(ui, "Transaction Details");
@@ -1273,7 +1028,7 @@ impl App {
         ui.add_space(15.0);
         
         // Compute button
-        let can_compute = !self.offline_state.safe_address.is_empty()
+        let can_compute = !self.safe_context.safe_address.is_empty()
             && !self.offline_state.to.is_empty()
             && !self.offline_state.is_loading;
         
@@ -1352,7 +1107,7 @@ impl App {
             // Decode result
             if let Some(ref mut decode_result) = self.offline_state.decode_result {
                 ui.add_space(15.0);
-                decode::render_offline_decode_section(ui, decode_result, &self.offline_state.chain_name);
+                decode::render_offline_decode_section(ui, decode_result, &self.safe_context.chain_name);
             }
         }
     }
@@ -1384,9 +1139,9 @@ impl App {
         
         // Compute hashes synchronously (fast, doesn't need async)
         match crate::hasher::compute_hashes(
-            &self.offline_state.chain_name,
-            &self.offline_state.safe_address,
-            &self.offline_state.safe_version,
+            &self.safe_context.chain_name,
+            &self.safe_context.safe_address,
+            &self.safe_context.safe_version,
             &self.offline_state.to,
             &self.offline_state.value,
             &self.offline_state.data,
