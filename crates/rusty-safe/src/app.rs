@@ -189,8 +189,16 @@ impl eframe::App for App {
         );
         
         // Handle sidebar actions
-        if matches!(sidebar_action, sidebar::SidebarAction::FetchDetails) {
-            self.trigger_safe_info_fetch();
+        match sidebar_action {
+            sidebar::SidebarAction::FetchDetails => {
+                self.trigger_safe_info_fetch();
+            }
+            sidebar::SidebarAction::ClearStorage => {
+                crate::state::clear_all_storage();
+                self.safe_context.safe_address.clear();
+                self.safe_context.recent_addresses.clear();
+            }
+            sidebar::SidebarAction::None => {}
         }
 
         // Main content area

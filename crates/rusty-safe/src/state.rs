@@ -70,6 +70,20 @@ pub fn save_recent_addresses(_addresses: &[String]) {
     // No-op
 }
 
+/// Clear all application storage (WASM only)
+#[cfg(target_arch = "wasm32")]
+pub fn clear_all_storage() {
+    use gloo_storage::{LocalStorage, Storage};
+    let _ = LocalStorage::delete(SAFE_ADDRESS_KEY);
+    let _ = LocalStorage::delete(RECENT_ADDRESSES_KEY);
+}
+
+/// Clear all storage - no-op on native
+#[cfg(not(target_arch = "wasm32"))]
+pub fn clear_all_storage() {
+    // No-op
+}
+
 /// Add address to recent list (most recent first, deduped, capped)
 pub fn add_recent_address(addresses: &mut Vec<String>, address: &str) {
     if address.is_empty() || !address.starts_with("0x") || address.len() != 42 {

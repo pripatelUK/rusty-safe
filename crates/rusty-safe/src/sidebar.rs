@@ -9,6 +9,7 @@ use crate::ui;
 pub enum SidebarAction {
     None,
     FetchDetails,
+    ClearStorage,
 }
 
 /// Render the sidebar panel
@@ -27,7 +28,7 @@ pub fn render(
         .default_width(280.0)
         .min_width(60.0)
         .show_animated(ctx, !sidebar.collapsed, |ui| {
-            // Footer with GitHub link
+            // Footer with GitHub link and clear storage
             egui::TopBottomPanel::bottom("sidebar_footer")
                 .frame(egui::Frame::none().inner_margin(egui::Margin::symmetric(8.0, 8.0)))
                 .show_inside(ui, |ui| {
@@ -41,6 +42,15 @@ pub fn render(
                         if ui.link(egui::RichText::new("GitHub")).clicked() {
                             ui::open_url_new_tab("https://github.com/pripatelUK/rusty-safe");
                         }
+                        
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            if ui.add(
+                                egui::Button::new(egui::RichText::new("🗑").size(14.0))
+                                    .frame(false)
+                            ).on_hover_text("Clear cached data").clicked() {
+                                action = SidebarAction::ClearStorage;
+                            }
+                        });
                     });
                 });
             
