@@ -322,8 +322,9 @@ fn format_value(val: &alloy::dyn_abi::DynSolValue) -> String {
             format!("[{}]", items.join(", "))
         }
         DynSolValue::Tuple(items) => {
+            // Use [] to match Safe API format (JSON array style)
             let items: Vec<std::string::String> = items.iter().map(format_value).collect();
-            format!("({})", items.join(", "))
+            format!("[{}]", items.join(", "))
         }
         DynSolValue::CustomStruct { name, tuple, .. } => {
             let items: Vec<std::string::String> = tuple.iter().map(format_value).collect();

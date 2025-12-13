@@ -32,7 +32,7 @@ pub fn render(
                 
                 // Header with collapse button
                 ui.horizontal(|ui| {
-                    ui.heading(egui::RichText::new("Safe Context").size(16.0).strong());
+                    ui.heading(egui::RichText::new("Safe Details").size(16.0).strong());
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if ui.button("◀").on_hover_text("Collapse sidebar").clicked() {
                             sidebar.collapsed = true;
