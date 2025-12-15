@@ -32,23 +32,36 @@ pub fn render(
             egui::TopBottomPanel::bottom("sidebar_footer")
                 .frame(egui::Frame::none().inner_margin(egui::Margin::symmetric(8.0, 8.0)))
                 .show_inside(ui, |ui| {
-                    ui.horizontal(|ui| {
-                        if ui.add(
-                            egui::Button::new(egui::RichText::new("").size(20.0))
-                                .frame(false)
-                        ).on_hover_text("View on GitHub").clicked() {
-                            ui::open_url_new_tab("https://github.com/pripatelUK/rusty-safe");
-                        }
-                        if ui.link(egui::RichText::new("GitHub")).clicked() {
-                            ui::open_url_new_tab("https://github.com/pripatelUK/rusty-safe");
-                        }
-                        
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.vertical_centered(|ui| {
+                        ui.horizontal(|ui| {
                             if ui.add(
-                                egui::Button::new(egui::RichText::new("🗑 Delete Data").size(14.0))
+                                egui::Button::new(egui::RichText::new("").size(20.0))
                                     .frame(false)
-                            ).on_hover_text("Clear cached data").clicked() {
-                                action = SidebarAction::ClearStorage;
+                            ).on_hover_text("View on GitHub").clicked() {
+                                ui::open_url_new_tab("https://github.com/pripatelUK/rusty-safe");
+                            }
+                            if ui.link(egui::RichText::new("GitHub")).clicked() {
+                                ui::open_url_new_tab("https://github.com/pripatelUK/rusty-safe");
+                            }
+                            
+                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                if ui.add(
+                                    egui::Button::new(egui::RichText::new("🗑 Delete Data").size(14.0))
+                                        .frame(false)
+                                ).on_hover_text("Clear cached data").clicked() {
+                                    action = SidebarAction::ClearStorage;
+                                }
+                            });
+                        });
+                        
+                        ui.add_space(4.0);
+                        
+                        // Build Info
+                        ui.collapsing("Build Info", |ui| {
+                            ui.label(egui::RichText::new(format!("Commit: {}", env!("GIT_HASH"))).weak().size(10.0));
+                            ui.label(egui::RichText::new(format!("Time: {}", env!("BUILD_TIME"))).weak().size(10.0));
+                            if ui.link(egui::RichText::new("Verify Build").size(10.0)).clicked() {
+                                ui::open_url_new_tab("https://github.com/pripatelUK/rusty-safe/blob/main/verification.md");
                             }
                         });
                     });
