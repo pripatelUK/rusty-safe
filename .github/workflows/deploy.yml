@@ -1,0 +1,73 @@
+name: Deploy with Verification
+on:
+  push:
+    branches: [main]
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+  id-token: write
+  attestations: write
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      # Reproducible build in Docker
+      - name: Build in Docker
+        run: |
+          docker build -f Dockerfile.build -t builder .
+          docker create --name temp builder
+          docker cp temp:/build/crates/rusty-safe/dist .
+          docker rm temp
+      
+      # Generate WASM hash
+      - name: Generate Hash
+        id: hash
+        run: |
+          HASH=$(sha256sum dist/*.wasm | awk '{print $1}')
+          echo "wasm_hash=$HASH" >> $GITHUB_OUTPUT
+          echo "$HASH" > dist/WASM_HASH.txt
+          echo "**WASM SHA256**: \`$HASH\`" > dist/BUILD_INFO.txt
+          echo "**Commit**: ${{ github.sha }}" >> dist/BUILD_INFO.txt
+          echo "**Build Time**: $(date -u +%Y-%m-%dT%H:%M:%SZ)" >> dist/BUILD_INFO.txt
+      
+      # GitHub attestation (cryptographic proof)
+      - name: Attest Build
+        uses: actions/attest-build-provenance@v1
+        with:
+          subject-path: 'dist/*.wasm'
+      
+      # Deploy to Cloudflare Pages
+      - name: Deploy to Cloudflare Pages
+        uses: cloudflare/pages-action@v1
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          projectName: your-project
+          directory: dist
+      
+      # Create release with hash (for tagged releases)
+      - name: Create Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            dist/WASM_HASH.txt
+            dist/BUILD_INFO.txt
+          body: |
+            ## Build Verification
+            **WASM Hash**: `${{ steps.hash.outputs.wasm_hash }}`
+            
+            ### Verify Deployment
+            ```bash
+            # Download deployed WASM
+            curl -o app.wasm https://your-app.pages.dev/app.wasm
+            
+            # Check hash
+            sha256sum app.wasm
+            # Should match: ${{ steps.hash.outputs.wasm_hash }}
+            ```

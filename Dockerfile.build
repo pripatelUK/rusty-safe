@@ -1,0 +1,25 @@
+# Dockerfile.build
+FROM rust:slim-bookworm
+
+# Install dependencies
+RUN apt-get update && apt-get install -y \
+    binaryen \
+    git \
+    pkg-config \
+    libssl-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install specific nightly toolchain
+RUN rustup toolchain install nightly-2025-01-01 --profile minimal && \
+    rustup default nightly-2025-01-01
+
+# Install wasm target and trunk
+RUN rustup target add wasm32-unknown-unknown && \
+    cargo install trunk --locked
+
+WORKDIR /build
+COPY . .
+
+# Build release
+WORKDIR /build/crates/rusty-safe
+RUN trunk build --release
