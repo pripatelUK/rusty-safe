@@ -1,5 +1,6 @@
 # Dockerfile.build
-FROM rust:slim-bookworm
+# Stage 1: Base image with common dependencies
+FROM rust:slim-bookworm AS base
 
 # Install dependencies
 RUN apt-get update && apt-get install -y \
@@ -13,13 +14,40 @@ RUN apt-get update && apt-get install -y \
 RUN rustup toolchain install nightly-2025-01-01 --profile minimal && \
     rustup default nightly-2025-01-01
 
-# Install wasm target and trunk
+# Install wasm target, trunk, and cargo-chef
 RUN rustup target add wasm32-unknown-unknown && \
-    cargo install trunk --locked
+    cargo install trunk --locked && \
+    cargo install cargo-chef --locked
 
 WORKDIR /build
-COPY . .
 
-# Build release
+# Stage 2: Planner - Compute the recipe
+FROM base AS planner
+COPY . .
+RUN cargo chef prepare --recipe-path recipe.json
+
+# Stage 3: Builder - Build dependencies only
+FROM base AS builder
+COPY --from=planner /build/recipe.json recipe.json
+# Build dependencies - this is the cached layer
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    --mount=type=cache,target=/build/target \
+    cargo chef cook --release --target wasm32-unknown-unknown --recipe-path recipe.json
+
+# Stage 4: Final - Build the application
+COPY . .
+# Copy the built dependencies from the builder stage
+# Note: We need to copy the target directory to reuse the artifacts
+# However, since we are using cache mounts in the builder, the target dir might be in the cache.
+# But cargo-chef cook builds into the target dir.
+# A common pattern with cache mounts is to use the SAME cache mount in the final build step.
+
 WORKDIR /build/crates/rusty-safe
-RUN trunk build --release
+# We use the same cache mounts to access the pre-built dependencies
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    --mount=type=cache,target=/build/target \
+    trunk build --release
+
+# Copy the artifacts out (optional, but good for clarity if we want to extract them later)
+# Since the 'trunk build' command puts them in 'dist', they are there.
+
