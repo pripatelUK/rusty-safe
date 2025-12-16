@@ -103,7 +103,7 @@ pub fn render(
                                         }
                                         ui.separator();
                                         if ui.link("Verify Build").clicked() {
-                                            ui::open_url_new_tab("https://github.com/pripatelUK/rusty-safe/blob/main/verification.md");
+                                            ui::open_url_new_tab("https://github.com/pripatelUK/rusty-safe/blob/main/VERIFY.md");
                                         }
                                     });
                                 });

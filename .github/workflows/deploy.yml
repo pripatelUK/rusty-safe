@@ -28,10 +28,12 @@ jobs:
       - name: Generate Hash
         id: hash
         run: |
-          HASH=$(sha256sum dist/*.wasm | awk '{print $1}')
+          WASM_FILE=$(ls dist/*.wasm)
+          HASH=$(sha256sum $WASM_FILE | awk '{print $1}')
           echo "wasm_hash=$HASH" >> $GITHUB_OUTPUT
           echo "$HASH" > dist/WASM_HASH.txt
-          echo "**WASM SHA256**: \`$HASH\`" > dist/BUILD_INFO.txt
+          echo "**WASM File**: \`$(basename $WASM_FILE)\`" > dist/BUILD_INFO.txt
+          echo "**WASM SHA256**: \`$HASH\`" >> dist/BUILD_INFO.txt
           echo "**Commit**: ${{ github.sha }}" >> dist/BUILD_INFO.txt
           echo "**Build Time**: $(date -u +%Y-%m-%dT%H:%M:%SZ)" >> dist/BUILD_INFO.txt
       
