@@ -33,6 +33,11 @@ pub fn render(
                 .frame(egui::Frame::none().inner_margin(egui::Margin::symmetric(8.0, 8.0)))
                 .show_inside(ui, |ui| {
                     ui.vertical_centered(|ui| {
+
+                        // Build Info Modal
+                        let modal_id = ui.make_persistent_id("build_info_modal");
+                        let mut show_modal = ui.memory(|m| m.data.get_temp::<bool>(modal_id).unwrap_or(false));
+
                         ui.horizontal(|ui| {
                             if ui.add(
                                 egui::Button::new(egui::RichText::new("").size(20.0))
@@ -40,8 +45,8 @@ pub fn render(
                             ).on_hover_text("View on GitHub").clicked() {
                                 ui::open_url_new_tab("https://github.com/pripatelUK/rusty-safe");
                             }
-                            if ui.link(egui::RichText::new("GitHub")).clicked() {
-                                ui::open_url_new_tab("https://github.com/pripatelUK/rusty-safe");
+                            if ui.link(egui::RichText::new("Build Info")).clicked() {
+                                show_modal = true;
                             }
                             
                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -53,17 +58,60 @@ pub fn render(
                                 }
                             });
                         });
-                        
-                        ui.add_space(4.0);
-                        
-                        // Build Info
-                        ui.collapsing("Build Info", |ui| {
-                            ui.label(egui::RichText::new(format!("Commit: {}", env!("GIT_HASH"))).weak().size(10.0));
-                            ui.label(egui::RichText::new(format!("Time: {}", env!("BUILD_TIME"))).weak().size(10.0));
-                            if ui.link(egui::RichText::new("Verify Build").size(10.0)).clicked() {
-                                ui::open_url_new_tab("https://github.com/pripatelUK/rusty-safe/blob/main/verification.md");
+
+                        // Show modal when open
+                        if show_modal {
+                            let screen_rect = ctx.screen_rect();
+                            
+                            // Dimmed background that closes modal on click
+                            let bg_response = egui::Area::new(ui.make_persistent_id("build_info_bg"))
+                                .order(egui::Order::Background)
+                                .fixed_pos(screen_rect.min)
+                                .show(ctx, |ui| {
+                                    ui.allocate_response(screen_rect.size(), egui::Sense::click())
+                                });
+                            
+                            if bg_response.inner.clicked() {
+                                show_modal = false;
                             }
-                        });
+
+                            // Modal window
+                            egui::Window::new("Build Info")
+                                .collapsible(false)
+                                .resizable(false)
+                                .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+                                .show(ctx, |ui| {
+                                    let git_hash = env!("GIT_HASH");
+                                    let short_hash = if git_hash.len() > 7 { &git_hash[..7] } else { git_hash };
+                                    let build_time = env!("BUILD_TIME");
+                                    let short_build_time = if build_time.len() > 19 { &build_time[..19] } else { build_time };
+
+                                    ui.label(egui::RichText::new(format!("Build Time: {}", short_build_time)));
+                                    
+                                    ui.horizontal(|ui| {
+                                        ui.label("Commit:");
+                                        if ui.link(egui::RichText::new(short_hash).monospace()).clicked() {
+                                            ui::open_url_new_tab(&format!("https://github.com/pripatelUK/rusty-safe/tree/{}", git_hash));
+                                        }
+                                    });
+
+                                    ui.add_space(8.0);
+                                    
+                                    ui.horizontal(|ui| {
+                                        if ui.link("View Build Info").clicked() {
+                                            ui::open_url_new_tab("/BUILD_INFO.txt");
+                                        }
+                                        ui.separator();
+                                        if ui.link("Verify Build").clicked() {
+                                            ui::open_url_new_tab("https://github.com/pripatelUK/rusty-safe/blob/main/verification.md");
+                                        }
+                                    });
+                                });
+                        }
+
+                        ui.memory_mut(|m| m.data.insert_temp(modal_id, show_modal));
+                        
+                        // ui.add_space(4.0);
                     });
                 });
             
