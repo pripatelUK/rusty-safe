@@ -88,6 +88,7 @@ Even with RustySafe, you are trusting:
 | **Safe Wallet contracts** | The underlying Safe smart contracts |
 | **Your operating system** | Your device and browser |
 | **Safe Transaction Service API** | Unless you use manual/offline input mode |
+| **4byte.directory / Sourcify** | Used for calldata decoding (function signatures) |
 | **The hosted version** | If using rustysafe.com, you're trusting the deployment. [Verify it →](VERIFY.md) |
 
 To minimize trust, use manual input mode and build from source.
@@ -194,6 +195,8 @@ trunk build --release
 
 - [safe-hash-rs](https://github.com/Cyfrin/safe-hash-rs) — Rust CLI tool for Safe transaction hash verification
 - [safe-tx-hashes-util](https://github.com/pcaversaccio/safe-tx-hashes-util) — Shell CLI tool for Safe transaction hash verification
+- [4byte.directory](https://www.4byte.directory/) — Function signature database for calldata decoding
+- [Sourcify](https://sourcify.dev/) — Smart contract verification and ABI lookup
 
 ---
 
