@@ -1,0 +1,39 @@
+# Dockerfile.local
+# Builds RustySafe and serves it locally with nginx
+# Usage: docker build -f Dockerfile.local -t rustysafe . && docker run -p 8080:80 rustysafe
+
+# Stage 1: Build the application
+FROM rust:slim-bookworm AS builder
+
+# Install dependencies
+RUN apt-get update && apt-get install -y \
+    binaryen \
+    git \
+    pkg-config \
+    libssl-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install specific nightly toolchain
+RUN rustup toolchain install nightly-2025-01-01 --profile minimal && \
+    rustup default nightly-2025-01-01
+
+# Install wasm target and trunk
+RUN rustup target add wasm32-unknown-unknown && \
+    cargo install trunk --locked
+
+WORKDIR /build
+COPY . .
+
+WORKDIR /build/crates/rusty-safe
+RUN trunk build --release
+
+# Stage 2: Serve with nginx
+FROM nginx:alpine
+
+# Copy the built static files
+COPY --from=builder /build/crates/rusty-safe/dist /usr/share/nginx/html
+
+# Expose port 80
+EXPOSE 80
+
+CMD ["nginx", "-g", "daemon off;"]
