@@ -1,4 +1,4 @@
-# RustySafe
+# [RustySafe](https://rustysafe.com)
 
 **Independent transaction verification for Safe (Gnosis Safe) multisig wallets.**
 
@@ -8,20 +8,48 @@ Built in Rust. No JavaScript. No npm. Verify what you sign.
 
 ---
 
-## Security Practices
+## How to Verify a Transaction
 
-1. **Use a separate device** for verification, different from where you construct or sign transactions. This adds resilience if your main device is compromised.
+1. Go to [rustysafe.com](https://rustysafe.com) (or your self-hosted instance)
+2. Select the **chain** (e.g., Ethereum Mainnet)
+3. Enter your **Safe address** (e.g., `0x1c694Fc3006D81ff4a56F97E1b99529066a23725`)
+4. Enter the **nonce** of the pending transaction
+5. Click **Fetch Details** and then **Verify**
+6. Compare the **Safe Transaction Hash** displayed with what your hardware wallet shows
+7. Review the **decoded calldata** to confirm the transaction does what you expect
 
-2. **Manually verify what you expect, then compare to what you get.** This tool shows you what the transaction contains—you must confirm it matches your intent.
+If the hashes match and the calldata is correct, the transaction is what it claims to be.
 
-3. **Understand the parameters you're signing.** This tool is only useful if you can read the output. Learn to interpret calldata and transaction fields.
+---
 
-4. **Use offline mode when possible.** Manual input eliminates dependency on Safe Transaction Service API.
+## Quick Start
 
-**Educational Resources:**
-- [Verifying Safe Wallet transactions](https://updraft.cyfrin.io/courses/advanced-web3-wallet-security/signer-advanced/verify-multi-sig-signatures) (Cyfrin Updraft)
-- [How to perform basic transaction checks](https://help.safe.global/en/articles/276343-how-to-perform-basic-transactions-checks-on-safe-wallet) (Safe Help)
-- [How to verify a Safe TX on a hardware wallet](https://help.safe.global/en/articles/276344-how-to-verify-safe-wallet-transactions-on-a-hardware-wallet) (Safe Help)
+**Hosted Version:**  
+[https://rustysafe.com](https://rustysafe.com)
+
+> **Note:** The hosted version introduces trust in the deployment. For maximum security, build from source and run locally.
+
+**Self-Host (Docker):**
+```bash
+docker build -f Dockerfile.local -t rustysafe .
+docker run -p 8080:80 rustysafe
+# Open http://localhost:8080
+```
+
+**Build Locally:**
+```bash
+cd crates/rusty-safe
+trunk serve --release
+```
+
+----
+
+## Features
+
+- **Transaction Hash Computation** — EIP-712 typed data hashing per Safe specification
+- **Decoded Calldata** — Human-readable display of token transfers, owner changes, and contract interactions
+- **Security Warnings** — Alerts for delegate calls, non-standard gas tokens, nonce mismatches, and dangerous operations
+- **Multi-Chain Support** — Ethereum, Arbitrum, Base, Polygon, Optimism, and more
 
 ---
 
@@ -77,20 +105,6 @@ This model keeps the user experience of existing interfaces for transaction cons
 
 ---
 
-## How to Verify a Transaction
-
-1. Go to [rustysafe.com](https://rustysafe.com) (or your self-hosted instance)
-2. Select the **chain** (e.g., Ethereum Mainnet)
-3. Enter your **Safe address** (e.g., `0x1c694Fc3006D81ff4a56F97E1b99529066a23725`)
-4. Enter the **nonce** of the pending transaction
-5. Click **Fetch Details** and then **Verify**
-6. Compare the **Safe Transaction Hash** displayed with what your hardware wallet shows
-7. Review the **decoded calldata** to confirm the transaction does what you expect
-
-If the hashes match and the calldata is correct, the transaction is what it claims to be.
-
----
-
 ## Key Properties
 
 | Property | What It Means |
@@ -102,35 +116,15 @@ If the hashes match and the calldata is correct, the transaction is what it clai
 
 ---
 
-## Features
+## Security Practices
 
-- **Transaction Hash Computation** — EIP-712 typed data hashing per Safe specification
-- **Decoded Calldata** — Human-readable display of token transfers, owner changes, and contract interactions
-- **Security Warnings** — Alerts for delegate calls, non-standard gas tokens, nonce mismatches, and dangerous operations
-- **Signature Verification** — Confirm which owners have signed and whether threshold is met
-- **Multi-Chain Support** — Ethereum, Arbitrum, Base, Polygon, Optimism, and more
+1. **Use a separate device** for verification, different from where you construct or sign transactions. This adds resilience if your main device is compromised.
 
----
+2. **Manually verify what you expect, then compare to what you get.** This tool shows you what the transaction contains—you must confirm it matches your intent.
 
-## Quick Start
+3. **Understand the parameters you're signing.** This tool is only useful if you can read the output. Learn to interpret calldata and transaction fields.
 
-**Hosted Version:**  
-[https://rustysafe.com](https://rustysafe.com)
-
-> **Note:** The hosted version introduces trust in the deployment. For maximum security, build from source and run locally.
-
-**Self-Host (Docker):**
-```bash
-docker build -f Dockerfile.local -t rustysafe .
-docker run -p 8080:80 rustysafe
-# Open http://localhost:8080
-```
-
-**Build Locally:**
-```bash
-cd crates/rusty-safe
-trunk serve --release
-```
+4. **Use offline mode when possible.** Manual input eliminates dependency on Safe Transaction Service API.
 
 ---
 
@@ -164,6 +158,13 @@ All chains supported by Safe Transaction Service:
 
 ---
 
+**Educational Resources:**
+- [Verifying Safe Wallet transactions](https://updraft.cyfrin.io/courses/advanced-web3-wallet-security/signer-advanced/verify-multi-sig-signatures) (Cyfrin Updraft)
+- [How to perform basic transaction checks](https://help.safe.global/en/articles/276343-how-to-perform-basic-transactions-checks-on-safe-wallet) (Safe Help)
+- [How to verify a Safe TX on a hardware wallet](https://help.safe.global/en/articles/276344-how-to-verify-safe-wallet-transactions-on-a-hardware-wallet) (Safe Help)
+
+---
+
 ## Development
 
 **Prerequisites:**
@@ -191,13 +192,8 @@ trunk build --release
 
 ## Acknowledgements
 
-- [safe-hash-rs](https://github.com/Cyfrin/safe-hash-rs) — CLI tool for Safe transaction hash verification
-
----
-
-## License
-
-MIT License. See [LICENSE](LICENSE) for details.
+- [safe-hash-rs](https://github.com/Cyfrin/safe-hash-rs) — Rust CLI tool for Safe transaction hash verification
+- [safe-tx-hashes-util](https://github.com/pcaversaccio/safe-tx-hashes-util) — Shell CLI tool for Safe transaction hash verification
 
 ---
 
