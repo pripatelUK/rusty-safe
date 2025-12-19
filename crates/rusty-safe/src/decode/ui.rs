@@ -5,10 +5,10 @@ use crate::ui;
 
 use super::types::*;
 
-/// Check if a value looks like an Ethereum address
-fn is_address(value: &str) -> bool {
-    value.starts_with("0x") && value.len() == 42 && value[2..].chars().all(|c| c.is_ascii_hexdigit())
-}
+/// Result of address validation
+pub use crate::ui::AddressValidation;
+/// Check if a value looks like an Ethereum address and validate checksum
+pub use crate::ui::validate_address;
 
 /// Check if a value looks like a tuple/array (starts with [ and ends with ])
 fn is_tuple_or_array(value: &str) -> bool {
@@ -60,18 +60,36 @@ fn parse_tuple_elements(value: &str) -> Vec<String> {
 
 /// Render a single value element with smart type detection
 fn render_single_value(ui_ctx: &mut egui::Ui, value: &str, chain_name: &str, color: Option<egui::Color32>, id_salt: &str) {
-    if is_address(value) {
-        if let Some(c) = color {
+    let validation = validate_address(value);
+    
+    if validation != AddressValidation::Invalid {
+        ui_ctx.horizontal(|ui| {
             let explorer_url = ui::get_explorer_address_url(chain_name, value);
-            if ui_ctx.link(egui::RichText::new(value).monospace().color(c))
-                .on_hover_text("Open in block explorer")
-                .clicked() 
-            {
+            
+            let text_color = if let Some(c) = color {
+                c
+            } else if validation == AddressValidation::ChecksumMismatch {
+                egui::Color32::from_rgb(220, 180, 50) // Yellow for checksum warning
+            } else {
+                ui.visuals().hyperlink_color
+            };
+
+            let response = ui.link(egui::RichText::new(value).monospace().color(text_color))
+                .on_hover_text(if validation == AddressValidation::ChecksumMismatch {
+                    "⚠️ Checksum mismatch! Click to open in block explorer"
+                } else {
+                    "Open in block explorer"
+                });
+
+            if response.clicked() {
                 ui::open_url_new_tab(&explorer_url);
             }
-        } else {
-            ui::address_link(ui_ctx, chain_name, value);
-        }
+
+            if validation == AddressValidation::ChecksumMismatch {
+                ui.label(egui::RichText::new("⚠️").color(egui::Color32::from_rgb(220, 180, 50)))
+                    .on_hover_text("Address has an invalid EIP-55 checksum");
+            }
+        });
     } else if ui::is_large_uint(value) {
         ui::render_uint_with_popup(ui_ctx, value, id_salt);
     } else {
@@ -892,5 +910,35 @@ fn render_offline_multisend_tx(
         tx.is_expanded = !tx.is_expanded;
     }
 }
+#[cfg(test)]
+mod tests {
+    use super::*;
 
+    #[test]
+    fn test_validate_address() {
+        // Valid checksummed address
+        let valid = "0x52906951E511101BA707440006734B19E59F6C87";
+        assert_eq!(validate_address(valid), AddressValidation::Valid);
 
+        // Valid lowercase address
+        let lowercase = "0x52906951e511101ba707440006734b19e59f6c87";
+        assert_eq!(validate_address(lowercase), AddressValidation::Valid);
+
+        // Valid uppercase address
+        let uppercase = format!("0x{}", "52906951E511101BA707440006734B19E59F6C87".to_uppercase());
+        assert_eq!(validate_address(&uppercase), AddressValidation::Valid);
+
+        // Checksum mismatch
+        let mismatch = "0x52906951e511101ba707440006734b19e59f6c87";
+        let mut mismatch_chars: Vec<char> = mismatch.chars().collect();
+        mismatch_chars[2] = 'A'; // Change one char to uppercase incorrectly
+        let mismatch_str: String = mismatch_chars.into_iter().collect();
+        assert_eq!(validate_address(&mismatch_str), AddressValidation::ChecksumMismatch);
+
+        // Invalid address (too short)
+        assert_eq!(validate_address("0x123"), AddressValidation::Invalid);
+
+        // Invalid address (non-hex)
+        assert_eq!(validate_address("0xGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGG"), AddressValidation::Invalid);
+    }
+}

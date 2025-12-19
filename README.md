@@ -31,7 +31,7 @@ If the hashes match and the calldata is correct, the transaction is what it clai
 
 **Decentralized Access (Censorship Resistant):**
 If the main site is down, you can access RustySafe via IPFS:
-- **IPNS (Recommended):** [ipfs.io/ipns/rustysafe.com/](https://ipfs.io/ipns/rustysafe.com/)
+- **IPNS (Recommended):** [https://rustysafe-com.ipns.dweb.link](https://rustysafe-com.ipns.dweb.link)
 
 ---
 
