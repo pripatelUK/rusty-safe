@@ -52,6 +52,60 @@ jobs:
           projectName: rusty-safe
           directory: dist
       
+      # Pin to IPFS (Pinata)
+      - name: Pin to IPFS (Pinata)
+        id: ipfs
+        run: |
+          # Use find to build the -F arguments for each file in the dist directory
+          # This ensures Pinata reconstructs the directory structure correctly
+          FILES_ARGS=$(find dist -type f -printf "-F file=@%p;filename=dist/%P ")
+          
+          # Upload to Pinata
+          RESPONSE=$(curl -s -X POST "https://api.pinata.cloud/pinning/pinFileToIPFS" \
+            -H "pinata_api_key: ${{ secrets.PINATA_API_KEY }}" \
+            -H "pinata_secret_api_key: ${{ secrets.PINATA_SECRET_API_KEY }}" \
+            $FILES_ARGS \
+            -F 'pinataOptions={"cidVersion": 1}' \
+            -F 'pinataMetadata={"name": "rusty-safe-${{ github.sha }}"}')
+          
+          CID=$(echo $RESPONSE | jq -r '.IpfsHash')
+          
+          if [ "$CID" = "null" ] || [ -z "$CID" ]; then
+            echo "Error: Pinata upload failed"
+            echo "Response: $RESPONSE"
+            exit 1
+          fi
+          
+          echo "cid=$CID" >> $GITHUB_OUTPUT
+          echo "IPFS CID: $CID"
+      
+      # Update DNSLink on Cloudflare
+      - name: Update DNSLink
+        run: |
+          RECORD_NAME="_dnslink.rustysafe.com"
+          EXISTING=$(curl -s -X GET "https://api.cloudflare.com/client/v4/zones/${{ secrets.CLOUDFLARE_ZONE_ID }}/dns_records?type=TXT&name=$RECORD_NAME" \
+            -H "Authorization: Bearer ${{ secrets.CLOUDFLARE_API_TOKEN }}" \
+            -H "Content-Type: application/json")
+          
+          RECORD_ID=$(echo $EXISTING | jq -r '.result[0].id // empty')
+          DNSLINK_VALUE="dnslink=/ipfs/${{ steps.ipfs.outputs.cid }}"
+          
+          if [ -n "$RECORD_ID" ]; then
+            # Update existing record
+            curl -s -X PUT "https://api.cloudflare.com/client/v4/zones/${{ secrets.CLOUDFLARE_ZONE_ID }}/dns_records/$RECORD_ID" \
+              -H "Authorization: Bearer ${{ secrets.CLOUDFLARE_API_TOKEN }}" \
+              -H "Content-Type: application/json" \
+              --data "{\"type\":\"TXT\",\"name\":\"$RECORD_NAME\",\"content\":\"$DNSLINK_VALUE\",\"ttl\":300}"
+          else
+            # Create new record
+            curl -s -X POST "https://api.cloudflare.com/client/v4/zones/${{ secrets.CLOUDFLARE_ZONE_ID }}/dns_records" \
+              -H "Authorization: Bearer ${{ secrets.CLOUDFLARE_API_TOKEN }}" \
+              -H "Content-Type: application/json" \
+              --data "{\"type\":\"TXT\",\"name\":\"$RECORD_NAME\",\"content\":\"$DNSLINK_VALUE\",\"ttl\":300}"
+          fi
+          
+          echo "DNSLink updated to: $DNSLINK_VALUE"
+      
       # Create release with hash (for tagged releases)
       - name: Create Release
         if: startsWith(github.ref, 'refs/tags/')

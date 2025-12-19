@@ -29,6 +29,12 @@ If the hashes match and the calldata is correct, the transaction is what it clai
 
 > **Note:** The hosted version introduces trust in the deployment. For maximum security, build from source and run locally.
 
+**Decentralized Access (Censorship Resistant):**
+If the main site is down, you can access RustySafe via IPFS:
+- **IPNS (Recommended):** [ipfs.io/ipns/rustysafe.com](https://ipfs.io/ipns/rustysafe.com)
+
+---
+
 **Self-Host (Docker):**
 ```bash
 docker build -f Dockerfile.local -t rustysafe .
