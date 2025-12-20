@@ -15,6 +15,8 @@ use safe_utils::get_all_supported_chain_names;
 const SAFE_ADDRESS_KEY: &str = "safe_address";
 /// Storage key for recent addresses  
 const RECENT_ADDRESSES_KEY: &str = "recent_addresses";
+/// Storage key for address book
+const ADDRESS_BOOK_KEY: &str = "address_book";
 /// Max recent addresses to keep
 const MAX_RECENT_ADDRESSES: usize = 10;
 
@@ -46,6 +48,136 @@ pub struct SafeContext {
     pub safe_address: String,
     pub safe_version: String,
     pub recent_addresses: Vec<String>,
+    pub address_book: AddressBook,
+}
+
+/// Address book entry
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+pub struct AddressBookEntry {
+    pub address: String,
+    pub name: String,
+    pub chain_id: u64,
+}
+
+/// Result of address validation
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AddressValidation {
+    Valid,
+    ChecksumMismatch,
+    Invalid,
+}
+
+/// Check if a value looks like an Ethereum address and validate checksum
+pub fn validate_address(value: &str) -> AddressValidation {
+    if !value.starts_with("0x") || value.len() != 42 {
+        return AddressValidation::Invalid;
+    }
+
+    if !value[2..].chars().all(|c| c.is_ascii_hexdigit()) {
+        return AddressValidation::Invalid;
+    }
+
+    // Check if it's a valid checksummed address or all lower/upper
+    match value.parse::<alloy::primitives::Address>() {
+        Ok(addr) => {
+            let checksummed = addr.to_checksum(None);
+            // EIP-55: if it's all lowercase or all uppercase, it's valid (just not checksummed)
+            if value == checksummed || value[2..] == value[2..].to_lowercase() || value[2..] == value[2..].to_uppercase() {
+                AddressValidation::Valid
+            } else {
+                AddressValidation::ChecksumMismatch
+            }
+        }
+        Err(_) => AddressValidation::Invalid,
+    }
+}
+
+/// Normalize an address to EIP-55 checksummed format
+pub fn normalize_address(value: &str) -> Option<String> {
+    match value.parse::<alloy::primitives::Address>() {
+        Ok(addr) => Some(addr.to_checksum(None)),
+        Err(_) => None,
+    }
+}
+
+/// Address book collection
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+pub struct AddressBook {
+    pub entries: Vec<AddressBookEntry>,
+}
+
+impl AddressBook {
+    pub fn get_name(&self, address: &str, chain_id: u64) -> Option<String> {
+        let addr_lower = address.to_lowercase();
+        self.entries.iter()
+            .find(|e| e.address.to_lowercase() == addr_lower && e.chain_id == chain_id)
+            .map(|e| e.name.clone())
+    }
+
+    pub fn add_or_update(&mut self, mut entry: AddressBookEntry) {
+        // Normalize address
+        if let Some(normalized) = normalize_address(&entry.address) {
+            entry.address = normalized;
+        }
+
+        let addr_lower = entry.address.to_lowercase();
+        if let Some(existing) = self.entries.iter_mut()
+            .find(|e| e.address.to_lowercase() == addr_lower && e.chain_id == entry.chain_id) 
+        {
+            existing.name = entry.name;
+        } else {
+            self.entries.push(entry);
+        }
+    }
+
+    pub fn remove(&mut self, address: &str, chain_id: u64) {
+        let addr_lower = address.to_lowercase();
+        self.entries.retain(|e| e.address.to_lowercase() != addr_lower || e.chain_id != chain_id);
+    }
+
+    pub fn validate_entry(&self, entry: &AddressBookEntry) -> AddressValidation {
+        validate_address(&entry.address)
+    }
+
+    /// Import from CSV: address,name,chainId
+    pub fn import_csv(&mut self, csv_content: &str) -> Result<(usize, usize), String> {
+        let mut count = 0;
+        let mut skipped = 0;
+        for (i, line) in csv_content.lines().enumerate() {
+            let line = line.trim();
+            if line.is_empty() || line.starts_with("address,") {
+                continue;
+            }
+            
+            let parts: Vec<&str> = line.split(',').collect();
+            if parts.len() < 3 {
+                skipped += 1;
+                continue;
+            }
+            
+            let address = parts[0].trim().to_string();
+            let name = parts[1].trim().to_string();
+            let chain_id = parts[2].trim().parse::<u64>().map_err(|_| format!("Invalid chainId on line {}", i + 1))?;
+            
+            if validate_address(&address) == AddressValidation::Invalid {
+                skipped += 1;
+                continue;
+            }
+
+            self.add_or_update(AddressBookEntry { address, name, chain_id });
+            count += 1;
+        }
+        Ok((count, skipped))
+    }
+
+    /// Export to CSV: address,name,chainId
+    pub fn export_csv(&self) -> String {
+        let mut csv = String::from("address,name,chainId\n");
+        for entry in &self.entries {
+            csv.push_str(&format!("{},{},{}\n", entry.address, entry.name, entry.chain_id));
+        }
+        csv
+    }
 }
 
 impl SafeContext {
@@ -57,14 +189,17 @@ impl SafeContext {
             .cloned()
             .unwrap_or_else(|| chains.first().cloned().unwrap_or_default());
         
-        let (safe_address, recent_addresses) = if let Some(storage) = storage {
+        let (safe_address, recent_addresses, address_book) = if let Some(storage) = storage {
             let addr = storage.get_string(SAFE_ADDRESS_KEY).unwrap_or_default();
             let recent: Vec<String> = storage.get_string(RECENT_ADDRESSES_KEY)
                 .and_then(|s| serde_json::from_str(&s).ok())
                 .unwrap_or_default();
-            (addr, recent)
+            let book: AddressBook = storage.get_string(ADDRESS_BOOK_KEY)
+                .and_then(|s| serde_json::from_str(&s).ok())
+                .unwrap_or_default();
+            (addr, recent, book)
         } else {
-            (String::new(), Vec::new())
+            (String::new(), Vec::new(), AddressBook::default())
         };
         
         Self {
@@ -72,6 +207,7 @@ impl SafeContext {
             safe_address,
             safe_version: SAFE_VERSIONS[0].to_string(),
             recent_addresses,
+            address_book,
         }
     }
     
@@ -81,12 +217,16 @@ impl SafeContext {
         if let Ok(json) = serde_json::to_string(&self.recent_addresses) {
             storage.set_string(RECENT_ADDRESSES_KEY, json);
         }
+        if let Ok(json) = serde_json::to_string(&self.address_book) {
+            storage.set_string(ADDRESS_BOOK_KEY, json);
+        }
     }
     
     /// Clear all stored data
     pub fn clear(&mut self) {
         self.safe_address.clear();
         self.recent_addresses.clear();
+        self.address_book.entries.clear();
     }
 }
 
@@ -235,5 +375,47 @@ impl OfflineState {
         self.hashes = None;
         self.warnings = SafeWarnings::new();
         self.error = None;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_address_book_csv() {
+        let mut book = AddressBook::default();
+        // One valid checksummed, one valid unchecksummed (lowercase), one invalid
+        let csv = "address,name,chainId\n0x4F2083f5fBede34C2714aFfb3105539775f7FE64,endowment.ensdao.eth,1\n0xfe89cc7abb2c4183683ab71653c4cdc9b02d44b7,test,1\n0xinvalid,bad,1";
+        
+        let (count, skipped) = book.import_csv(csv).unwrap();
+        assert_eq!(count, 2);
+        assert_eq!(skipped, 1);
+        assert_eq!(book.entries.len(), 2);
+        
+        // Both should be checksummed now
+        assert_eq!(book.entries[0].address, "0x4F2083f5fBede34C2714aFfb3105539775f7FE64");
+        assert_eq!(book.entries[1].address, "0xFe89cc7aBB2C4183683ab71653C4cdc9B02D44b7");
+        
+        assert_eq!(book.get_name("0x4F2083f5fBede34C2714aFfb3105539775f7FE64", 1), Some("endowment.ensdao.eth".to_string()));
+        assert_eq!(book.get_name("0xfe89cc7abb2c4183683ab71653c4cdc9b02d44b7", 1), Some("test".to_string()));
+    }
+
+    #[test]
+    fn test_address_book_update() {
+        let mut book = AddressBook::default();
+        book.add_or_update(AddressBookEntry {
+            address: "0x123".to_string(),
+            name: "Old".to_string(),
+            chain_id: 1,
+        });
+        book.add_or_update(AddressBookEntry {
+            address: "0x123".to_string(),
+            name: "New".to_string(),
+            chain_id: 1,
+        });
+        
+        assert_eq!(book.entries.len(), 1);
+        assert_eq!(book.get_name("0x123", 1), Some("New".to_string()));
     }
 }

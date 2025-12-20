@@ -4,7 +4,7 @@ use alloy::hex;
 use alloy::primitives::ChainId;
 use eframe::egui;
 use safe_hash::SafeWarnings;
-use safe_utils::{get_all_supported_chain_names, DomainHasher, Eip712Hasher, MessageHasher, Of, SafeHasher, SafeWalletVersion};
+use safe_utils::{get_all_supported_chain_names, get_chain_name, DomainHasher, Eip712Hasher, MessageHasher, Of, SafeHasher, SafeWalletVersion};
 use std::sync::{Arc, Mutex};
 
 use crate::api::SafeTransaction;
@@ -25,7 +25,7 @@ macro_rules! debug_log {
 }
 use crate::expected;
 use crate::hasher::{get_warnings_for_tx, get_warnings_from_api_tx, compute_hashes_from_api_tx, fetch_transaction};
-use crate::state::{Eip712State, MsgVerifyState, TxVerifyState, OfflineState, SafeContext, SidebarState, SAFE_VERSIONS};
+use crate::state::{Eip712State, MsgVerifyState, TxVerifyState, OfflineState, SafeContext, SidebarState, SAFE_VERSIONS, AddressValidation};
 use crate::ui;
 use crate::sidebar;
 
@@ -94,6 +94,14 @@ pub struct App {
     safe_info: Option<crate::hasher::SafeInfo>,
     /// Whether Safe info fetch is in progress
     safe_info_loading: bool,
+    /// Address book UI state
+    address_book_open: bool,
+    address_book_import_text: String,
+    address_book_error: Option<String>,
+    address_book_search: String,
+    address_book_add_name: String,
+    address_book_add_addr: String,
+    address_book_add_chain: String,
 }
 
 /// Available tabs in the application
@@ -137,6 +145,13 @@ impl App {
             offline_decode_result: Arc::new(Mutex::new(None)),
             safe_info: None,
             safe_info_loading: false,
+            address_book_open: false,
+            address_book_import_text: String::new(),
+            address_book_error: None,
+            address_book_search: String::new(),
+            address_book_add_name: String::new(),
+            address_book_add_addr: String::new(),
+            address_book_add_chain: "ethereum".to_string(),
         }
     }
 }
@@ -180,9 +195,18 @@ impl eframe::App for App {
                 ui.selectable_value(&mut self.active_tab, Tab::Message, "💬 Message");
                 ui.selectable_value(&mut self.active_tab, Tab::Eip712, "🔢 EIP-712");
                 ui.selectable_value(&mut self.active_tab, Tab::Offline, "📴 Offline");
+                
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui.button("📖 Address Book").clicked() {
+                        self.address_book_open = !self.address_book_open;
+                    }
+                });
             });
             ui.add_space(4.0);
         });
+
+        // Address Book Window
+        self.render_address_book_window(ctx);
 
         // Sidebar with Safe context
         let sidebar_action = sidebar::render(
@@ -306,7 +330,9 @@ impl App {
                 .show(ui, |ui| {
                     ui.label("To:");
                     let to_str = format!("{}", tx.to);
-                    ui::address_link(ui, &self.safe_context.chain_name, &to_str);
+                    let chain_id = alloy::primitives::ChainId::of(&self.safe_context.chain_name).unwrap_or(1);
+                    let name = self.safe_context.address_book.get_name(&to_str, chain_id);
+                    ui::address_link(ui, &self.safe_context.chain_name, &to_str, name);
                     if ui.small_button("📋").on_hover_text("Copy").clicked() {
                         ui::copy_to_clipboard(&to_str);
                     }
@@ -388,7 +414,7 @@ impl App {
             if let Some(decode_state) = &mut self.tx_state.decode {
                 ui.add_space(15.0);
                 ui::section_header(ui, "Calldata Verification");
-                decode::render_decode_section(ui, decode_state, &self.safe_context.chain_name);
+                decode::render_decode_section(ui, decode_state, &self.safe_context);
             }
         }
 
@@ -1315,14 +1341,201 @@ impl App {
                     });
             }
             
-            // Decode result
-            if let Some(ref mut decode_result) = self.offline_state.decode_result {
-                ui.add_space(15.0);
-                decode::render_offline_decode_section(ui, decode_result, &self.safe_context.chain_name);
-            }
+            // Calldata Decoding
+        if let Some(ref mut decode) = self.offline_state.decode_result {
+            ui::section_header(ui, "Calldata Decoding");
+            decode::render_offline_decode_section(ui, decode, &self.safe_context);
         }
     }
+    }
     
+    fn render_address_book_window(&mut self, ctx: &egui::Context) {
+        let mut open = self.address_book_open;
+        egui::Window::new("📖 Address Book")
+            .open(&mut open)
+            .resizable(true)
+            .default_width(500.0)
+            .max_width(600.0)
+            .show(ctx, |ui| {
+                // Search Bar
+                ui.horizontal(|ui| {
+                    ui.label("🔍");
+                    ui.add(egui::TextEdit::singleline(&mut self.address_book_search)
+                        .hint_text("Search by name or address...")
+                        .desired_width(f32::INFINITY));
+                });
+                ui.add_space(8.0);
+
+                // Entries Table
+                ui.label(egui::RichText::new("Entries").strong());
+                ui.separator();
+                
+                egui::ScrollArea::vertical().max_height(300.0).show(ui, |ui| {
+                    let search_lower = self.address_book_search.to_lowercase();
+                    let filtered_entries: Vec<_> = self.safe_context.address_book.entries.iter().enumerate()
+                        .filter(|(_, e)| {
+                            e.name.to_lowercase().contains(&search_lower) || 
+                            e.address.to_lowercase().contains(&search_lower)
+                        })
+                        .collect();
+
+                    let filtered_is_empty = filtered_entries.is_empty();
+                    let mut to_remove = None;
+                    
+                    egui::Grid::new("address_book_entries_v2")
+                        .num_columns(4)
+                        .spacing([10.0, 8.0])
+                        .striped(true)
+                        .min_col_width(60.0)
+                        .show(ui, |ui| {
+                            // Header
+                            ui.label(egui::RichText::new("NAME").small().weak());
+                            ui.label(egui::RichText::new("ADDRESS").small().weak());
+                            ui.label(egui::RichText::new("CHAIN").small().weak());
+                            ui.label(""); // Actions
+                            ui.end_row();
+
+                            for (original_idx, entry) in &filtered_entries {
+                                let validation = self.safe_context.address_book.validate_entry(entry);
+                                
+                                let name_color = if validation == AddressValidation::ChecksumMismatch {
+                                    egui::Color32::from_rgb(220, 180, 50)
+                                } else if validation == AddressValidation::Invalid {
+                                    egui::Color32::from_rgb(220, 80, 80)
+                                } else {
+                                    ui.visuals().text_color()
+                                };
+
+                                // Name Column
+                                ui.horizontal(|ui| {
+                                    if validation == AddressValidation::ChecksumMismatch {
+                                        ui.label(egui::RichText::new("⚠️").color(egui::Color32::from_rgb(220, 180, 50)))
+                                            .on_hover_text("Checksum mismatch - address was normalized");
+                                    } else if validation == AddressValidation::Invalid {
+                                        ui.label(egui::RichText::new("❌").color(egui::Color32::from_rgb(220, 80, 80)))
+                                            .on_hover_text("Invalid address");
+                                    }
+                                    ui.label(egui::RichText::new(&entry.name).strong().color(name_color));
+                                });
+
+                                // Address Column
+                                ui.horizontal(|ui| {
+                                    let short_addr = if entry.address.len() > 10 {
+                                        format!("{}...{}", &entry.address[..6], &entry.address[entry.address.len()-4..])
+                                    } else {
+                                        entry.address.clone()
+                                    };
+                                    ui.label(egui::RichText::new(short_addr).monospace().small().color(name_color))
+                                        .on_hover_text(&entry.address);
+                                    if ui.small_button("📋").on_hover_text("Copy full address").clicked() {
+                                        ui::copy_to_clipboard(&entry.address);
+                                    }
+                                });
+
+                                // Chain Column
+                                let chain_name = get_chain_name(alloy::primitives::ChainId::from(entry.chain_id))
+                                    .unwrap_or("unknown");
+                                ui.label(egui::RichText::new(chain_name).small().weak());
+                                
+                                // Actions Column
+                                if ui.button("🗑").on_hover_text("Remove").clicked() {
+                                    to_remove = Some(*original_idx);
+                                }
+                                ui.end_row();
+                            }
+                        });
+                    
+                    // Drop filtered_entries borrow before mutable operation
+                    drop(filtered_entries);
+                        
+                    if let Some(idx) = to_remove {
+                        self.safe_context.address_book.entries.remove(idx);
+                    }
+
+                    if self.safe_context.address_book.entries.is_empty() {
+                        ui.label(egui::RichText::new("No entries yet").weak().italics());
+                    } else if filtered_is_empty {
+                        ui.label(egui::RichText::new("No matches found").weak().italics());
+                    }
+                });
+
+                ui.add_space(10.0);
+                ui.separator();
+                ui.add_space(5.0);
+
+                // Management Sections
+                egui::CollapsingHeader::new("➕ Add Single Entry").show(ui, |ui| {
+                    egui::Grid::new("add_entry_grid").num_columns(2).spacing([10.0, 8.0]).show(ui, |ui| {
+                        ui.label("Name:");
+                        ui.text_edit_singleline(&mut self.address_book_add_name);
+                        ui.end_row();
+
+                        ui.label("Address:");
+                        ui.text_edit_singleline(&mut self.address_book_add_addr);
+                        ui.end_row();
+
+                        ui.label("Chain:");
+                        egui::ComboBox::from_id_salt("add_entry_chain")
+                            .selected_text(&self.address_book_add_chain)
+                            .show_ui(ui, |ui| {
+                                for name in safe_utils::get_all_supported_chain_names() {
+                                    ui.selectable_value(&mut self.address_book_add_chain, name.clone(), name);
+                                }
+                            });
+                        ui.end_row();
+                    });
+
+                    if ui.button("Add Entry").clicked() {
+                        if let Ok(chain_id) = alloy::primitives::ChainId::of(&self.address_book_add_chain) {
+                            self.safe_context.address_book.add_or_update(crate::state::AddressBookEntry {
+                                address: self.address_book_add_addr.clone(),
+                                name: self.address_book_add_name.clone(),
+                                chain_id: u64::from(chain_id),
+                            });
+                            self.address_book_add_addr.clear();
+                            self.address_book_add_name.clear();
+                            self.address_book_error = Some("Entry added".to_string());
+                        }
+                    }
+                });
+
+                egui::CollapsingHeader::new("📥 Import CSV").show(ui, |ui| {
+                    ui.label(egui::RichText::new("Format: address,name,chainId").weak().small());
+                    ui::multiline_input(ui, &mut self.address_book_import_text, "0x...,name,1", 3);
+                    
+                    if ui.button("📥 Import CSV").clicked() {
+                        match self.safe_context.address_book.import_csv(&self.address_book_import_text) {
+                            Ok((count, skipped)) => {
+                                if skipped > 0 {
+                                    self.address_book_error = Some(format!("Imported {} entries, skipped {} invalid", count, skipped));
+                                } else {
+                                    self.address_book_error = Some(format!("Successfully imported {} entries", count));
+                                }
+                                self.address_book_import_text.clear();
+                            }
+                            Err(e) => {
+                                self.address_book_error = Some(format!("Import failed: {}", e));
+                            }
+                        }
+                    }
+                });
+
+                egui::CollapsingHeader::new("📤 Export").show(ui, |ui| {
+                    if ui.button("📤 Copy CSV to Clipboard").clicked() {
+                        let csv = self.safe_context.address_book.export_csv();
+                        ui::copy_to_clipboard(&csv);
+                        self.address_book_error = Some("CSV copied to clipboard".to_string());
+                    }
+                });
+
+                if let Some(ref msg) = self.address_book_error {
+                    ui.add_space(5.0);
+                    ui.label(egui::RichText::new(msg).small().color(egui::Color32::from_rgb(100, 200, 100)));
+                }
+            });
+        self.address_book_open = open;
+    }
+
     fn check_offline_decode_result(&mut self) {
         let result = {
             let mut guard = self.offline_decode_result.lock().unwrap();

@@ -51,41 +51,10 @@ pub fn open_url_new_tab(url: &str) {
     let _ = open::that(url);
 }
 
-/// Result of address validation
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum AddressValidation {
-    Valid,
-    ChecksumMismatch,
-    Invalid,
-}
-
-/// Check if a value looks like an Ethereum address and validate checksum
-pub fn validate_address(value: &str) -> AddressValidation {
-    if !value.starts_with("0x") || value.len() != 42 {
-        return AddressValidation::Invalid;
-    }
-
-    if !value[2..].chars().all(|c| c.is_ascii_hexdigit()) {
-        return AddressValidation::Invalid;
-    }
-
-    // Check if it's a valid checksummed address or all lower/upper
-    match value.parse::<alloy::primitives::Address>() {
-        Ok(addr) => {
-            let checksummed = addr.to_checksum(None);
-            // EIP-55: if it's all lowercase or all uppercase, it's valid (just not checksummed)
-            if value == checksummed || value[2..] == value[2..].to_lowercase() || value[2..] == value[2..].to_uppercase() {
-                AddressValidation::Valid
-            } else {
-                AddressValidation::ChecksumMismatch
-            }
-        }
-        Err(_) => AddressValidation::Invalid,
-    }
-}
+pub use crate::state::{AddressValidation, validate_address};
 
 /// Render an address as a clickable hyperlink that opens in block explorer
-pub fn address_link(ui: &mut egui::Ui, chain_name: &str, address: &str) -> egui::Response {
+pub fn address_link(ui: &mut egui::Ui, chain_name: &str, address: &str, name: Option<String>) -> egui::Response {
     let validation = validate_address(address);
     let explorer_url = get_explorer_address_url(chain_name, address);
     
@@ -96,7 +65,13 @@ pub fn address_link(ui: &mut egui::Ui, chain_name: &str, address: &str) -> egui:
     };
 
     ui.horizontal(|ui| {
-        let response = ui.link(egui::RichText::new(address).monospace().color(text_color))
+        let label_text = if let Some(n) = name {
+            format!("{} ({})", address, n)
+        } else {
+            address.to_string()
+        };
+
+        let response = ui.link(egui::RichText::new(label_text).monospace().color(text_color))
             .on_hover_text(if validation == AddressValidation::ChecksumMismatch {
                 "⚠️ Checksum mismatch! Click to open in block explorer"
             } else {

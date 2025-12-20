@@ -4,6 +4,7 @@ use eframe::egui;
 use crate::hasher::SafeInfo;
 use crate::state::{SafeContext, SidebarState, SAFE_VERSIONS};
 use crate::ui;
+use safe_utils::Of;
 
 /// Sidebar action returned after rendering
 pub enum SidebarAction {
@@ -284,7 +285,9 @@ pub fn render(
                             let addr = format!("{:?}", owner);
                             ui.horizontal(|ui| {
                                 // ui.label("└");
-                                ui::address_link(ui, &safe_ctx.chain_name, &addr);
+                                let chain_id = alloy::primitives::ChainId::of(&safe_ctx.chain_name).unwrap_or(1);
+                                let name = safe_ctx.address_book.get_name(&addr, chain_id);
+                                ui::address_link(ui, &safe_ctx.chain_name, &addr, name);
                             });
                         }
                     });
@@ -300,7 +303,9 @@ pub fn render(
                                 let addr = format!("{:?}", module);
                                 ui.horizontal(|ui| {
                                     // ui.label("└");
-                                    ui::address_link(ui, &safe_ctx.chain_name, &addr);
+                                    let chain_id = alloy::primitives::ChainId::of(&safe_ctx.chain_name).unwrap_or(1);
+                                    let name = safe_ctx.address_book.get_name(&addr, chain_id);
+                                    ui::address_link(ui, &safe_ctx.chain_name, &addr, name);
                                 });
                             }
                         });
