@@ -4,7 +4,7 @@ use alloy::hex;
 use alloy::primitives::ChainId;
 use eframe::egui;
 use safe_hash::SafeWarnings;
-use safe_utils::{get_all_supported_chain_names, get_chain_name, DomainHasher, Eip712Hasher, MessageHasher, Of, SafeHasher, SafeWalletVersion};
+use safe_utils::{get_all_supported_chain_names, DomainHasher, Eip712Hasher, MessageHasher, Of, SafeHasher, SafeWalletVersion};
 use std::sync::{Arc, Mutex};
 
 use crate::api::SafeTransaction;
@@ -25,7 +25,7 @@ macro_rules! debug_log {
 }
 use crate::expected;
 use crate::hasher::{get_warnings_for_tx, get_warnings_from_api_tx, compute_hashes_from_api_tx, fetch_transaction};
-use crate::state::{Eip712State, MsgVerifyState, TxVerifyState, OfflineState, SafeContext, SidebarState, SAFE_VERSIONS, AddressValidation};
+use crate::state::{Eip712State, MsgVerifyState, TxVerifyState, OfflineState, SafeContext, SidebarState, SAFE_VERSIONS, AddressValidation, get_chain_name};
 use crate::ui;
 use crate::sidebar;
 
@@ -1382,16 +1382,17 @@ impl App {
                     let filtered_is_empty = filtered_entries.is_empty();
                     let mut to_remove = None;
                     
+                    let available_width = ui.available_width();
                     egui::Grid::new("address_book_entries_v2")
                         .num_columns(4)
-                        .spacing([10.0, 8.0])
+                        .spacing([10.0, 12.0])
                         .striped(true)
-                        .min_col_width(60.0)
+                        .min_col_width(available_width * 0.2)
                         .show(ui, |ui| {
                             // Header
-                            ui.label(egui::RichText::new("NAME").small().weak());
-                            ui.label(egui::RichText::new("ADDRESS").small().weak());
-                            ui.label(egui::RichText::new("CHAIN").small().weak());
+                            ui.label(egui::RichText::new("NAME").weak());
+                            ui.label(egui::RichText::new("ADDRESS").weak());
+                            ui.label(egui::RichText::new("CHAIN").weak());
                             ui.label(""); // Actions
                             ui.end_row();
 
@@ -1420,22 +1421,15 @@ impl App {
 
                                 // Address Column
                                 ui.horizontal(|ui| {
-                                    let short_addr = if entry.address.len() > 10 {
-                                        format!("{}...{}", &entry.address[..6], &entry.address[entry.address.len()-4..])
-                                    } else {
-                                        entry.address.clone()
-                                    };
-                                    ui.label(egui::RichText::new(short_addr).monospace().small().color(name_color))
-                                        .on_hover_text(&entry.address);
-                                    if ui.small_button("📋").on_hover_text("Copy full address").clicked() {
+                                    ui.label(egui::RichText::new(&entry.address).monospace().color(name_color));
+                                    if ui.small_button("📋").on_hover_text("Copy address").clicked() {
                                         ui::copy_to_clipboard(&entry.address);
                                     }
                                 });
 
                                 // Chain Column
-                                let chain_name = get_chain_name(alloy::primitives::ChainId::from(entry.chain_id))
-                                    .unwrap_or("unknown");
-                                ui.label(egui::RichText::new(chain_name).small().weak());
+                                let chain_name = get_chain_name(entry.chain_id);
+                                ui.label(egui::RichText::new(chain_name).weak());
                                 
                                 // Actions Column
                                 if ui.button("🗑").on_hover_text("Remove").clicked() {

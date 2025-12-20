@@ -38,6 +38,19 @@ pub const SAFE_VERSIONS: &[&str] = &[
     "1.4.1", "1.4.0", "1.3.0", "1.2.0", "1.1.1", "1.1.0", "1.0.0",
 ];
 
+/// Get chain name from ID using safe-utils
+pub fn get_chain_name(chain_id: u64) -> String {
+    use safe_utils::Of;
+    for name in safe_utils::get_all_supported_chain_names() {
+        if let Ok(id) = alloy::primitives::ChainId::of(&name) {
+            if u64::from(id) == chain_id {
+                return name;
+            }
+        }
+    }
+    format!("{}", chain_id)
+}
+
 // =============================================================================
 // SHARED SAFE CONTEXT (used by sidebar, shared across all tabs)
 // =============================================================================

@@ -191,10 +191,18 @@ pub fn render(
                             egui::Frame::popup(ui.style())
                                 .show(ui, |ui| {
                                     ui.set_min_width(below_rect.width());
+                                    let chain_id = alloy::primitives::ChainId::of(&safe_ctx.chain_name).map(u64::from).unwrap_or(1);
                                     for addr in &safe_ctx.recent_addresses.clone() {
+                                        let name = safe_ctx.address_book.get_name(addr, chain_id);
+                                        let label_text = if let Some(n) = name {
+                                            format!("{} ({})", addr, n)
+                                        } else {
+                                            addr.clone()
+                                        };
+
                                         let response = ui.selectable_label(
                                             safe_ctx.safe_address.to_lowercase() == addr.to_lowercase(),
-                                            egui::RichText::new(addr).monospace().size(11.0)
+                                            egui::RichText::new(label_text).monospace().size(11.0)
                                         );
                                         if response.clicked() {
                                             safe_ctx.safe_address = addr.clone();
