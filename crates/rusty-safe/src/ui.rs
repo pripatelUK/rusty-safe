@@ -51,15 +51,44 @@ pub fn open_url_new_tab(url: &str) {
     let _ = open::that(url);
 }
 
+pub use crate::state::{AddressValidation, validate_address};
+
 /// Render an address as a clickable hyperlink that opens in block explorer
-pub fn address_link(ui: &mut egui::Ui, chain_name: &str, address: &str) -> egui::Response {
+pub fn address_link(ui: &mut egui::Ui, chain_name: &str, address: &str, name: Option<String>) -> egui::Response {
+    let validation = validate_address(address);
     let explorer_url = get_explorer_address_url(chain_name, address);
-    let response = ui.link(egui::RichText::new(address).monospace())
-        .on_hover_text("Open in block explorer");
-    if response.clicked() {
-        open_url_new_tab(&explorer_url);
-    }
-    response
+    
+    let text_color = if validation == AddressValidation::ChecksumMismatch {
+        egui::Color32::from_rgb(220, 180, 50) // Yellow for checksum warning
+    } else {
+        ui.visuals().hyperlink_color
+    };
+
+    ui.horizontal(|ui| {
+        let label_text = if let Some(n) = name {
+            format!("{} ({})", address, n)
+        } else {
+            address.to_string()
+        };
+
+        let response = ui.link(egui::RichText::new(label_text).monospace().color(text_color))
+            .on_hover_text(if validation == AddressValidation::ChecksumMismatch {
+                "⚠️ Checksum mismatch! Click to open in block explorer"
+            } else {
+                "Open in block explorer"
+            });
+
+        if response.clicked() {
+            open_url_new_tab(&explorer_url);
+        }
+
+        if validation == AddressValidation::ChecksumMismatch {
+            ui.label(egui::RichText::new("⚠️").color(egui::Color32::from_rgb(220, 180, 50)))
+                .on_hover_text("Address has an invalid EIP-55 checksum");
+        }
+        
+        response
+    }).inner
 }
 
 /// Styled heading with accent color
