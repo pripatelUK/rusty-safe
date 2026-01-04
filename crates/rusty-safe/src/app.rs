@@ -930,7 +930,7 @@ impl App {
                         match kind {
                             "single" => {
                                 debug_log!("Triggering 4byte lookup for selector: {}", selector);
-                                self.trigger_decode_lookup(&selector, &data);
+                                self.trigger_decode_lookup(ctx, &selector, &data);
                             }
                             "multi" => {
                                 debug_log!("Triggering bulk verification for {} transactions", tx_count);
@@ -1020,11 +1020,12 @@ impl App {
         }
     }
 
-    fn trigger_decode_lookup(&self, selector: &str, data: &str) {
+    fn trigger_decode_lookup(&self, ctx: &egui::Context, selector: &str, data: &str) {
         let lookup = self.signature_lookup.clone();
         let selector = selector.to_string();
         let data = data.to_string();
         let result = Arc::clone(&self.decode_result);
+        let ctx = ctx.clone();
 
         #[cfg(target_arch = "wasm32")]
         {
@@ -1033,6 +1034,7 @@ impl App {
                 let local_decode = Self::do_decode_lookup(&lookup, &selector, &data).await;
                 let mut guard = result.lock().unwrap();
                 *guard = Some(DecodeResult::Single { selector, local_decode });
+                ctx.request_repaint();
             });
         }
 
@@ -1043,6 +1045,7 @@ impl App {
                 let local_decode = rt.block_on(Self::do_decode_lookup(&lookup, &selector, &data));
                 let mut guard = result.lock().unwrap();
                 *guard = Some(DecodeResult::Single { selector, local_decode });
+                ctx.request_repaint();
             });
         }
     }
