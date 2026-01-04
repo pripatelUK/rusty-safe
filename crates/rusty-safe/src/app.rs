@@ -777,9 +777,23 @@ impl App {
         };
 
         // Use safe_utils::MessageHasher
-        let msg_hasher = MessageHasher::new(self.msg_state.message.clone());
-        let raw_hash = msg_hasher.raw_hash();
-        let message_hash = msg_hasher.hash();
+        let (raw_hash, message_hash) = if self.msg_state.is_hex {
+            // Parse hex bytes and hash directly
+            let hex_str = self.msg_state.message.trim().trim_start_matches("0x");
+            let bytes = match hex::decode(hex_str) {
+                Ok(b) => b,
+                Err(e) => {
+                    self.msg_state.error = Some(format!("Invalid hex: {}", e));
+                    return;
+                }
+            };
+            let msg_hasher = MessageHasher::new_from_bytes(alloy::primitives::keccak256(&bytes));
+            (msg_hasher.raw_hash(), msg_hasher.hash())
+        } else {
+            // Hash as UTF-8 string
+            let msg_hasher = MessageHasher::new(self.msg_state.message.clone());
+            (msg_hasher.raw_hash(), msg_hasher.hash())
+        };
 
         // Use safe_utils::DomainHasher
         let domain_hasher = DomainHasher::new(safe_version, chain_id, safe_addr);
