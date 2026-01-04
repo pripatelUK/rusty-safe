@@ -23,6 +23,20 @@ macro_rules! debug_log {
         }
     };
 }
+
+/// Acquire mutex lock, recovering from poisoned state if necessary.
+/// This prevents panics when a thread panicked while holding the lock.
+macro_rules! lock_or_recover {
+    ($mutex:expr) => {
+        match $mutex.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => {
+                debug_log!("Warning: Mutex was poisoned, recovering");
+                poisoned.into_inner()
+            }
+        }
+    };
+}
 use crate::expected;
 use crate::hasher::{get_warnings_for_tx, get_warnings_from_api_tx, compute_hashes_from_api_tx, fetch_transaction};
 use crate::state::{Eip712State, MsgVerifyState, TxVerifyState, OfflineState, SafeContext, SidebarState, SAFE_VERSIONS, AddressValidation, get_chain_name};
@@ -836,7 +850,7 @@ impl App {
         {
             wasm_bindgen_futures::spawn_local(async move {
                 let fetch_result = fetch_transaction(&chain_name, &safe_address, nonce).await;
-                let mut result_guard = result.lock().unwrap();
+                let mut result_guard = lock_or_recover!(result);
                 *result_guard = Some(match fetch_result {
                     Ok(tx) => FetchResult::Success(tx),
                     Err(e) => FetchResult::Error(format!("{:#}", e)),
@@ -850,7 +864,7 @@ impl App {
             std::thread::spawn(move || {
                 let rt = tokio::runtime::Runtime::new().unwrap();
                 let fetch_result = rt.block_on(fetch_transaction(&chain_name, &safe_address, nonce));
-                let mut result_guard = result.lock().unwrap();
+                let mut result_guard = lock_or_recover!(result);
                 *result_guard = Some(match fetch_result {
                     Ok(tx) => FetchResult::Success(tx),
                     Err(e) => FetchResult::Error(format!("{:#}", e)),
@@ -862,7 +876,7 @@ impl App {
 
     fn check_fetch_result(&mut self, ctx: &egui::Context) {
         let result = {
-            let mut guard = self.fetch_result.lock().unwrap();
+            let mut guard = lock_or_recover!(self.fetch_result);
             guard.take()
         };
 
@@ -965,7 +979,7 @@ impl App {
 
     fn check_decode_result(&mut self) {
         let result = {
-            let mut guard = self.decode_result.lock().unwrap();
+            let mut guard = lock_or_recover!(self.decode_result);
             guard.take()
         };
 
@@ -1038,7 +1052,7 @@ impl App {
             use wasm_bindgen_futures::spawn_local;
             spawn_local(async move {
                 let local_decode = Self::do_decode_lookup(&lookup, &selector, &data).await;
-                let mut guard = result.lock().unwrap();
+                let mut guard = lock_or_recover!(result);
                 *guard = Some(DecodeResult::Single { selector, local_decode });
                 ctx.request_repaint();
             });
@@ -1049,7 +1063,7 @@ impl App {
             std::thread::spawn(move || {
                 let rt = tokio::runtime::Runtime::new().unwrap();
                 let local_decode = rt.block_on(Self::do_decode_lookup(&lookup, &selector, &data));
-                let mut guard = result.lock().unwrap();
+                let mut guard = lock_or_recover!(result);
                 *guard = Some(DecodeResult::Single { selector, local_decode });
                 ctx.request_repaint();
             });
@@ -1081,7 +1095,7 @@ impl App {
             use wasm_bindgen_futures::spawn_local;
             spawn_local(async move {
                 decode::verify_multisend_batch(&mut multi, &lookup).await;
-                let mut guard = result.lock().unwrap();
+                let mut guard = lock_or_recover!(result);
                 *guard = Some(DecodeResult::MultiSendBulk { multi });
                 ctx.request_repaint();
             });
@@ -1092,7 +1106,7 @@ impl App {
             std::thread::spawn(move || {
                 let rt = tokio::runtime::Runtime::new().unwrap();
                 rt.block_on(decode::verify_multisend_batch(&mut multi, &lookup));
-                let mut guard = result.lock().unwrap();
+                let mut guard = lock_or_recover!(result);
                 *guard = Some(DecodeResult::MultiSendBulk { multi });
                 ctx.request_repaint();
             });
@@ -1128,7 +1142,7 @@ impl App {
     
     fn check_safe_info_result(&mut self) {
         let result = {
-            let mut guard = self.safe_info_result.lock().unwrap();
+            let mut guard = lock_or_recover!(self.safe_info_result);
             guard.take()
         };
 
@@ -1176,7 +1190,7 @@ impl App {
             use wasm_bindgen_futures::spawn_local;
             spawn_local(async move {
                 let fetch_result = crate::hasher::fetch_safe_info(&chain_name, &safe_address).await;
-                let mut guard = result.lock().unwrap();
+                let mut guard = lock_or_recover!(result);
                 *guard = Some(match fetch_result {
                     Ok(info) => SafeInfoResult::Success(info),
                     Err(e) => SafeInfoResult::Error(format!("{:#}", e)),
@@ -1189,7 +1203,7 @@ impl App {
             std::thread::spawn(move || {
                 let rt = tokio::runtime::Runtime::new().unwrap();
                 let fetch_result = rt.block_on(crate::hasher::fetch_safe_info(&chain_name, &safe_address));
-                let mut guard = result.lock().unwrap();
+                let mut guard = lock_or_recover!(result);
                 *guard = Some(match fetch_result {
                     Ok(info) => SafeInfoResult::Success(info),
                     Err(e) => SafeInfoResult::Error(format!("{:#}", e)),
@@ -1555,7 +1569,7 @@ impl App {
 
     fn check_offline_decode_result(&mut self) {
         let result = {
-            let mut guard = self.offline_decode_result.lock().unwrap();
+            let mut guard = lock_or_recover!(self.offline_decode_result);
             guard.take()
         };
         
@@ -1635,7 +1649,7 @@ impl App {
             use wasm_bindgen_futures::spawn_local;
             spawn_local(async move {
                 let decode = decode::decode_offline(&data, &lookup).await;
-                let mut guard = result.lock().unwrap();
+                let mut guard = lock_or_recover!(result);
                 *guard = Some(OfflineDecodeResult::Success(decode));
                 ctx.request_repaint();
             });
@@ -1646,7 +1660,7 @@ impl App {
             std::thread::spawn(move || {
                 let rt = tokio::runtime::Runtime::new().unwrap();
                 let decode = rt.block_on(decode::decode_offline(&data, &lookup));
-                let mut guard = result.lock().unwrap();
+                let mut guard = lock_or_recover!(result);
                 *guard = Some(OfflineDecodeResult::Success(decode));
                 ctx.request_repaint();
             });

@@ -36,6 +36,19 @@ macro_rules! debug_log {
     };
 }
 
+/// Acquire mutex lock, recovering from poisoned state if necessary.
+macro_rules! lock_or_recover {
+    ($mutex:expr) => {
+        match $mutex.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => {
+                debug_log!("Warning: Mutex was poisoned, recovering");
+                poisoned.into_inner()
+            }
+        }
+    };
+}
+
 /// Response from Sourcify Signature Database API
 #[derive(Debug, Deserialize)]
 struct SourcifyResponse {
@@ -116,7 +129,7 @@ impl SignatureLookup {
     
     /// Save cache to eframe storage
     pub fn save(&self, storage: &mut dyn eframe::Storage) {
-        let cache = self.cache.lock().unwrap();
+        let cache = lock_or_recover!(self.cache);
         
         // Limit cache size to prevent unbounded growth
         let signatures: HashMap<String, Vec<String>> = if cache.len() > MAX_CACHED_SELECTORS {
@@ -182,7 +195,7 @@ impl SignatureLookup {
 
         // Check cache
         {
-            let cache = self.cache.lock().unwrap();
+            let cache = lock_or_recover!(self.cache);
             if let Some(sigs) = cache.get(&selector) {
                 debug_log!("Cache hit for {}: {} signatures", selector, sigs.len());
                 return Ok(sigs.clone());
@@ -196,7 +209,7 @@ impl SignatureLookup {
 
         // Cache result
         {
-            let mut cache = self.cache.lock().unwrap();
+            let mut cache = lock_or_recover!(self.cache);
             cache.insert(selector, sigs.clone());
         }
 
@@ -210,7 +223,7 @@ impl SignatureLookup {
 
         // Check cache, collect uncached
         {
-            let cache = self.cache.lock().unwrap();
+            let cache = lock_or_recover!(self.cache);
             for sel in selectors {
                 let normalized = normalize_selector(sel);
                 if let Some(sigs) = cache.get(&normalized) {
@@ -231,7 +244,7 @@ impl SignatureLookup {
         // Fetch all uncached in one request
         match self.fetch_batch(&to_fetch).await {
             Ok(fetched) => {
-                let mut cache = self.cache.lock().unwrap();
+                let mut cache = lock_or_recover!(self.cache);
                 for (sel, sigs) in fetched {
                     cache.insert(sel.clone(), sigs.clone());
                     results.insert(sel, sigs);
@@ -248,7 +261,7 @@ impl SignatureLookup {
     /// Check if selector is cached
     pub fn is_cached(&self, selector: &str) -> bool {
         let selector = normalize_selector(selector);
-        let cache = self.cache.lock().unwrap();
+        let cache = lock_or_recover!(self.cache);
         cache.contains_key(&selector)
     }
 
