@@ -1,129 +1,129 @@
 name: Deploy with Verification
 on:
-  push:
-    branches: [main]
-  release:
-    types: [published]
+    push:
+        branches: [main]
+    release:
+        types: [published]
 
 permissions:
-  contents: write
-  id-token: write
-  attestations: write
+    contents: write
+    id-token: write
+    attestations: write
 
 jobs:
-  build-and-deploy:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      
-      # Reproducible build in Docker
-      - name: Build in Docker
-        run: |
-          docker build -f Dockerfile.build -t builder .
-          docker create --name temp builder
-          docker cp temp:/build/crates/rusty-safe/dist .
-          docker rm temp
-      
-      # Generate WASM hash
-      - name: Generate Hash
-        id: hash
-        run: |
-          WASM_FILE=$(ls dist/*.wasm)
-          HASH=$(sha256sum $WASM_FILE | awk '{print $1}')
-          echo "wasm_hash=$HASH" >> $GITHUB_OUTPUT
-          echo "$HASH" > dist/WASM_HASH.txt
-          echo "**WASM File**: \`$(basename $WASM_FILE)\`" > dist/BUILD_INFO.txt
-          echo "**WASM SHA256**: \`$HASH\`" >> dist/BUILD_INFO.txt
-          echo "**Commit**: ${{ github.sha }}" >> dist/BUILD_INFO.txt
-          echo "**Build Time**: $(date -u +%Y-%m-%dT%H:%M:%SZ)" >> dist/BUILD_INFO.txt
-      
-      # GitHub attestation (cryptographic proof)
-      - name: Attest Build
-        uses: actions/attest-build-provenance@v1
-        with:
-          subject-path: 'dist/*.wasm'
-      
-      # Deploy to Cloudflare Pages
-      - name: Deploy to Cloudflare Pages
-        uses: cloudflare/pages-action@v1
-        with:
-          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          projectName: rusty-safe
-          directory: dist
-      
-      # Pin to IPFS (Pinata)
-      - name: Pin to IPFS (Pinata)
-        id: ipfs
-        run: |
-          # Use find to build the -F arguments for each file in the dist directory
-          # This ensures Pinata reconstructs the directory structure correctly
-          FILES_ARGS=$(find dist -type f -printf "-F file=@%p;filename=dist/%P ")
-          
-          # Upload to Pinata
-          RESPONSE=$(curl -s -X POST "https://api.pinata.cloud/pinning/pinFileToIPFS" \
-            -H "pinata_api_key: ${{ secrets.PINATA_API_KEY }}" \
-            -H "pinata_secret_api_key: ${{ secrets.PINATA_SECRET_API_KEY }}" \
-            $FILES_ARGS \
-            -F 'pinataOptions={"cidVersion": 1}' \
-            -F 'pinataMetadata={"name": "rusty-safe-${{ github.sha }}"}')
-          
-          CID=$(echo $RESPONSE | jq -r '.IpfsHash')
-          
-          if [ "$CID" = "null" ] || [ -z "$CID" ]; then
-            echo "Error: Pinata upload failed"
-            echo "Response: $RESPONSE"
-            exit 1
-          fi
-          
-          echo "cid=$CID" >> $GITHUB_OUTPUT
-          echo "IPFS CID: $CID"
-      
-      # Update DNSLink on Cloudflare
-      - name: Update DNSLink
-        run: |
-          RECORD_NAME="_dnslink.rustysafe.com"
-          EXISTING=$(curl -s -X GET "https://api.cloudflare.com/client/v4/zones/${{ secrets.CLOUDFLARE_ZONE_ID }}/dns_records?type=TXT&name=$RECORD_NAME" \
-            -H "Authorization: Bearer ${{ secrets.CLOUDFLARE_API_TOKEN }}" \
-            -H "Content-Type: application/json")
-          
-          RECORD_ID=$(echo $EXISTING | jq -r '.result[0].id // empty')
-          DNSLINK_VALUE="dnslink=/ipfs/${{ steps.ipfs.outputs.cid }}"
-          
-          if [ -n "$RECORD_ID" ]; then
-            # Update existing record
-            curl -s -X PUT "https://api.cloudflare.com/client/v4/zones/${{ secrets.CLOUDFLARE_ZONE_ID }}/dns_records/$RECORD_ID" \
-              -H "Authorization: Bearer ${{ secrets.CLOUDFLARE_API_TOKEN }}" \
-              -H "Content-Type: application/json" \
-              --data "{\"type\":\"TXT\",\"name\":\"$RECORD_NAME\",\"content\":\"$DNSLINK_VALUE\",\"ttl\":300}"
-          else
-            # Create new record
-            curl -s -X POST "https://api.cloudflare.com/client/v4/zones/${{ secrets.CLOUDFLARE_ZONE_ID }}/dns_records" \
-              -H "Authorization: Bearer ${{ secrets.CLOUDFLARE_API_TOKEN }}" \
-              -H "Content-Type: application/json" \
-              --data "{\"type\":\"TXT\",\"name\":\"$RECORD_NAME\",\"content\":\"$DNSLINK_VALUE\",\"ttl\":300}"
-          fi
-          
-          echo "DNSLink updated to: $DNSLINK_VALUE"
-      
-      # Create release with hash (for tagged releases)
-      - name: Create Release
-        if: startsWith(github.ref, 'refs/tags/')
-        uses: softprops/action-gh-release@v1
-        with:
-          files: |
-            dist/WASM_HASH.txt
-            dist/BUILD_INFO.txt
-          body: |
-            ## Build Verification
-            **WASM Hash**: `${{ steps.hash.outputs.wasm_hash }}`
-            
-            ### Verify Deployment
-            ```bash
-            # Download deployed WASM
-            curl -o app.wasm https://your-app.pages.dev/app.wasm
-            
-            # Check hash
-            sha256sum app.wasm
-            # Should match: ${{ steps.hash.outputs.wasm_hash }}
-            ```
+    build-and-deploy:
+        runs-on: ubuntu-latest
+        steps:
+            - uses: actions/checkout@v4
+
+            # Reproducible build in Docker
+            - name: Build in Docker
+              run: |
+                  docker build -f Dockerfile.build -t builder .
+                  docker create --name temp builder
+                  docker cp temp:/build/crates/rusty-safe/dist .
+                  docker rm temp
+
+            # Generate WASM hash
+            - name: Generate Hash
+              id: hash
+              run: |
+                  WASM_FILE=$(ls dist/*.wasm)
+                  HASH=$(sha256sum $WASM_FILE | awk '{print $1}')
+                  echo "wasm_hash=$HASH" >> $GITHUB_OUTPUT
+                  echo "$HASH" > dist/WASM_HASH.txt
+                  echo "**WASM File**: \`$(basename $WASM_FILE)\`" > dist/BUILD_INFO.txt
+                  echo "**WASM SHA256**: \`$HASH\`" >> dist/BUILD_INFO.txt
+                  echo "**Commit**: ${{ github.sha }}" >> dist/BUILD_INFO.txt
+                  echo "**Build Time**: $(date -u +%Y-%m-%dT%H:%M:%SZ)" >> dist/BUILD_INFO.txt
+
+            # GitHub attestation (cryptographic proof)
+            - name: Attest Build
+              uses: actions/attest-build-provenance@v1
+              with:
+                  subject-path: "dist/*.wasm"
+
+            # Deploy to Cloudflare Pages
+            - name: Deploy to Cloudflare Pages
+              uses: cloudflare/pages-action@v1
+              with:
+                  apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+                  accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+                  projectName: rusty-safe
+                  directory: dist
+
+            # Pin to IPFS (Pinata)
+            - name: Pin to IPFS (Pinata)
+              id: ipfs
+              run: |
+                  # Use find to build the -F arguments for each file in the dist directory
+                  # This ensures Pinata reconstructs the directory structure correctly
+                  FILES_ARGS=$(find dist -type f -printf "-F file=@%p;filename=dist/%P ")
+
+                  # Upload to Pinata
+                  RESPONSE=$(curl -s -X POST "https://api.pinata.cloud/pinning/pinFileToIPFS" \
+                    -H "pinata_api_key: ${{ secrets.PINATA_API_KEY }}" \
+                    -H "pinata_secret_api_key: ${{ secrets.PINATA_SECRET_API_KEY }}" \
+                    $FILES_ARGS \
+                    -F 'pinataOptions={"cidVersion": 1}' \
+                    -F 'pinataMetadata={"name": "rusty-safe-${{ github.sha }}"}')
+
+                  CID=$(echo $RESPONSE | jq -r '.IpfsHash')
+
+                  if [ "$CID" = "null" ] || [ -z "$CID" ]; then
+                    echo "Error: Pinata upload failed"
+                    echo "Response: $RESPONSE"
+                    exit 1
+                  fi
+
+                  echo "cid=$CID" >> $GITHUB_OUTPUT
+                  echo "IPFS CID: $CID"
+
+            # Update DNSLink on Cloudflare
+            - name: Update DNSLink
+              run: |
+                  RECORD_NAME="_dnslink.rustysafe.com"
+                  EXISTING=$(curl -s -X GET "https://api.cloudflare.com/client/v4/zones/${{ secrets.CLOUDFLARE_ZONE_ID }}/dns_records?type=TXT&name=$RECORD_NAME" \
+                    -H "Authorization: Bearer ${{ secrets.CLOUDFLARE_API_TOKEN }}" \
+                    -H "Content-Type: application/json")
+
+                  RECORD_ID=$(echo $EXISTING | jq -r '.result[0].id // empty')
+                  DNSLINK_VALUE="dnslink=/ipfs/${{ steps.ipfs.outputs.cid }}"
+
+                  if [ -n "$RECORD_ID" ]; then
+                    # Update existing record
+                    curl -s -X PUT "https://api.cloudflare.com/client/v4/zones/${{ secrets.CLOUDFLARE_ZONE_ID }}/dns_records/$RECORD_ID" \
+                      -H "Authorization: Bearer ${{ secrets.CLOUDFLARE_API_TOKEN }}" \
+                      -H "Content-Type: application/json" \
+                      --data "{\"type\":\"TXT\",\"name\":\"$RECORD_NAME\",\"content\":\"$DNSLINK_VALUE\",\"ttl\":300}"
+                  else
+                    # Create new record
+                    curl -s -X POST "https://api.cloudflare.com/client/v4/zones/${{ secrets.CLOUDFLARE_ZONE_ID }}/dns_records" \
+                      -H "Authorization: Bearer ${{ secrets.CLOUDFLARE_API_TOKEN }}" \
+                      -H "Content-Type: application/json" \
+                      --data "{\"type\":\"TXT\",\"name\":\"$RECORD_NAME\",\"content\":\"$DNSLINK_VALUE\",\"ttl\":300}"
+                  fi
+
+                  echo "DNSLink updated to: $DNSLINK_VALUE"
+
+            # Create release with hash (for tagged releases)
+            - name: Create Release
+              if: startsWith(github.ref, 'refs/tags/')
+              uses: softprops/action-gh-release@v1
+              with:
+                  files: |
+                      dist/WASM_HASH.txt
+                      dist/BUILD_INFO.txt
+                  body: |
+                      ## Build Verification
+                      **WASM Hash**: `${{ steps.hash.outputs.wasm_hash }}`
+
+                      ### Verify Deployment
+                      ```bash
+                      # Download deployed WASM
+                      curl -o app.wasm https://your-app.pages.dev/app.wasm
+
+                      # Check hash
+                      sha256sum app.wasm
+                      # Should match: ${{ steps.hash.outputs.wasm_hash }}
+                      ```
