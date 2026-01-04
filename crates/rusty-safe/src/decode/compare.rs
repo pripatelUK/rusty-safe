@@ -1,5 +1,7 @@
 //! Comparison logic for API vs Local decode
 
+use alloy::primitives::U256;
+
 use super::types::*;
 
 /// Compare API decode against Local decode
@@ -120,23 +122,25 @@ fn normalize_hex(hex: &str) -> String {
     }
 }
 
-/// Normalize integer value (handle decimal and hex)
+/// Normalize integer value (handle decimal and hex up to uint256)
 fn normalize_int(value: &str) -> String {
     let value = value.trim();
 
-    // Try parsing as hex
+    // Try parsing as hex (U256 handles full uint256 range)
     if value.starts_with("0x") || value.starts_with("0X") {
-        if let Ok(n) = u128::from_str_radix(&value[2..], 16) {
+        if let Ok(n) = U256::from_str_radix(&value[2..], 16) {
             return n.to_string();
         }
+        // Invalid hex - fall through to string comparison
     }
 
-    // Try parsing as decimal
-    if let Ok(n) = value.parse::<u128>() {
+    // Try parsing as decimal (U256 handles full uint256 range)
+    if let Ok(n) = value.parse::<U256>() {
         return n.to_string();
     }
 
-    // For very large numbers, just normalize case
+    // Unparseable value - normalize case for string comparison
+    // This preserves the original value for error context in mismatches
     value.to_lowercase()
 }
 
@@ -157,6 +161,17 @@ mod tests {
         assert_eq!(normalize_int("1000000"), "1000000");
         assert_eq!(normalize_int("0x3e8"), "1000");
         assert_eq!(normalize_int("0x0"), "0");
+
+        // Test large uint256 values (> u128::MAX)
+        // 2^128 = 340282366920938463463374607431768211456
+        let large_dec = "340282366920938463463374607431768211456";
+        let large_hex = "0x100000000000000000000000000000000";
+        assert_eq!(normalize_int(large_dec), large_dec);
+        assert_eq!(normalize_int(large_hex), large_dec);
+
+        // Test max uint256
+        let max_u256 = "115792089237316195423570985008687907853269984665640564039457584007913129639935";
+        assert_eq!(normalize_int(max_u256), max_u256);
     }
 
     #[test]
