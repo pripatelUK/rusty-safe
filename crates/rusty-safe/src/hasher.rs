@@ -231,6 +231,7 @@ fn parse_u256(value: &str) -> Result<U256> {
 }
 
 /// Generate warnings using safe_hash::check_suspicious_content
+/// Returns Err if any input fails to parse (warnings would be unreliable)
 pub fn get_warnings_for_tx(
     to: &str,
     value: &str,
@@ -241,14 +242,21 @@ pub fn get_warnings_for_tx(
     gas_price: &str,
     gas_token: &str,
     refund_receiver: &str,
-) -> SafeWarnings {
-    let to_addr: Address = to.trim().parse().unwrap_or(Address::ZERO);
-    let value_u256 = parse_u256(value).unwrap_or(U256::ZERO);
-    let safe_tx_gas_u256 = parse_u256(safe_tx_gas).unwrap_or(U256::ZERO);
-    let base_gas_u256 = parse_u256(base_gas).unwrap_or(U256::ZERO);
-    let gas_price_u256 = parse_u256(gas_price).unwrap_or(U256::ZERO);
-    let gas_token_addr: Address = gas_token.trim().parse().unwrap_or(Address::ZERO);
-    let refund_receiver_addr: Address = refund_receiver.trim().parse().unwrap_or(Address::ZERO);
+) -> Result<SafeWarnings> {
+    let to_addr: Address = to.trim().parse()
+        .wrap_err_with(|| format!("Invalid 'to' address: '{}'", to.trim()))?;
+    let value_u256 = parse_u256(value)
+        .wrap_err_with(|| format!("Invalid value: '{}'", value.trim()))?;
+    let safe_tx_gas_u256 = parse_u256(safe_tx_gas)
+        .wrap_err_with(|| format!("Invalid safeTxGas: '{}'", safe_tx_gas.trim()))?;
+    let base_gas_u256 = parse_u256(base_gas)
+        .wrap_err_with(|| format!("Invalid baseGas: '{}'", base_gas.trim()))?;
+    let gas_price_u256 = parse_u256(gas_price)
+        .wrap_err_with(|| format!("Invalid gasPrice: '{}'", gas_price.trim()))?;
+    let gas_token_addr: Address = gas_token.trim().parse()
+        .wrap_err_with(|| format!("Invalid gasToken address: '{}'", gas_token.trim()))?;
+    let refund_receiver_addr: Address = refund_receiver.trim().parse()
+        .wrap_err_with(|| format!("Invalid refundReceiver address: '{}'", refund_receiver.trim()))?;
 
     let data_normalized = data.strip_prefix("0x").unwrap_or(data);
     let data_with_prefix = if data_normalized.is_empty() {
@@ -270,19 +278,25 @@ pub fn get_warnings_for_tx(
         String::new(),
     );
 
-    check_suspicious_content(&tx_input, None)
+    Ok(check_suspicious_content(&tx_input, None))
 }
 
 /// Generate warnings from a SafeTransaction (from API)
-pub fn get_warnings_from_api_tx(tx: &SafeTransaction, chain_id: Option<ChainId>) -> SafeWarnings {
+/// Returns Err if API returned invalid values (indicates API data corruption)
+pub fn get_warnings_from_api_tx(tx: &SafeTransaction, chain_id: Option<ChainId>) -> Result<SafeWarnings> {
+    let value = U256::from_str_radix(&tx.value, 10)
+        .wrap_err_with(|| format!("API returned invalid value: '{}'", tx.value))?;
+    let gas_price = U256::from_str_radix(&tx.gas_price, 10)
+        .wrap_err_with(|| format!("API returned invalid gasPrice: '{}'", tx.gas_price))?;
+
     let tx_input = TxInput::new(
         tx.to,
-        U256::from_str_radix(&tx.value, 10).unwrap_or(U256::ZERO),
+        value,
         tx.data.clone(),
         tx.operation,
         U256::from(tx.safe_tx_gas),
         U256::from(tx.base_gas),
-        U256::from_str_radix(&tx.gas_price, 10).unwrap_or(U256::ZERO),
+        gas_price,
         tx.gas_token,
         tx.refund_receiver,
         String::new(),
@@ -298,5 +312,5 @@ pub fn get_warnings_from_api_tx(tx: &SafeTransaction, chain_id: Option<ChainId>)
         }
     }
 
-    warnings
+    Ok(warnings)
 }

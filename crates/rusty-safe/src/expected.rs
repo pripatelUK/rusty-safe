@@ -33,6 +33,8 @@ pub enum ValidationResult {
     Match,
     /// One or more expected values don't match
     Mismatches(Vec<Mismatch>),
+    /// One or more expected values couldn't be parsed (validation incomplete)
+    ParseErrors(Vec<String>),
 }
 
 impl ExpectedState {
@@ -121,7 +123,7 @@ pub fn render_section(ui: &mut egui::Ui, state: &mut ExpectedState) {
         });
 }
 
-/// Render validation result (match/mismatches)
+/// Render validation result (match/mismatches/parse errors)
 pub fn render_result(ui: &mut egui::Ui, state: &ExpectedState) {
     if let Some(result) = &state.result {
         ui.add_space(10.0);
@@ -150,6 +152,24 @@ pub fn render_result(ui: &mut egui::Ui, state: &ExpectedState) {
                     ui.add_space(2.0);
                 }
             }
+            ValidationResult::ParseErrors(errors) => {
+                ui.horizontal(|ui| {
+                    ui.label(
+                        egui::RichText::new("⚠️ Validation incomplete - invalid input:")
+                            .color(egui::Color32::from_rgb(220, 180, 50))
+                            .strong(),
+                    );
+                });
+                for err in errors {
+                    ui.horizontal(|ui| {
+                        ui.label(
+                            egui::RichText::new(format!("  • {}", err))
+                                .color(egui::Color32::from_rgb(220, 180, 50)),
+                        );
+                    });
+                    ui.add_space(2.0);
+                }
+            }
         }
     }
 }
@@ -165,32 +185,47 @@ pub fn validate_against_api(api_tx: &SafeTransaction, state: &ExpectedState) -> 
     }
 
     let mut mismatches = Vec::new();
+    let mut parse_errors = Vec::new();
 
     // Check 'to' address
     if !state.to.is_empty() {
-        if let Ok(expected_to) = state.to.trim().parse::<Address>() {
-            if expected_to != api_tx.to {
-                mismatches.push(Mismatch {
-                    field: "to".to_string(),
-                    api_value: api_tx.to.to_string(),
-                    user_value: expected_to.to_string(),
-                });
+        match state.to.trim().parse::<Address>() {
+            Ok(expected_to) => {
+                if expected_to != api_tx.to {
+                    mismatches.push(Mismatch {
+                        field: "to".to_string(),
+                        api_value: api_tx.to.to_string(),
+                        user_value: expected_to.to_string(),
+                    });
+                }
+            }
+            Err(_) => {
+                parse_errors.push(format!("Invalid 'to' address: '{}'", state.to.trim()));
             }
         }
-        // If parse fails, skip validation for this field (lenient approach)
     }
 
     // Check value
     if !state.value.is_empty() {
-        if let Ok(expected_value) = parse_u256(&state.value) {
-            if let Ok(api_value) = U256::from_str_radix(&api_tx.value, 10) {
-                if expected_value != api_value {
-                    mismatches.push(Mismatch {
-                        field: "value".to_string(),
-                        api_value: api_value.to_string(),
-                        user_value: expected_value.to_string(),
-                    });
+        match parse_u256(&state.value) {
+            Ok(expected_value) => {
+                match U256::from_str_radix(&api_tx.value, 10) {
+                    Ok(api_value) => {
+                        if expected_value != api_value {
+                            mismatches.push(Mismatch {
+                                field: "value".to_string(),
+                                api_value: api_value.to_string(),
+                                user_value: expected_value.to_string(),
+                            });
+                        }
+                    }
+                    Err(_) => {
+                        parse_errors.push(format!("API returned invalid value: '{}'", api_tx.value));
+                    }
                 }
+            }
+            Err(_) => {
+                parse_errors.push(format!("Invalid expected value: '{}'", state.value.trim()));
             }
         }
     }
@@ -219,7 +254,10 @@ pub fn validate_against_api(api_tx: &SafeTransaction, state: &ExpectedState) -> 
         }
     }
 
-    if mismatches.is_empty() {
+    // Parse errors take precedence - validation is incomplete
+    if !parse_errors.is_empty() {
+        ValidationResult::ParseErrors(parse_errors)
+    } else if mismatches.is_empty() {
         ValidationResult::Match
     } else {
         ValidationResult::Mismatches(mismatches)

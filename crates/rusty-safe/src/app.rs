@@ -892,7 +892,13 @@ impl App {
 
                     // Get warnings using check_suspicious_content (via get_warnings_from_api_tx)
                     let chain_id = ChainId::of(&self.safe_context.chain_name).ok();
-                    self.tx_state.warnings.union(get_warnings_from_api_tx(&tx, chain_id));
+                    match get_warnings_from_api_tx(&tx, chain_id) {
+                        Ok(warnings) => self.tx_state.warnings.union(warnings),
+                        Err(e) => {
+                            debug_log!("Warning computation failed: {:#}", e);
+                            self.tx_state.warnings_error = Some(format!("{:#}", e));
+                        }
+                    }
 
                     // Validate against expected values if any were provided
                     if self.tx_state.expected.has_values() {
@@ -1591,7 +1597,7 @@ impl App {
             Ok(hashes) => {
                 self.offline_state.hashes = Some(hashes);
                 // Compute warnings
-                self.offline_state.warnings = get_warnings_for_tx(
+                match get_warnings_for_tx(
                     &self.offline_state.to,
                     &self.offline_state.value,
                     &self.offline_state.data,
@@ -1601,7 +1607,16 @@ impl App {
                     &self.offline_state.gas_price,
                     &self.offline_state.gas_token,
                     &self.offline_state.refund_receiver,
-                );
+                ) {
+                    Ok(warnings) => {
+                        self.offline_state.warnings = warnings;
+                        self.offline_state.warnings_error = None;
+                    }
+                    Err(e) => {
+                        debug_log!("Warning computation failed: {:#}", e);
+                        self.offline_state.warnings_error = Some(format!("{:#}", e));
+                    }
+                }
             }
             Err(e) => {
                 self.offline_state.is_loading = false;

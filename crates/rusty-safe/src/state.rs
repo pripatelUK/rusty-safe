@@ -269,6 +269,8 @@ pub struct TxVerifyState {
     pub fetched_tx: Option<SafeTransaction>,
     pub hashes: Option<ComputedHashes>,
     pub warnings: SafeWarnings,
+    /// Set when warnings couldn't be computed due to parse errors
+    pub warnings_error: Option<String>,
     pub is_loading: bool,
     pub error: Option<String>,
 }
@@ -278,6 +280,7 @@ impl TxVerifyState {
         self.fetched_tx = None;
         self.hashes = None;
         self.warnings = SafeWarnings::new();
+        self.warnings_error = None;
         self.expected.clear_result();
         self.decode = None;
         self.error = None;
@@ -349,12 +352,14 @@ pub struct OfflineState {
     pub gas_price: String,
     pub gas_token: String,
     pub refund_receiver: String,
-    
+
     // Results
     pub decode_result: Option<OfflineDecodeResult>,
     pub hashes: Option<ComputedHashes>,
     pub warnings: SafeWarnings,
-    
+    /// Set when warnings couldn't be computed due to parse errors
+    pub warnings_error: Option<String>,
+
     // State
     pub is_loading: bool,
     pub error: Option<String>,
@@ -376,6 +381,7 @@ impl Default for OfflineState {
             decode_result: None,
             hashes: None,
             warnings: SafeWarnings::new(),
+            warnings_error: None,
             is_loading: false,
             error: None,
         }
@@ -387,6 +393,7 @@ impl OfflineState {
         self.decode_result = None;
         self.hashes = None;
         self.warnings = SafeWarnings::new();
+        self.warnings_error = None;
         self.error = None;
     }
 }
