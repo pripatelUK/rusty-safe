@@ -435,9 +435,14 @@ impl App {
         // Expected values validation result (before other warnings)
         expected::render_result(ui, &self.tx_state.expected);
 
-        if self.tx_state.warnings.has_warnings() {
+        let warnings_error = self.tx_state.warnings_error.as_deref();
+        if self.tx_state.warnings.has_warnings() || warnings_error.is_some() {
             ui.add_space(15.0);
             ui::section_header(ui, "⚠️ Warnings");
+
+            if let Some(error) = warnings_error {
+                ui::error_message(ui, &format!("Warning computation failed: {}", error));
+            }
 
             let w = &self.tx_state.warnings;
             if w.delegatecall {
@@ -1321,8 +1326,13 @@ impl App {
             ui.add_space(10.0);
             
             // Warnings
-            if self.offline_state.warnings.has_warnings() {
+            let warnings_error = self.offline_state.warnings_error.as_deref();
+            if self.offline_state.warnings.has_warnings() || warnings_error.is_some() {
                 ui::section_header(ui, "⚠️ Warnings");
+
+                if let Some(error) = warnings_error {
+                    ui::error_message(ui, &format!("Warning computation failed: {}", error));
+                }
                 
                 let w = &self.offline_state.warnings;
                 if w.delegatecall {
