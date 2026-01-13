@@ -21,7 +21,7 @@ pub use parser::{
     decode_multisend_bytes, decode_with_signature, get_selector, parse_initial,
     unpack_multisend_transactions, MULTISEND_SELECTOR,
 };
-pub use sourcify::SignatureLookup;
+pub use sourcify::{SignatureInfo, SignatureLookup};
 pub use types::*;
 pub use ui::{render_decode_section, render_offline_decode_section, render_single_comparison};
 pub use verify::verify_multisend_batch;

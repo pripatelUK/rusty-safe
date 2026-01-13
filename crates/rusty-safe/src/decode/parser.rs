@@ -15,10 +15,7 @@ use crate::api::DataDecoded;
 pub const MULTISEND_SELECTOR: &str = "0x8d80ff0a";
 
 /// Parse calldata and API decode into initial structure
-pub fn parse_initial(
-    raw_data: &str,
-    api_decoded: Option<&DataDecoded>,
-) -> DecodedTransaction {
+pub fn parse_initial(raw_data: &str, api_decoded: Option<&DataDecoded>) -> DecodedTransaction {
     let raw_data = raw_data.trim();
 
     // Empty calldata
@@ -92,10 +89,7 @@ fn convert_api_decode(decoded: &DataDecoded) -> ApiDecode {
 }
 
 /// Parse MultiSend calldata
-fn parse_multisend(
-    raw_data: &str,
-    api_decoded: Option<&DataDecoded>,
-) -> Result<MultiSendDecode> {
+fn parse_multisend(raw_data: &str, api_decoded: Option<&DataDecoded>) -> Result<MultiSendDecode> {
     // Decode the outer multiSend(bytes) call
     let bytes_data = decode_multisend_bytes(raw_data)?;
 
@@ -118,7 +112,7 @@ fn parse_multisend(
 
     // Parse packed transactions and attach API decodes
     let mut transactions = unpack_multisend_transactions(&bytes_data)?;
-    
+
     // Attach API decode data to each transaction
     for (i, tx) in transactions.iter_mut().enumerate() {
         tx.api_decode = api_nested_decodes.get(i).cloned().flatten();
@@ -212,7 +206,10 @@ pub fn unpack_multisend_transactions(packed: &[u8]) -> Result<Vec<MultiSendTx>> 
             "Incomplete transaction: missing 'data'"
         );
         let data = if data_length_usize > 0 {
-            format!("0x{}", hex::encode(&packed[offset..offset + data_length_usize]))
+            format!(
+                "0x{}",
+                hex::encode(&packed[offset..offset + data_length_usize])
+            )
         } else {
             "0x".to_string()
         };
@@ -239,17 +236,25 @@ use super::decode_log;
 ///
 /// Uses `alloy_json_abi::Function::parse()` for robust signature parsing,
 /// following the same pattern as Foundry's `abi_decode_calldata`.
-pub fn decode_with_signature(
-    data: &str,
-    signature: &str,
-) -> Result<LocalDecode> {
-    decode_log!("Decoding with signature: {}", signature);
+///
+/// The `verified` parameter indicates whether this signature comes from a
+/// verified contract on Sourcify (vs an unverified 4byte database entry).
+pub fn decode_with_signature(data: &str, signature: &str, verified: bool) -> Result<LocalDecode> {
+    decode_log!(
+        "Decoding with signature: {} (verified: {})",
+        signature,
+        verified
+    );
 
     // Parse function signature using alloy-json-abi (same as Foundry)
     let func = Function::parse(signature)
         .wrap_err_with(|| format!("Invalid signature '{}'", signature))?;
 
-    decode_log!("Parsed function: {} with {} inputs", func.name, func.inputs.len());
+    decode_log!(
+        "Parsed function: {} with {} inputs",
+        func.name,
+        func.inputs.len()
+    );
 
     // Decode the calldata bytes
     let data_bytes = hex::decode(data.strip_prefix("0x").unwrap_or(data))
@@ -267,6 +272,7 @@ pub fn decode_with_signature(
             signature: signature.to_string(),
             method: func.name.clone(),
             params: vec![],
+            verified,
         });
     }
 
@@ -295,9 +301,9 @@ pub fn decode_with_signature(
         signature: signature.to_string(),
         method: func.name.clone(),
         params,
+        verified,
     })
 }
-
 
 /// Format a decoded value for display
 fn format_value(val: &alloy::dyn_abi::DynSolValue) -> String {
@@ -359,11 +365,12 @@ mod tests {
         let sig = "transfer(address,uint256)";
         let data = "0xa9059cbb000000000000000000000000d8da6bf26964af9d7eed9e03e53415d37aa960450000000000000000000000000000000000000000000000000de0b6b3a7640000";
 
-        let result = decode_with_signature(data, sig).unwrap();
+        let result = decode_with_signature(data, sig, true).unwrap();
         assert_eq!(result.method, "transfer");
         assert_eq!(result.params.len(), 2);
         assert_eq!(result.params[0].typ, "address");
         assert_eq!(result.params[1].typ, "uint256");
+        assert!(result.verified);
     }
 
     #[test]
@@ -372,9 +379,10 @@ mod tests {
         // Just the selector, no params
         let data = "0x8456cb59";
 
-        let result = decode_with_signature(data, sig).unwrap();
+        let result = decode_with_signature(data, sig, false).unwrap();
         assert_eq!(result.method, "pause");
         assert_eq!(result.params.len(), 0);
+        assert!(!result.verified);
     }
 
     #[test]
@@ -382,7 +390,7 @@ mod tests {
         let sig = "scopeFunction(uint16,address,bytes4,bool[],uint8[],uint8[],bytes[],uint8)";
         let data = "0x33a0480c000000000000000000000000000000000000000000000000000000000000000100000000000000000000000068b3465833fb72a70ecdf485e0e4c7bd8665fc45472b43f300000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000001a0000000000000000000000000000000000000000000000000000000000000024000000000000000000000000000000000000000000000000000000000000002e000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000004000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000040000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000400000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000004000000000000000000000000000000000000000000000000000000000000008000000000000000000000000000000000000000000000000000000000000000a000000000000000000000000000000000000000000000000000000000000000c000000000000000000000000000000000000000000000000000000000000000e000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000200000000000000000000000004f2083f5fbede34c2714affb3105539775f7fe64";
 
-        let result = decode_with_signature(data, sig);
+        let result = decode_with_signature(data, sig, true);
         match result {
             Ok(decoded) => {
                 println!("Decoded successfully!");
@@ -399,4 +407,3 @@ mod tests {
         }
     }
 }
-

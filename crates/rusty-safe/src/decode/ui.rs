@@ -1,8 +1,8 @@
 //! Calldata decode UI rendering
 
-use eframe::egui;
 use super::types::*;
-use crate::ui::{self, AddressValidation, validate_address};
+use crate::ui::{self, validate_address, AddressValidation};
+use eframe::egui;
 use safe_utils::Of;
 
 /// Check if a value looks like a tuple/array (starts with [ and ends with ])
@@ -15,16 +15,16 @@ fn is_tuple_or_array(value: &str) -> bool {
 fn parse_tuple_elements(value: &str) -> Vec<String> {
     let trimmed = value.trim();
     // Remove outer brackets
-    let inner = &trimmed[1..trimmed.len()-1];
-    
+    let inner = &trimmed[1..trimmed.len() - 1];
+
     if inner.is_empty() {
         return vec![];
     }
-    
+
     let mut elements = Vec::new();
     let mut current = String::new();
     let mut bracket_depth = 0;
-    
+
     for ch in inner.chars() {
         match ch {
             '[' | '(' => {
@@ -44,24 +44,30 @@ fn parse_tuple_elements(value: &str) -> Vec<String> {
             }
         }
     }
-    
+
     // Don't forget the last element
     if !current.trim().is_empty() {
         elements.push(current.trim().to_string());
     }
-    
+
     elements
 }
 
 /// Render a single value element with smart type detection
-fn render_single_value(ui_ctx: &mut egui::Ui, value: &str, safe_ctx: &crate::state::SafeContext, color: Option<egui::Color32>, id_salt: &str) {
+fn render_single_value(
+    ui_ctx: &mut egui::Ui,
+    value: &str,
+    safe_ctx: &crate::state::SafeContext,
+    color: Option<egui::Color32>,
+    id_salt: &str,
+) {
     let validation = validate_address(value);
-    
+
     if validation != AddressValidation::Invalid {
         ui_ctx.horizontal(|ui| {
             let chain_name = &safe_ctx.chain_name;
             let explorer_url = ui::get_explorer_address_url(chain_name, value);
-            
+
             let text_color = if let Some(c) = color {
                 c
             } else if validation == AddressValidation::ChecksumMismatch {
@@ -79,7 +85,12 @@ fn render_single_value(ui_ctx: &mut egui::Ui, value: &str, safe_ctx: &crate::sta
                 value.to_string()
             };
 
-            let response = ui.link(egui::RichText::new(label_text).monospace().color(text_color))
+            let response = ui
+                .link(
+                    egui::RichText::new(label_text)
+                        .monospace()
+                        .color(text_color),
+                )
                 .on_hover_text(if validation == AddressValidation::ChecksumMismatch {
                     "⚠️ Checksum mismatch! Click to open in block explorer"
                 } else {
@@ -99,15 +110,25 @@ fn render_single_value(ui_ctx: &mut egui::Ui, value: &str, safe_ctx: &crate::sta
         ui::render_uint_with_popup(ui_ctx, value, id_salt);
     } else {
         let text = egui::RichText::new(value).monospace();
-        let text = if let Some(c) = color { text.color(c) } else { text };
+        let text = if let Some(c) = color {
+            text.color(c)
+        } else {
+            text
+        };
         ui_ctx.label(text);
     }
 }
 
 /// Render tuple/array elements with individual type handling
-fn render_tuple_value(ui_ctx: &mut egui::Ui, value: &str, safe_ctx: &crate::state::SafeContext, color: Option<egui::Color32>, id_salt: &str) {
+fn render_tuple_value(
+    ui_ctx: &mut egui::Ui,
+    value: &str,
+    safe_ctx: &crate::state::SafeContext,
+    color: Option<egui::Color32>,
+    id_salt: &str,
+) {
     let elements = parse_tuple_elements(value);
-    
+
     ui_ctx.vertical(|ui| {
         for (i, elem) in elements.iter().enumerate() {
             // Use horizontal_wrapped to allow long values to wrap
@@ -122,7 +143,13 @@ fn render_tuple_value(ui_ctx: &mut egui::Ui, value: &str, safe_ctx: &crate::stat
 }
 
 /// Render a parameter value - handles addresses, large uints, tuples/arrays
-fn render_param_value(ui_ctx: &mut egui::Ui, value: &str, safe_ctx: &crate::state::SafeContext, color: Option<egui::Color32>, id_salt: &str) {
+fn render_param_value(
+    ui_ctx: &mut egui::Ui,
+    value: &str,
+    safe_ctx: &crate::state::SafeContext,
+    color: Option<egui::Color32>,
+    id_salt: &str,
+) {
     if is_tuple_or_array(value) {
         // Tuple/array - render each element separately
         render_tuple_value(ui_ctx, value, safe_ctx, color, id_salt);
@@ -156,7 +183,9 @@ pub fn render_decode_section(
         TransactionKind::Unknown => {
             ui.horizontal(|ui| {
                 ui.label(egui::RichText::new("📦 Calldata").strong());
-                ui.label(egui::RichText::new(format!("Unknown selector: {}", decode.selector)).weak());
+                ui.label(
+                    egui::RichText::new(format!("Unknown selector: {}", decode.selector)).weak(),
+                );
             });
             ui.add_space(5.0);
             render_raw_data(ui, &decode.raw_data);
@@ -165,11 +194,20 @@ pub fn render_decode_section(
 }
 
 /// Render single function call decode
-fn render_single_section(ui: &mut egui::Ui, decode: &SingleDecode, selector: &str, safe_ctx: &crate::state::SafeContext) {
+fn render_single_section(
+    ui: &mut egui::Ui,
+    decode: &SingleDecode,
+    selector: &str,
+    safe_ctx: &crate::state::SafeContext,
+) {
     // Header
     ui.horizontal(|ui| {
         ui.label(egui::RichText::new("📦 Calldata Decoding").strong());
-        ui.label(egui::RichText::new(format!("[{}]", selector)).monospace().weak());
+        ui.label(
+            egui::RichText::new(format!("[{}]", selector))
+                .monospace()
+                .weak(),
+        );
         render_status_badge(ui, &decode.comparison);
     });
 
@@ -185,9 +223,13 @@ pub fn render_single_comparison(ui: &mut egui::Ui, decode: &SingleDecode) {
 }
 
 /// Render side-by-side comparison for a single decode with chain-aware address links
-fn render_single_comparison_with_chain(ui: &mut egui::Ui, decode: &SingleDecode, safe_ctx: &crate::state::SafeContext) {
+fn render_single_comparison_with_chain(
+    ui: &mut egui::Ui,
+    decode: &SingleDecode,
+    safe_ctx: &crate::state::SafeContext,
+) {
     let id_prefix = format!("decode_{:p}", decode);
-    
+
     egui::Grid::new(format!("decode_compare_{:p}", decode))
         .num_columns(2)
         .spacing([30.0, 4.0])
@@ -195,7 +237,11 @@ fn render_single_comparison_with_chain(ui: &mut egui::Ui, decode: &SingleDecode,
         .show(ui, |ui| {
             // Headers
             ui.label(egui::RichText::new("Safe API").strong().underline());
-            ui.label(egui::RichText::new("Independent (4byte)").strong().underline());
+            ui.label(
+                egui::RichText::new("Independent (4byte)")
+                    .strong()
+                    .underline(),
+            );
             ui.end_row();
 
             // Method row
@@ -224,9 +270,18 @@ fn render_method_row(ui: &mut egui::Ui, decode: &SingleDecode) {
         ui.label(egui::RichText::new("—").weak());
     }
 
-    // Local method
+    // Local method - show [unverified] in red if not from verified contract
     if let Some(local) = &decode.local {
-        ui.label(egui::RichText::new(&local.method).monospace().strong());
+        ui.horizontal(|ui| {
+            ui.label(egui::RichText::new(&local.method).monospace().strong());
+            if !local.verified {
+                ui.label(
+                    egui::RichText::new("[unverified]")
+                        .color(egui::Color32::from_rgb(220, 80, 80))
+                        .small(),
+                );
+            }
+        });
     } else {
         match &decode.comparison {
             ComparisonResult::Pending => {
@@ -247,12 +302,25 @@ fn render_method_row(ui: &mut egui::Ui, decode: &SingleDecode) {
 }
 
 /// Render parameter comparison rows
-fn render_params_rows(ui: &mut egui::Ui, decode: &SingleDecode, safe_ctx: &crate::state::SafeContext, id_prefix: &str) {
+fn render_params_rows(
+    ui: &mut egui::Ui,
+    decode: &SingleDecode,
+    safe_ctx: &crate::state::SafeContext,
+    id_prefix: &str,
+) {
     static EMPTY_API: Vec<ApiParam> = Vec::new();
     static EMPTY_LOCAL: Vec<LocalParam> = Vec::new();
 
-    let api_params = decode.api.as_ref().map(|a| a.params.as_slice()).unwrap_or(&EMPTY_API);
-    let local_params = decode.local.as_ref().map(|l| l.params.as_slice()).unwrap_or(&EMPTY_LOCAL);
+    let api_params = decode
+        .api
+        .as_ref()
+        .map(|a| a.params.as_slice())
+        .unwrap_or(&EMPTY_API);
+    let local_params = decode
+        .local
+        .as_ref()
+        .map(|l| l.params.as_slice())
+        .unwrap_or(&EMPTY_LOCAL);
 
     let max_len = api_params.len().max(local_params.len());
 
@@ -268,10 +336,10 @@ fn render_params_rows(ui: &mut egui::Ui, decode: &SingleDecode, safe_ctx: &crate
             let label = format!("{} ({}):", ap.name, ap.typ);
             ui.vertical(|ui| {
                 ui.label(egui::RichText::new(label).weak());
-                let color = if has_mismatch { 
-                    Some(egui::Color32::from_rgb(220, 80, 80)) 
-                } else { 
-                    None 
+                let color = if has_mismatch {
+                    Some(egui::Color32::from_rgb(220, 80, 80))
+                } else {
+                    None
                 };
                 let id_salt = format!("{}_api_{}", id_prefix, i);
                 render_param_value(ui, &ap.value, safe_ctx, color, &id_salt);
@@ -285,10 +353,10 @@ fn render_params_rows(ui: &mut egui::Ui, decode: &SingleDecode, safe_ctx: &crate
             let label = format!("param{} ({}):", i, lp.typ);
             ui.vertical(|ui| {
                 ui.label(egui::RichText::new(label).weak());
-                let color = if has_mismatch { 
-                    Some(egui::Color32::from_rgb(100, 200, 100)) 
-                } else { 
-                    None 
+                let color = if has_mismatch {
+                    Some(egui::Color32::from_rgb(100, 200, 100))
+                } else {
+                    None
                 };
                 let id_salt = format!("{}_local_{}", id_prefix, i);
                 render_param_value(ui, &lp.value, safe_ctx, color, &id_salt);
@@ -309,10 +377,13 @@ fn render_multisend_section(
 ) {
     // Header with summary and expand/collapse buttons
     ui.horizontal(|ui| {
-        ui.label(egui::RichText::new(format!(
-            "📦 MultiSend ({} transactions)",
-            multi.transactions.len()
-        )).strong());
+        ui.label(
+            egui::RichText::new(format!(
+                "📦 MultiSend ({} transactions)",
+                multi.transactions.len()
+            ))
+            .strong(),
+        );
 
         // Show verification state or summary badges
         match &multi.verification_state {
@@ -327,16 +398,16 @@ fn render_multisend_section(
                 render_summary_badges(ui, &multi.summary);
             }
         }
-        
+
         ui.add_space(20.0);
-        
+
         // Expand All button
         if ui.small_button("⬇ Expand All").clicked() {
             for tx in &mut multi.transactions {
                 tx.is_expanded = true;
             }
         }
-        
+
         // Collapse All button
         if ui.small_button("⬆ Collapse All").clicked() {
             for tx in &mut multi.transactions {
@@ -369,8 +440,8 @@ fn build_tx_header(tx: &MultiSendTx) -> egui::RichText {
         Some(d) => {
             // Distinguish unverifiable from still-loading
             match &d.comparison {
-                ComparisonResult::OnlyApi 
-                | ComparisonResult::OnlyLocal 
+                ComparisonResult::OnlyApi
+                | ComparisonResult::OnlyLocal
                 | ComparisonResult::Failed(_) => ("⚠", VerifyStatus::Unverifiable),
                 _ => ("◇", VerifyStatus::Pending),
             }
@@ -379,18 +450,21 @@ fn build_tx_header(tx: &MultiSendTx) -> egui::RichText {
     };
 
     // Try to get method name and params - prefer api_decode, then decode.api, then decode.local
-    let api_data = tx.api_decode.as_ref()
+    let api_data = tx
+        .api_decode
+        .as_ref()
         .or_else(|| tx.decode.as_ref().and_then(|d| d.api.as_ref()));
-    
+
     let method_part = if let Some(api) = api_data {
         // Build compact params from API decode: method(val1, val2, ...)
-        let params_str = api.params
+        let params_str = api
+            .params
             .iter()
             .take(3)
             .map(|p| truncate_param(&p.value, 12))
             .collect::<Vec<_>>()
             .join(", ");
-        
+
         if api.params.len() > 3 {
             format!("{}({}, ...)", api.method, params_str)
         } else if params_str.is_empty() {
@@ -400,19 +474,22 @@ fn build_tx_header(tx: &MultiSendTx) -> egui::RichText {
         }
     } else if let Some(local) = tx.decode.as_ref().and_then(|d| d.local.as_ref()) {
         // Fall back to local 4byte decode
-        let params_str = local.params
+        let params_str = local
+            .params
             .iter()
             .take(3)
             .map(|p| truncate_param(&p.value, 12))
             .collect::<Vec<_>>()
             .join(", ");
-        
+
+        let unverified_tag = if !local.verified { " [unverified]" } else { "" };
+
         if local.params.len() > 3 {
-            format!("{}({}, ...)", local.method, params_str)
+            format!("{}({}, ...){}", local.method, params_str, unverified_tag)
         } else if params_str.is_empty() {
-            local.method.clone()
+            format!("{}{}", local.method, unverified_tag)
         } else {
-            format!("{}({})", local.method, params_str)
+            format!("{}({}){}", local.method, params_str, unverified_tag)
         }
     } else {
         truncate_address(&tx.to)
@@ -424,16 +501,22 @@ fn build_tx_header(tx: &MultiSendTx) -> egui::RichText {
         format_wei(&tx.value)
     };
 
-    let header_text = format!("#{} {} ({}) {}", tx.index + 1, method_part, value_part, status_emoji);
-    
+    let header_text = format!(
+        "#{} {} ({}) {}",
+        tx.index + 1,
+        method_part,
+        value_part,
+        status_emoji
+    );
+
     // Color based on verification status
     let color = match status {
-        VerifyStatus::Match => egui::Color32::from_rgb(100, 200, 100),       // Green
-        VerifyStatus::Mismatch => egui::Color32::from_rgb(220, 80, 80),      // Red
+        VerifyStatus::Match => egui::Color32::from_rgb(100, 200, 100), // Green
+        VerifyStatus::Mismatch => egui::Color32::from_rgb(220, 80, 80), // Red
         VerifyStatus::Unverifiable => egui::Color32::from_rgb(220, 180, 50), // Yellow
-        VerifyStatus::Pending => egui::Color32::GRAY,                        // Gray
+        VerifyStatus::Pending => egui::Color32::GRAY,                  // Gray
     };
-    
+
     egui::RichText::new(header_text).color(color)
 }
 
@@ -444,7 +527,7 @@ fn truncate_param(value: &str, max_len: usize) -> String {
     }
     // For addresses/hashes, show prefix...suffix
     if value.starts_with("0x") && value.len() > 10 {
-        format!("{}...{}", &value[..6], &value[value.len()-4..])
+        format!("{}...{}", &value[..6], &value[value.len() - 4..])
     } else {
         format!("{}...", &value[..max_len])
     }
@@ -453,7 +536,7 @@ fn truncate_param(value: &str, max_len: usize) -> String {
 /// Truncate address for display
 fn truncate_address(addr: &str) -> String {
     if addr.len() > 12 {
-        format!("{}...{}", &addr[..6], &addr[addr.len()-4..])
+        format!("{}...{}", &addr[..6], &addr[addr.len() - 4..])
     } else {
         addr.to_string()
     }
@@ -495,7 +578,8 @@ fn render_multisend_tx(
                 .spacing([10.0, 4.0])
                 .show(ui, |ui| {
                     ui.label("To:");
-                    let chain_id = alloy::primitives::ChainId::of(&safe_ctx.chain_name).unwrap_or(1);
+                    let chain_id =
+                        alloy::primitives::ChainId::of(&safe_ctx.chain_name).unwrap_or(1);
                     let name = safe_ctx.address_book.get_name(&tx.to, chain_id);
                     ui::address_link(ui, &safe_ctx.chain_name, &tx.to, name);
                     ui.end_row();
@@ -505,7 +589,11 @@ fn render_multisend_tx(
                     ui.end_row();
 
                     ui.label("Operation:");
-                    ui.label(if tx.operation == 0 { "Call" } else { "DelegateCall" });
+                    ui.label(if tx.operation == 0 {
+                        "Call"
+                    } else {
+                        "DelegateCall"
+                    });
                     ui.end_row();
                 });
 
@@ -606,8 +694,10 @@ fn render_comparison_message(ui: &mut egui::Ui, result: &ComparisonResult) {
         }
         ComparisonResult::OnlyLocal => {
             ui.label(
-                egui::RichText::new("⚠️ Decoded independently (API didn't provide decode to verify against)")
-                    .color(egui::Color32::from_rgb(220, 180, 50)),
+                egui::RichText::new(
+                    "⚠️ Decoded independently (API didn't provide decode to verify against)",
+                )
+                .color(egui::Color32::from_rgb(220, 180, 50)),
             );
         }
         ComparisonResult::Pending => {
@@ -647,7 +737,7 @@ pub fn render_offline_decode_section(
     safe_ctx: &crate::state::SafeContext,
 ) {
     ui.add_space(10.0);
-    
+
     match result {
         OfflineDecodeResult::Empty => {
             ui.horizontal(|ui| {
@@ -685,9 +775,9 @@ fn render_offline_single_section(
         ui.label(egui::RichText::new("📦 Calldata Decoding").strong());
         render_offline_status_badge(ui, status);
     });
-    
+
     ui.add_space(8.0);
-    
+
     // Show decode result
     match status {
         OfflineDecodeStatus::Decoded => {
@@ -709,12 +799,26 @@ fn render_offline_single_section(
 }
 
 /// Render offline local decode (method + params)
-fn render_offline_decode(ui: &mut egui::Ui, local: &LocalDecode, safe_ctx: &crate::state::SafeContext, id_prefix: &str) {
-    // Method name
-    ui.label(egui::RichText::new(&local.method).monospace().strong());
-    
+fn render_offline_decode(
+    ui: &mut egui::Ui,
+    local: &LocalDecode,
+    safe_ctx: &crate::state::SafeContext,
+    id_prefix: &str,
+) {
+    // Method name with verification status
+    ui.horizontal(|ui| {
+        ui.label(egui::RichText::new(&local.method).monospace().strong());
+        if !local.verified {
+            ui.label(
+                egui::RichText::new("[unverified]")
+                    .color(egui::Color32::from_rgb(220, 80, 80))
+                    .small(),
+            );
+        }
+    });
+
     ui.add_space(4.0);
-    
+
     // Parameters
     if local.params.is_empty() {
         ui.label(egui::RichText::new("(no parameters)").weak());
@@ -732,7 +836,6 @@ fn render_offline_decode(ui: &mut egui::Ui, local: &LocalDecode, safe_ctx: &crat
                 }
             });
     }
-    
 }
 
 /// Render offline status badge
@@ -755,15 +858,14 @@ fn render_offline_multisend_section(
 ) {
     // Header with count and expand/collapse buttons
     ui.horizontal(|ui| {
-        ui.label(egui::RichText::new(format!(
-            "📦 MultiSend ({} transactions)",
-            txs.len()
-        )).strong());
-        
+        ui.label(
+            egui::RichText::new(format!("📦 MultiSend ({} transactions)", txs.len())).strong(),
+        );
+
         // Summary badges
         let decoded = txs.iter().filter(|t| t.status.is_decoded()).count();
         let errors = txs.iter().filter(|t| t.status.is_error()).count();
-        
+
         if decoded > 0 {
             ui.label(
                 egui::RichText::new(format!("✅ {}", decoded))
@@ -776,16 +878,16 @@ fn render_offline_multisend_section(
                     .color(egui::Color32::from_rgb(220, 80, 80)),
             );
         }
-        
+
         ui.add_space(20.0);
-        
+
         // Expand All button
         if ui.small_button("⬇ Expand All").clicked() {
             for tx in txs.iter_mut() {
                 tx.is_expanded = true;
             }
         }
-        
+
         // Collapse All button
         if ui.small_button("⬆ Collapse All").clicked() {
             for tx in txs.iter_mut() {
@@ -793,9 +895,9 @@ fn render_offline_multisend_section(
             }
         }
     });
-    
+
     ui.add_space(8.0);
-    
+
     // Render each transaction
     for tx in txs.iter_mut() {
         render_offline_multisend_tx(ui, tx, safe_ctx);
@@ -810,23 +912,28 @@ fn build_offline_tx_header(tx: &OfflineMultiSendTx) -> egui::RichText {
             ("✗", egui::Color32::from_rgb(220, 80, 80))
         }
     };
-    
+
     // Method part
-    let method_part = tx.local_decode.as_ref()
+    let method_part = tx
+        .local_decode
+        .as_ref()
         .map(|d| {
-            let params_str = d.params
+            let params_str = d
+                .params
                 .iter()
                 .take(3)
                 .map(|p| truncate_param(&p.value, 12))
                 .collect::<Vec<_>>()
                 .join(", ");
-            
+
+            let unverified_tag = if !d.verified { " [unverified]" } else { "" };
+
             if d.params.len() > 3 {
-                format!("{}({}, ...)", d.method, params_str)
+                format!("{}({}, ...){}", d.method, params_str, unverified_tag)
             } else if params_str.is_empty() {
-                d.method.clone()
+                format!("{}{}", d.method, unverified_tag)
             } else {
-                format!("{}({})", d.method, params_str)
+                format!("{}({}){}", d.method, params_str, unverified_tag)
             }
         })
         .unwrap_or_else(|| {
@@ -838,15 +945,21 @@ fn build_offline_tx_header(tx: &OfflineMultiSendTx) -> egui::RichText {
                 truncate_address(&tx.to)
             }
         });
-    
+
     let value_part = if tx.value == "0" {
         "0 ETH".to_string()
     } else {
         format_wei(&tx.value)
     };
-    
-    let header_text = format!("#{} {} ({}) {}", tx.index + 1, method_part, value_part, status_emoji);
-    
+
+    let header_text = format!(
+        "#{} {} ({}) {}",
+        tx.index + 1,
+        method_part,
+        value_part,
+        status_emoji
+    );
+
     egui::RichText::new(header_text).color(color)
 }
 
@@ -857,35 +970,40 @@ fn render_offline_multisend_tx(
     safe_ctx: &crate::state::SafeContext,
 ) {
     let header = build_offline_tx_header(tx);
-    
+
     let response = egui::CollapsingHeader::new(header)
         .id_salt(format!("offline_multisend_tx_{}", tx.index))
         .open(Some(tx.is_expanded))
         .show(ui, |ui| {
             ui.add_space(4.0);
-            
+
             // Transaction details
             egui::Grid::new(format!("offline_multisend_details_{}", tx.index))
                 .num_columns(2)
                 .spacing([10.0, 4.0])
                 .show(ui, |ui| {
                     ui.label("To:");
-                    let chain_id = alloy::primitives::ChainId::of(&safe_ctx.chain_name).unwrap_or(1);
+                    let chain_id =
+                        alloy::primitives::ChainId::of(&safe_ctx.chain_name).unwrap_or(1);
                     let name = safe_ctx.address_book.get_name(&tx.to, chain_id);
                     ui::address_link(ui, &safe_ctx.chain_name, &tx.to, name);
                     ui.end_row();
-                    
+
                     ui.label("Value:");
                     ui.label(format!("{} wei", tx.value));
                     ui.end_row();
-                    
+
                     ui.label("Operation:");
-                    ui.label(if tx.operation == 0 { "Call" } else { "DelegateCall" });
+                    ui.label(if tx.operation == 0 {
+                        "Call"
+                    } else {
+                        "DelegateCall"
+                    });
                     ui.end_row();
                 });
-            
+
             ui.add_space(8.0);
-            
+
             // Decode result
             match &tx.status {
                 OfflineDecodeStatus::Decoded => {
@@ -915,7 +1033,7 @@ fn render_offline_multisend_tx(
                 }
             }
         });
-    
+
     if response.header_response.clicked() {
         tx.is_expanded = !tx.is_expanded;
     }
@@ -935,7 +1053,10 @@ mod tests {
         assert_eq!(validate_address(lowercase), AddressValidation::Valid);
 
         // Valid uppercase address
-        let uppercase = format!("0x{}", "52906951E511101BA707440006734B19E59F6C87".to_uppercase());
+        let uppercase = format!(
+            "0x{}",
+            "52906951E511101BA707440006734B19E59F6C87".to_uppercase()
+        );
         assert_eq!(validate_address(&uppercase), AddressValidation::Valid);
 
         // Checksum mismatch
@@ -943,12 +1064,18 @@ mod tests {
         let mut mismatch_chars: Vec<char> = mismatch.chars().collect();
         mismatch_chars[2] = 'A'; // Change one char to uppercase incorrectly
         let mismatch_str: String = mismatch_chars.into_iter().collect();
-        assert_eq!(validate_address(&mismatch_str), AddressValidation::ChecksumMismatch);
+        assert_eq!(
+            validate_address(&mismatch_str),
+            AddressValidation::ChecksumMismatch
+        );
 
         // Invalid address (too short)
         assert_eq!(validate_address("0x123"), AddressValidation::Invalid);
 
         // Invalid address (non-hex)
-        assert_eq!(validate_address("0xGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGG"), AddressValidation::Invalid);
+        assert_eq!(
+            validate_address("0xGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGG"),
+            AddressValidation::Invalid
+        );
     }
 }

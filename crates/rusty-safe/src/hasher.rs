@@ -1,10 +1,13 @@
 //! Hash computation - uses safe_hash library
 
-use crate::api::{SafeTransaction, TxInput, tx_signing_hashes, check_suspicious_content, get_safe_transaction_async, validate_safe_tx_hash};
+use crate::api::{
+    check_suspicious_content, get_safe_transaction_async, tx_signing_hashes, validate_safe_tx_hash,
+    SafeTransaction, TxInput,
+};
 use crate::state::ComputedHashes;
-use alloy::primitives::{Address, FixedBytes, ChainId, U256, hex};
+use alloy::primitives::{hex, Address, ChainId, FixedBytes, U256};
 use eyre::{Result, WrapErr};
-use safe_hash::{SafeHashes, SafeWarnings, Mismatch};
+use safe_hash::{Mismatch, SafeHashes, SafeWarnings};
 use safe_utils::{get_safe_api, Of, SafeWalletVersion};
 use serde::Deserialize;
 
@@ -28,38 +31,36 @@ where
 {
     use serde::de::Error;
     let s: String = String::deserialize(deserializer)?;
-    s.parse().map_err(|_| D::Error::custom(format!("Failed to parse '{}' as u64", s)))
+    s.parse()
+        .map_err(|_| D::Error::custom(format!("Failed to parse '{}' as u64", s)))
 }
 
 /// Fetch Safe info from API (async - works on WASM)
-pub async fn fetch_safe_info(
-    chain_name: &str,
-    safe_address: &str,
-) -> Result<SafeInfo> {
+pub async fn fetch_safe_info(chain_name: &str, safe_address: &str) -> Result<SafeInfo> {
     let chain_id = ChainId::of(chain_name)
         .map_err(|e| eyre::eyre!("Invalid chain '{}': {}", chain_name, e))?;
-    
-    let addr: Address = safe_address.trim().parse()
+
+    let addr: Address = safe_address
+        .trim()
+        .parse()
         .wrap_err("Invalid Safe address")?;
-    
-    let api_url = get_safe_api(chain_id)
-        .map_err(|e| eyre::eyre!("Failed to get API URL: {}", e))?;
-    
+
+    let api_url =
+        get_safe_api(chain_id).map_err(|e| eyre::eyre!("Failed to get API URL: {}", e))?;
+
     let url = format!("{}/api/v1/safes/{}/", api_url, addr);
-    
-    let response = reqwest::get(&url)
-        .await
-        .wrap_err("Network error")?;
-    
+
+    let response = reqwest::get(&url).await.wrap_err("Network error")?;
+
     if !response.status().is_success() {
         eyre::bail!("API error: {}", response.status());
     }
-    
+
     let safe_info: SafeInfo = response
         .json()
         .await
         .wrap_err("Failed to parse Safe info")?;
-    
+
     Ok(safe_info)
 }
 
@@ -71,10 +72,12 @@ pub async fn fetch_transaction(
 ) -> Result<SafeTransaction> {
     let chain_id = ChainId::of(chain_name)
         .map_err(|e| eyre::eyre!("Invalid chain '{}': {}", chain_name, e))?;
-    
-    let addr: Address = safe_address.trim().parse()
+
+    let addr: Address = safe_address
+        .trim()
+        .parse()
         .wrap_err("Invalid Safe address")?;
-    
+
     get_safe_transaction_async(chain_id, addr, nonce)
         .await
         .map_err(|e| eyre::eyre!(e))
@@ -107,10 +110,7 @@ pub fn compute_hashes(
         .parse()
         .wrap_err("Invalid Safe address")?;
 
-    let to_addr: Address = to
-        .trim()
-        .parse()
-        .wrap_err("Invalid 'to' address")?;
+    let to_addr: Address = to.trim().parse().wrap_err("Invalid 'to' address")?;
 
     let value_u256 = parse_u256(value).wrap_err("Invalid value")?;
     let safe_tx_gas_u256 = parse_u256(safe_tx_gas).wrap_err("Invalid safeTxGas")?;
@@ -159,13 +159,8 @@ pub fn compute_hashes(
     );
 
     // Use safe_hash::tx_signing_hashes
-    let hashes: SafeHashes = tx_signing_hashes(
-        &tx_input,
-        safe_addr,
-        nonce_u64,
-        chain_id,
-        safe_version,
-    );
+    let hashes: SafeHashes =
+        tx_signing_hashes(&tx_input, safe_addr, nonce_u64, chain_id, safe_version);
 
     Ok(ComputedHashes {
         domain_hash: format!("0x{}", hex::encode(hashes.domain_hash)),
@@ -200,10 +195,15 @@ pub fn compute_hashes_from_api_tx(
     )?;
 
     // Use validate_safe_tx_hash from safe-hash
-    let computed_hash_bytes = hex::decode(hashes.safe_tx_hash.strip_prefix("0x").unwrap_or(&hashes.safe_tx_hash))
-        .wrap_err("Failed to decode computed hash")?;
+    let computed_hash_bytes = hex::decode(
+        hashes
+            .safe_tx_hash
+            .strip_prefix("0x")
+            .unwrap_or(&hashes.safe_tx_hash),
+    )
+    .wrap_err("Failed to decode computed hash")?;
     let computed_fixed: FixedBytes<32> = FixedBytes::from_slice(&computed_hash_bytes);
-    
+
     let mismatch = match validate_safe_tx_hash(tx, &computed_fixed) {
         Ok(()) => None,
         Err(m) => Some(m),
@@ -243,20 +243,28 @@ pub fn get_warnings_for_tx(
     gas_token: &str,
     refund_receiver: &str,
 ) -> Result<SafeWarnings> {
-    let to_addr: Address = to.trim().parse()
+    let to_addr: Address = to
+        .trim()
+        .parse()
         .wrap_err_with(|| format!("Invalid 'to' address: '{}'", to.trim()))?;
-    let value_u256 = parse_u256(value)
-        .wrap_err_with(|| format!("Invalid value: '{}'", value.trim()))?;
+    let value_u256 =
+        parse_u256(value).wrap_err_with(|| format!("Invalid value: '{}'", value.trim()))?;
     let safe_tx_gas_u256 = parse_u256(safe_tx_gas)
         .wrap_err_with(|| format!("Invalid safeTxGas: '{}'", safe_tx_gas.trim()))?;
-    let base_gas_u256 = parse_u256(base_gas)
-        .wrap_err_with(|| format!("Invalid baseGas: '{}'", base_gas.trim()))?;
+    let base_gas_u256 =
+        parse_u256(base_gas).wrap_err_with(|| format!("Invalid baseGas: '{}'", base_gas.trim()))?;
     let gas_price_u256 = parse_u256(gas_price)
         .wrap_err_with(|| format!("Invalid gasPrice: '{}'", gas_price.trim()))?;
-    let gas_token_addr: Address = gas_token.trim().parse()
+    let gas_token_addr: Address = gas_token
+        .trim()
+        .parse()
         .wrap_err_with(|| format!("Invalid gasToken address: '{}'", gas_token.trim()))?;
-    let refund_receiver_addr: Address = refund_receiver.trim().parse()
-        .wrap_err_with(|| format!("Invalid refundReceiver address: '{}'", refund_receiver.trim()))?;
+    let refund_receiver_addr: Address = refund_receiver.trim().parse().wrap_err_with(|| {
+        format!(
+            "Invalid refundReceiver address: '{}'",
+            refund_receiver.trim()
+        )
+    })?;
 
     let data_normalized = data.strip_prefix("0x").unwrap_or(data);
     let data_with_prefix = if data_normalized.is_empty() {
@@ -283,7 +291,10 @@ pub fn get_warnings_for_tx(
 
 /// Generate warnings from a SafeTransaction (from API)
 /// Returns Err if API returned invalid values (indicates API data corruption)
-pub fn get_warnings_from_api_tx(tx: &SafeTransaction, chain_id: Option<ChainId>) -> Result<SafeWarnings> {
+pub fn get_warnings_from_api_tx(
+    tx: &SafeTransaction,
+    chain_id: Option<ChainId>,
+) -> Result<SafeWarnings> {
     let value = U256::from_str_radix(&tx.value, 10)
         .wrap_err_with(|| format!("API returned invalid value: '{}'", tx.value))?;
     let gas_price = U256::from_str_radix(&tx.gas_price, 10)
@@ -306,7 +317,12 @@ pub fn get_warnings_from_api_tx(tx: &SafeTransaction, chain_id: Option<ChainId>)
 
     // Check for dangerous methods from decoded data
     if let Some(decoded) = &tx.data_decoded {
-        let dangerous_methods = ["addOwnerWithThreshold", "removeOwner", "swapOwner", "changeThreshold"];
+        let dangerous_methods = [
+            "addOwnerWithThreshold",
+            "removeOwner",
+            "swapOwner",
+            "changeThreshold",
+        ];
         if dangerous_methods.iter().any(|m| *m == decoded.method) {
             warnings.dangerous_methods = true;
         }

@@ -72,8 +72,7 @@ pub fn render_section(ui: &mut egui::Ui, state: &mut ExpectedState) {
         .show(ui, |ui| {
             ui.add_space(5.0);
             ui.label(
-                egui::RichText::new("Enter expected values to verify against API response:")
-                    .weak(),
+                egui::RichText::new("Enter expected values to verify against API response:").weak(),
             );
             ui.add_space(8.0);
 
@@ -208,22 +207,20 @@ pub fn validate_against_api(api_tx: &SafeTransaction, state: &ExpectedState) -> 
     // Check value
     if !state.value.is_empty() {
         match parse_u256(&state.value) {
-            Ok(expected_value) => {
-                match U256::from_str_radix(&api_tx.value, 10) {
-                    Ok(api_value) => {
-                        if expected_value != api_value {
-                            mismatches.push(Mismatch {
-                                field: "value".to_string(),
-                                api_value: api_value.to_string(),
-                                user_value: expected_value.to_string(),
-                            });
-                        }
-                    }
-                    Err(_) => {
-                        parse_errors.push(format!("API returned invalid value: '{}'", api_tx.value));
+            Ok(expected_value) => match U256::from_str_radix(&api_tx.value, 10) {
+                Ok(api_value) => {
+                    if expected_value != api_value {
+                        mismatches.push(Mismatch {
+                            field: "value".to_string(),
+                            api_value: api_value.to_string(),
+                            user_value: expected_value.to_string(),
+                        });
                     }
                 }
-            }
+                Err(_) => {
+                    parse_errors.push(format!("API returned invalid value: '{}'", api_tx.value));
+                }
+            },
             Err(_) => {
                 parse_errors.push(format!("Invalid expected value: '{}'", state.value.trim()));
             }
@@ -296,5 +293,3 @@ fn op_to_string(op: u8) -> String {
         _ => format!("Unknown({})", op),
     }
 }
-
-

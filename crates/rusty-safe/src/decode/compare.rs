@@ -5,10 +5,7 @@ use alloy::primitives::U256;
 use super::types::*;
 
 /// Compare API decode against Local decode
-pub fn compare_decodes(
-    api: Option<&ApiDecode>,
-    local: Option<&LocalDecode>,
-) -> ComparisonResult {
+pub fn compare_decodes(api: Option<&ApiDecode>, local: Option<&LocalDecode>) -> ComparisonResult {
     match (api, local) {
         (None, None) => ComparisonResult::Failed("No decode available".into()),
         (Some(_), None) => ComparisonResult::OnlyApi,
@@ -170,20 +167,15 @@ mod tests {
         assert_eq!(normalize_int(large_hex), large_dec);
 
         // Test max uint256
-        let max_u256 = "115792089237316195423570985008687907853269984665640564039457584007913129639935";
+        let max_u256 =
+            "115792089237316195423570985008687907853269984665640564039457584007913129639935";
         assert_eq!(normalize_int(max_u256), max_u256);
     }
 
     #[test]
     fn test_values_match() {
-        assert!(values_match(
-            "0xAbCd",
-            "0xabcd",
-            "address"
-        ));
+        assert!(values_match("0xAbCd", "0xabcd", "address"));
         assert!(values_match("1000", "0x3e8", "uint256"));
         assert!(!values_match("1000", "2000", "uint256"));
     }
 }
-
-

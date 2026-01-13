@@ -1,5 +1,5 @@
 //! Rusty-Safe: A Rust-native Safe{Wallet} transaction verification GUI
-//! 
+//!
 //! Uses safe-utils from safe-hash-rs for all hash computation and chain data.
 
 mod api;
