@@ -6,3 +6,5 @@ dist/
 .secrets
 
 /docs
+# Local development files
+local/

@@ -42,7 +42,9 @@ pub struct MultiSendDecode {
 pub enum VerificationState {
     #[default]
     Pending,
-    InProgress { total: usize },
+    InProgress {
+        total: usize,
+    },
     Complete,
 }
 
@@ -85,9 +87,9 @@ impl MultiSendSummary {
                     ComparisonResult::MethodMismatch { .. }
                     | ComparisonResult::ParamMismatch(_) => self.mismatched += 1,
                     // OnlyApi/OnlyLocal = no independent verification possible
-                    ComparisonResult::OnlyApi 
-                    | ComparisonResult::OnlyLocal 
-                    | ComparisonResult::Pending 
+                    ComparisonResult::OnlyApi
+                    | ComparisonResult::OnlyLocal
+                    | ComparisonResult::Pending
                     | ComparisonResult::Failed(_) => self.pending += 1,
                 },
                 None => self.pending += 1,
@@ -121,6 +123,8 @@ pub struct LocalDecode {
     pub signature: String,
     pub method: String,
     pub params: Vec<LocalParam>,
+    /// Whether this signature comes from a verified contract on Sourcify
+    pub verified: bool,
 }
 
 /// Parameter from local decode (no names, just types)
@@ -236,7 +240,10 @@ impl OfflineDecodeStatus {
     }
 
     pub fn is_error(&self) -> bool {
-        matches!(self, OfflineDecodeStatus::Unknown(_) | OfflineDecodeStatus::Failed(_))
+        matches!(
+            self,
+            OfflineDecodeStatus::Unknown(_) | OfflineDecodeStatus::Failed(_)
+        )
     }
 }
 
@@ -277,5 +284,3 @@ impl Default for OfflineDecodeResult {
         Self::Empty
     }
 }
-
-

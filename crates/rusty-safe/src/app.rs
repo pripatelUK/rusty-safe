@@ -4,11 +4,16 @@ use alloy::hex;
 use alloy::primitives::ChainId;
 use eframe::egui;
 use safe_hash::SafeWarnings;
-use safe_utils::{get_all_supported_chain_names, DomainHasher, Eip712Hasher, MessageHasher, Of, SafeHasher, SafeWalletVersion};
+use safe_utils::{
+    get_all_supported_chain_names, DomainHasher, Eip712Hasher, MessageHasher, Of, SafeHasher,
+    SafeWalletVersion,
+};
 use std::sync::{Arc, Mutex};
 
 use crate::api::SafeTransaction;
-use crate::decode::{self, SignatureLookup, TransactionKind, SingleDecode, ComparisonResult, get_selector};
+use crate::decode::{
+    self, get_selector, ComparisonResult, SignatureLookup, SingleDecode, TransactionKind,
+};
 
 /// Log to console (works in both WASM and native)
 macro_rules! debug_log {
@@ -23,11 +28,30 @@ macro_rules! debug_log {
         }
     };
 }
+
+/// Acquire mutex lock, recovering from poisoned state if necessary.
+/// This prevents panics when a thread panicked while holding the lock.
+macro_rules! lock_or_recover {
+    ($mutex:expr) => {
+        match $mutex.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => {
+                debug_log!("Warning: Mutex was poisoned, recovering");
+                poisoned.into_inner()
+            }
+        }
+    };
+}
 use crate::expected;
-use crate::hasher::{get_warnings_for_tx, get_warnings_from_api_tx, compute_hashes_from_api_tx, fetch_transaction};
-use crate::state::{Eip712State, MsgVerifyState, TxVerifyState, OfflineState, SafeContext, SidebarState, SAFE_VERSIONS, AddressValidation, get_chain_name};
-use crate::ui;
+use crate::hasher::{
+    compute_hashes_from_api_tx, fetch_transaction, get_warnings_for_tx, get_warnings_from_api_tx,
+};
 use crate::sidebar;
+use crate::state::{
+    get_chain_name, AddressValidation, Eip712State, MsgVerifyState, OfflineState, SafeContext,
+    SidebarState, TxVerifyState, SAFE_VERSIONS,
+};
+use crate::ui;
 
 /// Result from async fetch operation
 #[derive(Clone)]
@@ -162,7 +186,7 @@ impl eframe::App for App {
         self.safe_context.save(storage);
         self.signature_lookup.save(storage);
     }
-    
+
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         ctx.set_visuals(egui::Visuals::dark());
 
@@ -171,10 +195,10 @@ impl eframe::App for App {
 
         // Check for async decode results
         self.check_decode_result();
-        
+
         // Check for async Safe info results
         self.check_safe_info_result();
-        
+
         // Check for async offline decode results
         self.check_offline_decode_result();
 
@@ -191,11 +215,15 @@ impl eframe::App for App {
                 ui.add_space(30.0);
                 ui.separator();
                 ui.add_space(10.0);
-                ui.selectable_value(&mut self.active_tab, Tab::VerifySafeApi, "🔍 Verify Safe API");
+                ui.selectable_value(
+                    &mut self.active_tab,
+                    Tab::VerifySafeApi,
+                    "🔍 Verify Safe API",
+                );
                 ui.selectable_value(&mut self.active_tab, Tab::Message, "💬 Message");
                 ui.selectable_value(&mut self.active_tab, Tab::Eip712, "🔢 EIP-712");
                 ui.selectable_value(&mut self.active_tab, Tab::Offline, "📴 Offline");
-                
+
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if ui.button("📖 Address Book").clicked() {
                         self.address_book_open = !self.address_book_open;
@@ -217,7 +245,7 @@ impl eframe::App for App {
             self.safe_info_loading,
             &self.chain_names,
         );
-        
+
         // Handle sidebar actions
         match sidebar_action {
             sidebar::SidebarAction::FetchDetails => {
@@ -255,30 +283,35 @@ impl App {
         // Nonce input
         ui.horizontal(|ui| {
             ui.label("Nonce:");
-            
+
             // Decrement button
-            if ui.small_button("◀").on_hover_text("Previous nonce").clicked() {
+            if ui
+                .small_button("◀")
+                .on_hover_text("Previous nonce")
+                .clicked()
+            {
                 if let Ok(n) = self.tx_state.nonce.parse::<u64>() {
                     if n > 0 {
                         self.tx_state.nonce = (n - 1).to_string();
                     }
                 }
             }
-            
+
             ui::number_input(ui, &mut self.tx_state.nonce, "e.g., 42");
-            
+
             // Increment button
             if ui.small_button("▶").on_hover_text("Next nonce").clicked() {
                 if let Ok(n) = self.tx_state.nonce.parse::<u64>() {
                     self.tx_state.nonce = (n + 1).to_string();
                 }
             }
-            
+
             // Show latest nonce info
             if let Some(ref info) = self.safe_info {
-                if ui.small_button(format!("⟳ Latest: {}", info.nonce))
+                if ui
+                    .small_button(format!("⟳ Latest: {}", info.nonce))
                     .on_hover_text("Click to use latest nonce (next available)")
-                    .clicked() 
+                    .clicked()
                 {
                     // Set to latest - 1 since we want the most recent queued tx
                     if info.nonce > 0 {
@@ -330,7 +363,8 @@ impl App {
                 .show(ui, |ui| {
                     ui.label("To:");
                     let to_str = format!("{}", tx.to);
-                    let chain_id = alloy::primitives::ChainId::of(&self.safe_context.chain_name).unwrap_or(1);
+                    let chain_id =
+                        alloy::primitives::ChainId::of(&self.safe_context.chain_name).unwrap_or(1);
                     let name = self.safe_context.address_book.get_name(&to_str, chain_id);
                     ui::address_link(ui, &self.safe_context.chain_name, &to_str, name);
                     if ui.small_button("📋").on_hover_text("Copy").clicked() {
@@ -353,35 +387,44 @@ impl App {
                     ui.end_row();
 
                     ui.label("Confirmations:");
-                    ui.label(format!("{} / {}", tx.confirmations.len(), tx.confirmations_required));
+                    ui.label(format!(
+                        "{} / {}",
+                        tx.confirmations.len(),
+                        tx.confirmations_required
+                    ));
                     ui.label(""); // Empty for alignment
                     ui.end_row();
                 });
-            
+
             // Data field - full width outside grid
             let data = &tx.data;
             ui.add_space(8.0);
             ui.label(egui::RichText::new("Data:").strong());
-            
+
             if data.is_empty() || data == "0x" {
                 ui.label(egui::RichText::new("0x (empty)").monospace());
             } else {
                 // 3 lines = 64 chars * 3 = 192 chars
                 let preview_len = 192.min(data.len());
                 let needs_toggle = data.len() > preview_len;
-                
+
                 if self.tx_state.show_full_data || !needs_toggle {
                     // Show full data with word wrap
-                    let wrapped = data.chars()
+                    let wrapped = data
+                        .chars()
                         .collect::<Vec<_>>()
                         .chunks(64)
                         .map(|c| c.iter().collect::<String>())
                         .collect::<Vec<_>>()
                         .join("\n");
                     ui.label(egui::RichText::new(&wrapped).monospace().size(11.0));
-                    
+
                     ui.horizontal(|ui| {
-                        if ui.small_button("📋 Copy").on_hover_text("Copy data").clicked() {
+                        if ui
+                            .small_button("📋 Copy")
+                            .on_hover_text("Copy data")
+                            .clicked()
+                        {
                             ui::copy_to_clipboard(data);
                         }
                         if needs_toggle && ui.small_button("▲ Show less").clicked() {
@@ -391,16 +434,25 @@ impl App {
                 } else {
                     // Show 3-line preview
                     let preview = &data[..preview_len];
-                    let wrapped = preview.chars()
+                    let wrapped = preview
+                        .chars()
                         .collect::<Vec<_>>()
                         .chunks(64)
                         .map(|c| c.iter().collect::<String>())
                         .collect::<Vec<_>>()
                         .join("\n");
-                    ui.label(egui::RichText::new(format!("{}...", wrapped)).monospace().size(11.0));
-                    
+                    ui.label(
+                        egui::RichText::new(format!("{}...", wrapped))
+                            .monospace()
+                            .size(11.0),
+                    );
+
                     ui.horizontal(|ui| {
-                        if ui.small_button("📋 Copy").on_hover_text("Copy data").clicked() {
+                        if ui
+                            .small_button("📋 Copy")
+                            .on_hover_text("Copy data")
+                            .clicked()
+                        {
                             ui::copy_to_clipboard(data);
                         }
                         if ui.small_button("▼ Show more").clicked() {
@@ -421,27 +473,51 @@ impl App {
         // Expected values validation result (before other warnings)
         expected::render_result(ui, &self.tx_state.expected);
 
-        if self.tx_state.warnings.has_warnings() {
+        let warnings_error = self.tx_state.warnings_error.as_deref();
+        if self.tx_state.warnings.has_warnings() || warnings_error.is_some() {
             ui.add_space(15.0);
             ui::section_header(ui, "⚠️ Warnings");
 
+            if let Some(error) = warnings_error {
+                ui::error_message(ui, &format!("Warning computation failed: {}", error));
+            }
+
             let w = &self.tx_state.warnings;
             if w.delegatecall {
-                ui::warning_message(ui, "⚠️ DELEGATECALL - can modify Safe state!", egui::Color32::from_rgb(220, 50, 50));
+                ui::warning_message(
+                    ui,
+                    "⚠️ DELEGATECALL - can modify Safe state!",
+                    egui::Color32::from_rgb(220, 50, 50),
+                );
             }
             if w.non_zero_gas_token {
-                ui::warning_message(ui, "Non-zero gas token", egui::Color32::from_rgb(220, 180, 50));
+                ui::warning_message(
+                    ui,
+                    "Non-zero gas token",
+                    egui::Color32::from_rgb(220, 180, 50),
+                );
             }
             if w.non_zero_refund_receiver {
-                ui::warning_message(ui, "Non-zero refund receiver", egui::Color32::from_rgb(220, 180, 50));
+                ui::warning_message(
+                    ui,
+                    "Non-zero refund receiver",
+                    egui::Color32::from_rgb(220, 180, 50),
+                );
             }
             if w.dangerous_methods {
-                ui::warning_message(ui, "⚠️ Dangerous method (owner/threshold change)", egui::Color32::from_rgb(220, 120, 50));
+                ui::warning_message(
+                    ui,
+                    "⚠️ Dangerous method (owner/threshold change)",
+                    egui::Color32::from_rgb(220, 120, 50),
+                );
             }
             for mismatch in &w.argument_mismatches {
                 ui::warning_message(
                     ui,
-                    &format!("Mismatch in {}: API={}, computed={}", mismatch.field, mismatch.api_value, mismatch.user_value),
+                    &format!(
+                        "Mismatch in {}: API={}, computed={}",
+                        mismatch.field, mismatch.api_value, mismatch.user_value
+                    ),
                     egui::Color32::from_rgb(220, 50, 50),
                 );
             }
@@ -456,26 +532,38 @@ impl App {
                 .spacing([10.0, 8.0])
                 .show(ui, |ui| {
                     ui.label(egui::RichText::new("Domain Hash:").strong());
-                    ui.label(egui::RichText::new(&hashes.domain_hash).monospace().size(12.0));
+                    ui.label(
+                        egui::RichText::new(&hashes.domain_hash)
+                            .monospace()
+                            .size(12.0),
+                    );
                     if ui.small_button("📋").on_hover_text("Copy").clicked() {
                         ui::copy_to_clipboard(&hashes.domain_hash);
                     }
                     ui.end_row();
 
                     ui.label(egui::RichText::new("Message Hash:").strong());
-                    ui.label(egui::RichText::new(&hashes.message_hash).monospace().size(12.0));
+                    ui.label(
+                        egui::RichText::new(&hashes.message_hash)
+                            .monospace()
+                            .size(12.0),
+                    );
                     if ui.small_button("📋").on_hover_text("Copy").clicked() {
                         ui::copy_to_clipboard(&hashes.message_hash);
                     }
                     ui.end_row();
 
                     ui.label(egui::RichText::new("Safe Tx Hash:").strong());
-                    ui.label(egui::RichText::new(&hashes.safe_tx_hash).monospace().size(12.0));
+                    ui.label(
+                        egui::RichText::new(&hashes.safe_tx_hash)
+                            .monospace()
+                            .size(12.0),
+                    );
                     if ui.small_button("📋").on_hover_text("Copy").clicked() {
                         ui::copy_to_clipboard(&hashes.safe_tx_hash);
                     }
                     ui.end_row();
-                    
+
                     // Ledger binary format
                     let binary_literal = ui::hash_to_binary_literal(&hashes.safe_tx_hash);
                     ui.label(egui::RichText::new("Ledger Binary:").strong());
@@ -540,14 +628,22 @@ impl App {
                     ui.end_row();
 
                     ui.label(egui::RichText::new("Message Hash:").strong());
-                    ui.label(egui::RichText::new(&hashes.message_hash).monospace().size(12.0));
+                    ui.label(
+                        egui::RichText::new(&hashes.message_hash)
+                            .monospace()
+                            .size(12.0),
+                    );
                     if ui.small_button("📋").clicked() {
                         ui::copy_to_clipboard(&hashes.message_hash);
                     }
                     ui.end_row();
 
                     ui.label(egui::RichText::new("Safe Msg Hash:").strong());
-                    ui.label(egui::RichText::new(&hashes.safe_msg_hash).monospace().size(12.0));
+                    ui.label(
+                        egui::RichText::new(&hashes.safe_msg_hash)
+                            .monospace()
+                            .size(12.0),
+                    );
                     if ui.small_button("📋").clicked() {
                         ui::copy_to_clipboard(&hashes.safe_msg_hash);
                     }
@@ -566,7 +662,10 @@ impl App {
         ui.label("Hash and verify EIP-712 typed data structures.");
         ui.add_space(15.0);
 
-        ui.checkbox(&mut self.eip712_state.standalone, "Standalone mode (raw EIP-712 only, no Safe wrapping)");
+        ui.checkbox(
+            &mut self.eip712_state.standalone,
+            "Standalone mode (raw EIP-712 only, no Safe wrapping)",
+        );
         ui.add_space(10.0);
 
         ui.label("EIP-712 JSON:");
@@ -597,21 +696,33 @@ impl App {
                 .spacing([10.0, 8.0])
                 .show(ui, |ui| {
                     ui.label(egui::RichText::new("EIP-712 Hash:").strong());
-                    ui.label(egui::RichText::new(&hashes.eip712_hash).monospace().size(12.0));
+                    ui.label(
+                        egui::RichText::new(&hashes.eip712_hash)
+                            .monospace()
+                            .size(12.0),
+                    );
                     if ui.small_button("📋").clicked() {
                         ui::copy_to_clipboard(&hashes.eip712_hash);
                     }
                     ui.end_row();
 
                     ui.label(egui::RichText::new("Domain Hash:").strong());
-                    ui.label(egui::RichText::new(&hashes.eip712_domain_hash).monospace().size(12.0));
+                    ui.label(
+                        egui::RichText::new(&hashes.eip712_domain_hash)
+                            .monospace()
+                            .size(12.0),
+                    );
                     if ui.small_button("📋").clicked() {
                         ui::copy_to_clipboard(&hashes.eip712_domain_hash);
                     }
                     ui.end_row();
 
                     ui.label(egui::RichText::new("Message Hash:").strong());
-                    ui.label(egui::RichText::new(&hashes.eip712_message_hash).monospace().size(12.0));
+                    ui.label(
+                        egui::RichText::new(&hashes.eip712_message_hash)
+                            .monospace()
+                            .size(12.0),
+                    );
                     if ui.small_button("📋").clicked() {
                         ui::copy_to_clipboard(&hashes.eip712_message_hash);
                     }
@@ -619,9 +730,11 @@ impl App {
                 });
 
             // Show Safe-wrapped hashes if not standalone
-            if let (Some(safe_domain), Some(safe_msg), Some(safe_hash)) = 
-                (&hashes.safe_domain_hash, &hashes.safe_message_hash, &hashes.safe_hash) 
-            {
+            if let (Some(safe_domain), Some(safe_msg), Some(safe_hash)) = (
+                &hashes.safe_domain_hash,
+                &hashes.safe_message_hash,
+                &hashes.safe_hash,
+            ) {
                 ui.add_space(15.0);
                 ui::section_header(ui, "Safe-Wrapped Hash Results");
 
@@ -643,8 +756,17 @@ impl App {
                         }
                         ui.end_row();
 
-                        ui.label(egui::RichText::new("Safe Hash:").strong().color(egui::Color32::from_rgb(0, 212, 170)));
-                        ui.label(egui::RichText::new(safe_hash).monospace().size(12.0).color(egui::Color32::from_rgb(0, 212, 170)));
+                        ui.label(
+                            egui::RichText::new("Safe Hash:")
+                                .strong()
+                                .color(egui::Color32::from_rgb(0, 212, 170)),
+                        );
+                        ui.label(
+                            egui::RichText::new(safe_hash)
+                                .monospace()
+                                .size(12.0)
+                                .color(egui::Color32::from_rgb(0, 212, 170)),
+                        );
                         if ui.small_button("📋").clicked() {
                             ui::copy_to_clipboard(safe_hash);
                         }
@@ -701,7 +823,8 @@ impl App {
                 }
             };
 
-            let safe_addr: alloy::primitives::Address = match self.safe_context.safe_address.parse() {
+            let safe_addr: alloy::primitives::Address = match self.safe_context.safe_address.parse()
+            {
                 Ok(a) => a,
                 Err(e) => {
                     self.eip712_state.error = Some(format!("Invalid Safe address: {}", e));
@@ -710,13 +833,15 @@ impl App {
             };
 
             // Create message hash from the EIP-712 hash
-            let eip712_hash_bytes = match hex::decode(eip712_result.eip_712_hash.trim_start_matches("0x")) {
-                Ok(b) => b,
-                Err(e) => {
-                    self.eip712_state.error = Some(format!("Failed to decode EIP-712 hash: {}", e));
-                    return;
-                }
-            };
+            let eip712_hash_bytes =
+                match hex::decode(eip712_result.eip_712_hash.trim_start_matches("0x")) {
+                    Ok(b) => b,
+                    Err(e) => {
+                        self.eip712_state.error =
+                            Some(format!("Failed to decode EIP-712 hash: {}", e));
+                        return;
+                    }
+                };
 
             if eip712_hash_bytes.len() != 32 {
                 self.eip712_state.error = Some("EIP-712 hash must be 32 bytes".to_string());
@@ -777,9 +902,23 @@ impl App {
         };
 
         // Use safe_utils::MessageHasher
-        let msg_hasher = MessageHasher::new(self.msg_state.message.clone());
-        let raw_hash = msg_hasher.raw_hash();
-        let message_hash = msg_hasher.hash();
+        let (raw_hash, message_hash) = if self.msg_state.is_hex {
+            // Parse hex bytes and hash directly
+            let hex_str = self.msg_state.message.trim().trim_start_matches("0x");
+            let bytes = match hex::decode(hex_str) {
+                Ok(b) => b,
+                Err(e) => {
+                    self.msg_state.error = Some(format!("Invalid hex: {}", e));
+                    return;
+                }
+            };
+            let msg_hasher = MessageHasher::new_from_bytes(alloy::primitives::keccak256(&bytes));
+            (msg_hasher.raw_hash(), msg_hasher.hash())
+        } else {
+            // Hash as UTF-8 string
+            let msg_hasher = MessageHasher::new(self.msg_state.message.clone());
+            (msg_hasher.raw_hash(), msg_hasher.hash())
+        };
 
         // Use safe_utils::DomainHasher
         let domain_hasher = DomainHasher::new(safe_version, chain_id, safe_addr);
@@ -822,7 +961,7 @@ impl App {
         {
             wasm_bindgen_futures::spawn_local(async move {
                 let fetch_result = fetch_transaction(&chain_name, &safe_address, nonce).await;
-                let mut result_guard = result.lock().unwrap();
+                let mut result_guard = lock_or_recover!(result);
                 *result_guard = Some(match fetch_result {
                     Ok(tx) => FetchResult::Success(tx),
                     Err(e) => FetchResult::Error(format!("{:#}", e)),
@@ -835,8 +974,9 @@ impl App {
         {
             std::thread::spawn(move || {
                 let rt = tokio::runtime::Runtime::new().unwrap();
-                let fetch_result = rt.block_on(fetch_transaction(&chain_name, &safe_address, nonce));
-                let mut result_guard = result.lock().unwrap();
+                let fetch_result =
+                    rt.block_on(fetch_transaction(&chain_name, &safe_address, nonce));
+                let mut result_guard = lock_or_recover!(result);
                 *result_guard = Some(match fetch_result {
                     Ok(tx) => FetchResult::Success(tx),
                     Err(e) => FetchResult::Error(format!("{:#}", e)),
@@ -848,7 +988,7 @@ impl App {
 
     fn check_fetch_result(&mut self, ctx: &egui::Context) {
         let result = {
-            let mut guard = self.fetch_result.lock().unwrap();
+            let mut guard = lock_or_recover!(self.fetch_result);
             guard.take()
         };
 
@@ -878,7 +1018,13 @@ impl App {
 
                     // Get warnings using check_suspicious_content (via get_warnings_from_api_tx)
                     let chain_id = ChainId::of(&self.safe_context.chain_name).ok();
-                    self.tx_state.warnings.union(get_warnings_from_api_tx(&tx, chain_id));
+                    match get_warnings_from_api_tx(&tx, chain_id) {
+                        Ok(warnings) => self.tx_state.warnings.union(warnings),
+                        Err(e) => {
+                            debug_log!("Warning computation failed: {:#}", e);
+                            self.tx_state.warnings_error = Some(format!("{:#}", e));
+                        }
+                    }
 
                     // Validate against expected values if any were provided
                     if self.tx_state.expected.has_values() {
@@ -889,7 +1035,8 @@ impl App {
                     // Initialize calldata decode
                     debug_log!("Parsing calldata: {} bytes", tx.data.len());
                     let decode_state = decode::parse_initial(&tx.data, tx.data_decoded.as_ref());
-                    debug_log!("Decode kind: {:?}, selector: {}", 
+                    debug_log!(
+                        "Decode kind: {:?}, selector: {}",
                         match &decode_state.kind {
                             TransactionKind::Empty => "Empty",
                             TransactionKind::Single(_) => "Single",
@@ -903,9 +1050,12 @@ impl App {
                         TransactionKind::Single(_) if !decode_state.selector.is_empty() => {
                             Some(("single", decode_state.selector.clone(), tx.data.clone(), 0))
                         }
-                        TransactionKind::MultiSend(multi) => {
-                            Some(("multi", String::new(), String::new(), multi.transactions.len()))
-                        }
+                        TransactionKind::MultiSend(multi) => Some((
+                            "multi",
+                            String::new(),
+                            String::new(),
+                            multi.transactions.len(),
+                        )),
                         _ => None,
                     };
 
@@ -916,16 +1066,20 @@ impl App {
                         match kind {
                             "single" => {
                                 debug_log!("Triggering 4byte lookup for selector: {}", selector);
-                                self.trigger_decode_lookup(&selector, &data);
+                                self.trigger_decode_lookup(ctx, &selector, &data);
                             }
                             "multi" => {
-                                debug_log!("Triggering bulk verification for {} transactions", tx_count);
+                                debug_log!(
+                                    "Triggering bulk verification for {} transactions",
+                                    tx_count
+                                );
                                 // Update verification state
                                 if let Some(ref mut decode) = self.tx_state.decode {
                                     if let TransactionKind::MultiSend(ref mut multi) = decode.kind {
-                                        multi.verification_state = decode::VerificationState::InProgress { 
-                                            total: tx_count 
-                                        };
+                                        multi.verification_state =
+                                            decode::VerificationState::InProgress {
+                                                total: tx_count,
+                                            };
                                     }
                                 }
                                 self.trigger_multisend_bulk_verify(ctx);
@@ -945,16 +1099,21 @@ impl App {
 
     fn check_decode_result(&mut self) {
         let result = {
-            let mut guard = self.decode_result.lock().unwrap();
+            let mut guard = lock_or_recover!(self.decode_result);
             guard.take()
         };
 
         if let Some(result) = result {
             debug_log!("Received decode result");
             match result {
-                DecodeResult::Single { selector: _, local_decode } => {
-                    debug_log!("Processing single decode result: {:?}", 
-                        local_decode.as_ref().map(|d| &d.method).ok());
+                DecodeResult::Single {
+                    selector: _,
+                    local_decode,
+                } => {
+                    debug_log!(
+                        "Processing single decode result: {:?}",
+                        local_decode.as_ref().map(|d| &d.method).ok()
+                    );
                     if let Some(ref mut decode) = self.tx_state.decode {
                         if let TransactionKind::Single(ref mut single) = decode.kind {
                             match local_decode {
@@ -976,19 +1135,23 @@ impl App {
                             decode.status = match &single.comparison {
                                 ComparisonResult::Match => decode::OverallStatus::AllMatch,
                                 ComparisonResult::MethodMismatch { .. }
-                                | ComparisonResult::ParamMismatch(_) => decode::OverallStatus::HasMismatches,
+                                | ComparisonResult::ParamMismatch(_) => {
+                                    decode::OverallStatus::HasMismatches
+                                }
                                 _ => decode::OverallStatus::PartiallyVerified,
                             };
                         }
                     }
                 }
-                DecodeResult::MultiSendBulk { multi: verified_multi } => {
+                DecodeResult::MultiSendBulk {
+                    multi: verified_multi,
+                } => {
                     debug_log!("Received bulk MultiSend verification result");
                     if let Some(ref mut decode) = self.tx_state.decode {
                         if let TransactionKind::MultiSend(ref mut multi) = decode.kind {
                             // Replace with the verified MultiSend
                             *multi = verified_multi;
-                            
+
                             // Update overall status based on summary
                             decode.status = if multi.summary.mismatched > 0 {
                                 decode::OverallStatus::HasMismatches
@@ -1006,19 +1169,24 @@ impl App {
         }
     }
 
-    fn trigger_decode_lookup(&self, selector: &str, data: &str) {
+    fn trigger_decode_lookup(&self, ctx: &egui::Context, selector: &str, data: &str) {
         let lookup = self.signature_lookup.clone();
         let selector = selector.to_string();
         let data = data.to_string();
         let result = Arc::clone(&self.decode_result);
+        let ctx = ctx.clone();
 
         #[cfg(target_arch = "wasm32")]
         {
             use wasm_bindgen_futures::spawn_local;
             spawn_local(async move {
                 let local_decode = Self::do_decode_lookup(&lookup, &selector, &data).await;
-                let mut guard = result.lock().unwrap();
-                *guard = Some(DecodeResult::Single { selector, local_decode });
+                let mut guard = lock_or_recover!(result);
+                *guard = Some(DecodeResult::Single {
+                    selector,
+                    local_decode,
+                });
+                ctx.request_repaint();
             });
         }
 
@@ -1027,8 +1195,12 @@ impl App {
             std::thread::spawn(move || {
                 let rt = tokio::runtime::Runtime::new().unwrap();
                 let local_decode = rt.block_on(Self::do_decode_lookup(&lookup, &selector, &data));
-                let mut guard = result.lock().unwrap();
-                *guard = Some(DecodeResult::Single { selector, local_decode });
+                let mut guard = lock_or_recover!(result);
+                *guard = Some(DecodeResult::Single {
+                    selector,
+                    local_decode,
+                });
+                ctx.request_repaint();
             });
         }
     }
@@ -1058,7 +1230,7 @@ impl App {
             use wasm_bindgen_futures::spawn_local;
             spawn_local(async move {
                 decode::verify_multisend_batch(&mut multi, &lookup).await;
-                let mut guard = result.lock().unwrap();
+                let mut guard = lock_or_recover!(result);
                 *guard = Some(DecodeResult::MultiSendBulk { multi });
                 ctx.request_repaint();
             });
@@ -1069,7 +1241,7 @@ impl App {
             std::thread::spawn(move || {
                 let rt = tokio::runtime::Runtime::new().unwrap();
                 rt.block_on(decode::verify_multisend_batch(&mut multi, &lookup));
-                let mut guard = result.lock().unwrap();
+                let mut guard = lock_or_recover!(result);
                 *guard = Some(DecodeResult::MultiSendBulk { multi });
                 ctx.request_repaint();
             });
@@ -1082,7 +1254,9 @@ impl App {
         data: &str,
     ) -> Result<decode::LocalDecode, String> {
         // Lookup signatures for selector (convert eyre error to String)
-        let signatures = lookup.lookup(selector).await
+        let signatures = lookup
+            .lookup(selector)
+            .await
             .map_err(|e| format!("{:#}", e))?;
 
         if signatures.is_empty() {
@@ -1090,8 +1264,9 @@ impl App {
         }
 
         // Try each signature until one decodes successfully
-        for sig in &signatures {
-            match decode::decode_with_signature(data, sig) {
+        // Signatures are sorted with verified first, so we prefer verified decodes
+        for sig_info in &signatures {
+            match decode::decode_with_signature(data, &sig_info.signature, sig_info.verified) {
                 Ok(decoded) => return Ok(decoded),
                 Err(_) => continue,
             }
@@ -1102,10 +1277,10 @@ impl App {
             signatures.len()
         ))
     }
-    
+
     fn check_safe_info_result(&mut self) {
         let result = {
-            let mut guard = self.safe_info_result.lock().unwrap();
+            let mut guard = lock_or_recover!(self.safe_info_result);
             guard.take()
         };
 
@@ -1113,21 +1288,26 @@ impl App {
             self.safe_info_loading = false;
             match result {
                 SafeInfoResult::Success(info) => {
-                    debug_log!("Fetched Safe info: version={}, nonce={}, threshold={}/{}", 
-                        info.version, info.nonce, info.threshold, info.owners.len());
-                    
+                    debug_log!(
+                        "Fetched Safe info: version={}, nonce={}, threshold={}/{}",
+                        info.version,
+                        info.nonce,
+                        info.threshold,
+                        info.owners.len()
+                    );
+
                     // Auto-fill version if it matches a supported version
                     let version_str = info.version.as_str();
                     if crate::state::SAFE_VERSIONS.contains(&version_str) {
                         self.safe_context.safe_version = version_str.to_string();
                     }
-                    
+
                     // Add to recent addresses
                     crate::state::add_recent_address(
                         &mut self.safe_context.recent_addresses,
                         &self.safe_context.safe_address,
                     );
-                    
+
                     self.safe_info = Some(info);
                 }
                 SafeInfoResult::Error(e) => {
@@ -1137,12 +1317,12 @@ impl App {
             }
         }
     }
-    
+
     fn trigger_safe_info_fetch(&mut self) {
         if self.safe_info_loading {
             return;
         }
-        
+
         self.safe_info_loading = true;
         let chain_name = self.safe_context.chain_name.clone();
         let safe_address = self.safe_context.safe_address.clone();
@@ -1153,7 +1333,7 @@ impl App {
             use wasm_bindgen_futures::spawn_local;
             spawn_local(async move {
                 let fetch_result = crate::hasher::fetch_safe_info(&chain_name, &safe_address).await;
-                let mut guard = result.lock().unwrap();
+                let mut guard = lock_or_recover!(result);
                 *guard = Some(match fetch_result {
                     Ok(info) => SafeInfoResult::Success(info),
                     Err(e) => SafeInfoResult::Error(format!("{:#}", e)),
@@ -1165,8 +1345,9 @@ impl App {
         {
             std::thread::spawn(move || {
                 let rt = tokio::runtime::Runtime::new().unwrap();
-                let fetch_result = rt.block_on(crate::hasher::fetch_safe_info(&chain_name, &safe_address));
-                let mut guard = result.lock().unwrap();
+                let fetch_result =
+                    rt.block_on(crate::hasher::fetch_safe_info(&chain_name, &safe_address));
+                let mut guard = lock_or_recover!(result);
                 *guard = Some(match fetch_result {
                     Ok(info) => SafeInfoResult::Success(info),
                     Err(e) => SafeInfoResult::Error(format!("{:#}", e)),
@@ -1174,20 +1355,20 @@ impl App {
             });
         }
     }
-    
+
     // =========================================================================
     // OFFLINE TAB
     // =========================================================================
-    
+
     fn render_offline_tab(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
         ui::styled_heading(ui, "Offline Verification");
         ui.label("Manually input transaction data for offline verification (uses 4byte signature lookup).");
         ui.add_space(15.0);
-        
+
         // Transaction inputs
         ui::section_header(ui, "Transaction Details");
         ui.add_space(5.0);
-        
+
         egui::Grid::new("offline_tx_inputs")
             .num_columns(2)
             .spacing([10.0, 8.0])
@@ -1195,35 +1376,35 @@ impl App {
                 ui.label("To:");
                 ui::address_input(ui, &mut self.offline_state.to);
                 ui.end_row();
-                
+
                 ui.label("Value (wei):");
                 ui::number_input(ui, &mut self.offline_state.value, "0");
                 ui.end_row();
-                
+
                 ui.label("Data (hex):");
                 ui::multiline_input(ui, &mut self.offline_state.data, "0x...", 10);
                 ui.end_row();
-                
+
                 ui.label("Operation:");
                 ui.horizontal(|ui| {
                     ui.selectable_value(&mut self.offline_state.operation, 0, "Call (0)");
                     ui.selectable_value(&mut self.offline_state.operation, 1, "DelegateCall (1)");
                 });
                 ui.end_row();
-                
+
                 ui.label("Nonce:");
                 ui::number_input(ui, &mut self.offline_state.nonce, "0");
                 ui.end_row();
             });
-        
+
         ui.add_space(10.0);
-        
+
         // Advanced: Gas Parameters (collapsed by default)
         egui::CollapsingHeader::new("⚙️ Advanced: Gas Parameters")
             .default_open(false)
             .show(ui, |ui| {
                 ui.add_space(5.0);
-                
+
                 egui::Grid::new("offline_gas_inputs")
                     .num_columns(2)
                     .spacing([10.0, 8.0])
@@ -1231,105 +1412,142 @@ impl App {
                         ui.label("SafeTxGas:");
                         ui::number_input(ui, &mut self.offline_state.safe_tx_gas, "0");
                         ui.end_row();
-                        
+
                         ui.label("BaseGas:");
                         ui::number_input(ui, &mut self.offline_state.base_gas, "0");
                         ui.end_row();
-                        
+
                         ui.label("GasPrice:");
                         ui::number_input(ui, &mut self.offline_state.gas_price, "0");
                         ui.end_row();
-                        
+
                         ui.label("GasToken:");
                         ui::address_input(ui, &mut self.offline_state.gas_token);
                         ui.end_row();
-                        
+
                         ui.label("RefundReceiver:");
                         ui::address_input(ui, &mut self.offline_state.refund_receiver);
                         ui.end_row();
                     });
-                
+
                 ui.add_space(5.0);
-                ui.label(egui::RichText::new("Most transactions use default values (all zeros)").weak());
+                ui.label(
+                    egui::RichText::new("Most transactions use default values (all zeros)").weak(),
+                );
             });
-        
+
         ui.add_space(15.0);
-        
+
         // Compute button
         let can_compute = !self.safe_context.safe_address.is_empty()
             && !self.offline_state.to.is_empty()
             && !self.offline_state.is_loading;
-        
+
         ui.horizontal(|ui| {
-            if ui.add_enabled(can_compute, egui::Button::new("🔐 Compute Hash & Decode")).clicked() {
+            if ui
+                .add_enabled(can_compute, egui::Button::new("🔐 Compute Hash & Decode"))
+                .clicked()
+            {
                 self.trigger_offline_compute(ctx.clone());
             }
-            
+
             if self.offline_state.is_loading {
                 ui.spinner();
                 ui.label("Computing...");
             }
         });
-        
+
         // Error display
         if let Some(ref error) = self.offline_state.error {
             ui.add_space(10.0);
-            ui.label(egui::RichText::new(format!("❌ {}", error)).color(egui::Color32::from_rgb(220, 80, 80)));
+            ui.label(
+                egui::RichText::new(format!("❌ {}", error))
+                    .color(egui::Color32::from_rgb(220, 80, 80)),
+            );
         }
-        
+
         // Results
         if self.offline_state.hashes.is_some() || self.offline_state.decode_result.is_some() {
             ui.add_space(20.0);
             ui.separator();
             ui.add_space(10.0);
-            
+
             // Warnings
-            if self.offline_state.warnings.has_warnings() {
+            let warnings_error = self.offline_state.warnings_error.as_deref();
+            if self.offline_state.warnings.has_warnings() || warnings_error.is_some() {
                 ui::section_header(ui, "⚠️ Warnings");
-                
+
+                if let Some(error) = warnings_error {
+                    ui::error_message(ui, &format!("Warning computation failed: {}", error));
+                }
+
                 let w = &self.offline_state.warnings;
                 if w.delegatecall {
-                    ui::warning_message(ui, "⚠️ DELEGATECALL - can modify Safe state!", egui::Color32::from_rgb(220, 50, 50));
+                    ui::warning_message(
+                        ui,
+                        "⚠️ DELEGATECALL - can modify Safe state!",
+                        egui::Color32::from_rgb(220, 50, 50),
+                    );
                 }
                 if w.non_zero_gas_token {
-                    ui::warning_message(ui, "Non-zero gas token", egui::Color32::from_rgb(220, 180, 50));
+                    ui::warning_message(
+                        ui,
+                        "Non-zero gas token",
+                        egui::Color32::from_rgb(220, 180, 50),
+                    );
                 }
                 if w.non_zero_refund_receiver {
-                    ui::warning_message(ui, "Non-zero refund receiver", egui::Color32::from_rgb(220, 180, 50));
+                    ui::warning_message(
+                        ui,
+                        "Non-zero refund receiver",
+                        egui::Color32::from_rgb(220, 180, 50),
+                    );
                 }
-                
+
                 ui.add_space(10.0);
             }
-            
+
             // Hashes
             if let Some(ref hashes) = self.offline_state.hashes {
                 ui::section_header(ui, "Hash Results");
-                
+
                 egui::Grid::new("offline_hash_results")
                     .num_columns(3)
                     .spacing([10.0, 8.0])
                     .show(ui, |ui| {
                         ui.label(egui::RichText::new("Domain Hash:").strong());
-                        ui.label(egui::RichText::new(&hashes.domain_hash).monospace().size(12.0));
+                        ui.label(
+                            egui::RichText::new(&hashes.domain_hash)
+                                .monospace()
+                                .size(12.0),
+                        );
                         if ui.small_button("📋").on_hover_text("Copy").clicked() {
                             ui::copy_to_clipboard(&hashes.domain_hash);
                         }
                         ui.end_row();
-                        
+
                         ui.label(egui::RichText::new("Message Hash:").strong());
-                        ui.label(egui::RichText::new(&hashes.message_hash).monospace().size(12.0));
+                        ui.label(
+                            egui::RichText::new(&hashes.message_hash)
+                                .monospace()
+                                .size(12.0),
+                        );
                         if ui.small_button("📋").on_hover_text("Copy").clicked() {
                             ui::copy_to_clipboard(&hashes.message_hash);
                         }
                         ui.end_row();
-                        
+
                         ui.label(egui::RichText::new("Safe Tx Hash:").strong());
-                        ui.label(egui::RichText::new(&hashes.safe_tx_hash).monospace().size(12.0));
+                        ui.label(
+                            egui::RichText::new(&hashes.safe_tx_hash)
+                                .monospace()
+                                .size(12.0),
+                        );
                         if ui.small_button("📋").on_hover_text("Copy").clicked() {
                             ui::copy_to_clipboard(&hashes.safe_tx_hash);
                         }
                         ui.end_row();
-                        
+
                         // Ledger binary format
                         let binary_literal = ui::hash_to_binary_literal(&hashes.safe_tx_hash);
                         ui.label(egui::RichText::new("Ledger Binary:").strong());
@@ -1340,15 +1558,15 @@ impl App {
                         ui.end_row();
                     });
             }
-            
+
             // Calldata Decoding
-        if let Some(ref mut decode) = self.offline_state.decode_result {
-            ui::section_header(ui, "Calldata Decoding");
-            decode::render_offline_decode_section(ui, decode, &self.safe_context);
+            if let Some(ref mut decode) = self.offline_state.decode_result {
+                ui::section_header(ui, "Calldata Decoding");
+                decode::render_offline_decode_section(ui, decode, &self.safe_context);
+            }
         }
     }
-    }
-    
+
     fn render_address_book_window(&mut self, ctx: &egui::Context) {
         let mut open = self.address_book_open;
         egui::Window::new("📖 Address Book")
@@ -1360,98 +1578,129 @@ impl App {
                 // Search Bar
                 ui.horizontal(|ui| {
                     ui.label("🔍");
-                    ui.add(egui::TextEdit::singleline(&mut self.address_book_search)
-                        .hint_text("Search by name or address...")
-                        .desired_width(f32::INFINITY));
+                    ui.add(
+                        egui::TextEdit::singleline(&mut self.address_book_search)
+                            .hint_text("Search by name or address...")
+                            .desired_width(f32::INFINITY),
+                    );
                 });
                 ui.add_space(8.0);
 
                 // Entries Table
                 ui.label(egui::RichText::new("Entries").strong());
                 ui.separator();
-                
-                egui::ScrollArea::vertical().max_height(300.0).show(ui, |ui| {
-                    let search_lower = self.address_book_search.to_lowercase();
-                    let filtered_entries: Vec<_> = self.safe_context.address_book.entries.iter().enumerate()
-                        .filter(|(_, e)| {
-                            e.name.to_lowercase().contains(&search_lower) || 
-                            e.address.to_lowercase().contains(&search_lower)
-                        })
-                        .collect();
 
-                    let filtered_is_empty = filtered_entries.is_empty();
-                    let mut to_remove = None;
-                    
-                    let available_width = ui.available_width();
-                    egui::Grid::new("address_book_entries_v2")
-                        .num_columns(4)
-                        .spacing([10.0, 12.0])
-                        .striped(true)
-                        .min_col_width(available_width * 0.2)
-                        .show(ui, |ui| {
-                            // Header
-                            ui.label(egui::RichText::new("NAME").weak());
-                            ui.label(egui::RichText::new("ADDRESS").weak());
-                            ui.label(egui::RichText::new("CHAIN").weak());
-                            ui.label(""); // Actions
-                            ui.end_row();
+                egui::ScrollArea::vertical()
+                    .max_height(300.0)
+                    .show(ui, |ui| {
+                        let search_lower = self.address_book_search.to_lowercase();
+                        let filtered_entries: Vec<_> = self
+                            .safe_context
+                            .address_book
+                            .entries
+                            .iter()
+                            .enumerate()
+                            .filter(|(_, e)| {
+                                e.name.to_lowercase().contains(&search_lower)
+                                    || e.address.to_lowercase().contains(&search_lower)
+                            })
+                            .collect();
 
-                            for (original_idx, entry) in &filtered_entries {
-                                let validation = self.safe_context.address_book.validate_entry(entry);
-                                
-                                let name_color = if validation == AddressValidation::ChecksumMismatch {
-                                    egui::Color32::from_rgb(220, 180, 50)
-                                } else if validation == AddressValidation::Invalid {
-                                    egui::Color32::from_rgb(220, 80, 80)
-                                } else {
-                                    ui.visuals().text_color()
-                                };
+                        let filtered_is_empty = filtered_entries.is_empty();
+                        let mut to_remove = None;
 
-                                // Name Column
-                                ui.horizontal(|ui| {
-                                    if validation == AddressValidation::ChecksumMismatch {
-                                        ui.label(egui::RichText::new("⚠️").color(egui::Color32::from_rgb(220, 180, 50)))
-                                            .on_hover_text("Checksum mismatch - address was normalized");
-                                    } else if validation == AddressValidation::Invalid {
-                                        ui.label(egui::RichText::new("❌").color(egui::Color32::from_rgb(220, 80, 80)))
-                                            .on_hover_text("Invalid address");
-                                    }
-                                    ui.label(egui::RichText::new(&entry.name).strong().color(name_color));
-                                });
-
-                                // Address Column
-                                ui.horizontal(|ui| {
-                                    ui.label(egui::RichText::new(&entry.address).monospace().color(name_color));
-                                    if ui.small_button("📋").on_hover_text("Copy address").clicked() {
-                                        ui::copy_to_clipboard(&entry.address);
-                                    }
-                                });
-
-                                // Chain Column
-                                let chain_name = get_chain_name(entry.chain_id);
-                                ui.label(egui::RichText::new(chain_name).weak());
-                                
-                                // Actions Column
-                                if ui.button("🗑").on_hover_text("Remove").clicked() {
-                                    to_remove = Some(*original_idx);
-                                }
+                        let available_width = ui.available_width();
+                        egui::Grid::new("address_book_entries_v2")
+                            .num_columns(4)
+                            .spacing([10.0, 12.0])
+                            .striped(true)
+                            .min_col_width(available_width * 0.2)
+                            .show(ui, |ui| {
+                                // Header
+                                ui.label(egui::RichText::new("NAME").weak());
+                                ui.label(egui::RichText::new("ADDRESS").weak());
+                                ui.label(egui::RichText::new("CHAIN").weak());
+                                ui.label(""); // Actions
                                 ui.end_row();
-                            }
-                        });
-                    
-                    // Drop filtered_entries borrow before mutable operation
-                    drop(filtered_entries);
-                        
-                    if let Some(idx) = to_remove {
-                        self.safe_context.address_book.entries.remove(idx);
-                    }
 
-                    if self.safe_context.address_book.entries.is_empty() {
-                        ui.label(egui::RichText::new("No entries yet").weak().italics());
-                    } else if filtered_is_empty {
-                        ui.label(egui::RichText::new("No matches found").weak().italics());
-                    }
-                });
+                                for (original_idx, entry) in &filtered_entries {
+                                    let validation =
+                                        self.safe_context.address_book.validate_entry(entry);
+
+                                    let name_color =
+                                        if validation == AddressValidation::ChecksumMismatch {
+                                            egui::Color32::from_rgb(220, 180, 50)
+                                        } else if validation == AddressValidation::Invalid {
+                                            egui::Color32::from_rgb(220, 80, 80)
+                                        } else {
+                                            ui.visuals().text_color()
+                                        };
+
+                                    // Name Column
+                                    ui.horizontal(|ui| {
+                                        if validation == AddressValidation::ChecksumMismatch {
+                                            ui.label(
+                                                egui::RichText::new("⚠️")
+                                                    .color(egui::Color32::from_rgb(220, 180, 50)),
+                                            )
+                                            .on_hover_text(
+                                                "Checksum mismatch - address was normalized",
+                                            );
+                                        } else if validation == AddressValidation::Invalid {
+                                            ui.label(
+                                                egui::RichText::new("❌")
+                                                    .color(egui::Color32::from_rgb(220, 80, 80)),
+                                            )
+                                            .on_hover_text("Invalid address");
+                                        }
+                                        ui.label(
+                                            egui::RichText::new(&entry.name)
+                                                .strong()
+                                                .color(name_color),
+                                        );
+                                    });
+
+                                    // Address Column
+                                    ui.horizontal(|ui| {
+                                        ui.label(
+                                            egui::RichText::new(&entry.address)
+                                                .monospace()
+                                                .color(name_color),
+                                        );
+                                        if ui
+                                            .small_button("📋")
+                                            .on_hover_text("Copy address")
+                                            .clicked()
+                                        {
+                                            ui::copy_to_clipboard(&entry.address);
+                                        }
+                                    });
+
+                                    // Chain Column
+                                    let chain_name = get_chain_name(entry.chain_id);
+                                    ui.label(egui::RichText::new(chain_name).weak());
+
+                                    // Actions Column
+                                    if ui.button("🗑").on_hover_text("Remove").clicked() {
+                                        to_remove = Some(*original_idx);
+                                    }
+                                    ui.end_row();
+                                }
+                            });
+
+                        // Drop filtered_entries borrow before mutable operation
+                        drop(filtered_entries);
+
+                        if let Some(idx) = to_remove {
+                            self.safe_context.address_book.entries.remove(idx);
+                        }
+
+                        if self.safe_context.address_book.entries.is_empty() {
+                            ui.label(egui::RichText::new("No entries yet").weak().italics());
+                        } else if filtered_is_empty {
+                            ui.label(egui::RichText::new("No matches found").weak().italics());
+                        }
+                    });
 
                 ui.add_space(10.0);
                 ui.separator();
@@ -1459,33 +1708,44 @@ impl App {
 
                 // Management Sections
                 egui::CollapsingHeader::new("➕ Add Single Entry").show(ui, |ui| {
-                    egui::Grid::new("add_entry_grid").num_columns(2).spacing([10.0, 8.0]).show(ui, |ui| {
-                        ui.label("Name:");
-                        ui.text_edit_singleline(&mut self.address_book_add_name);
-                        ui.end_row();
+                    egui::Grid::new("add_entry_grid")
+                        .num_columns(2)
+                        .spacing([10.0, 8.0])
+                        .show(ui, |ui| {
+                            ui.label("Name:");
+                            ui.text_edit_singleline(&mut self.address_book_add_name);
+                            ui.end_row();
 
-                        ui.label("Address:");
-                        ui.text_edit_singleline(&mut self.address_book_add_addr);
-                        ui.end_row();
+                            ui.label("Address:");
+                            ui.text_edit_singleline(&mut self.address_book_add_addr);
+                            ui.end_row();
 
-                        ui.label("Chain:");
-                        egui::ComboBox::from_id_salt("add_entry_chain")
-                            .selected_text(&self.address_book_add_chain)
-                            .show_ui(ui, |ui| {
-                                for name in safe_utils::get_all_supported_chain_names() {
-                                    ui.selectable_value(&mut self.address_book_add_chain, name.clone(), name);
-                                }
-                            });
-                        ui.end_row();
-                    });
+                            ui.label("Chain:");
+                            egui::ComboBox::from_id_salt("add_entry_chain")
+                                .selected_text(&self.address_book_add_chain)
+                                .show_ui(ui, |ui| {
+                                    for name in safe_utils::get_all_supported_chain_names() {
+                                        ui.selectable_value(
+                                            &mut self.address_book_add_chain,
+                                            name.clone(),
+                                            name,
+                                        );
+                                    }
+                                });
+                            ui.end_row();
+                        });
 
                     if ui.button("Add Entry").clicked() {
-                        if let Ok(chain_id) = alloy::primitives::ChainId::of(&self.address_book_add_chain) {
-                            self.safe_context.address_book.add_or_update(crate::state::AddressBookEntry {
-                                address: self.address_book_add_addr.clone(),
-                                name: self.address_book_add_name.clone(),
-                                chain_id: u64::from(chain_id),
-                            });
+                        if let Ok(chain_id) =
+                            alloy::primitives::ChainId::of(&self.address_book_add_chain)
+                        {
+                            self.safe_context.address_book.add_or_update(
+                                crate::state::AddressBookEntry {
+                                    address: self.address_book_add_addr.clone(),
+                                    name: self.address_book_add_name.clone(),
+                                    chain_id: u64::from(chain_id),
+                                },
+                            );
                             self.address_book_add_addr.clear();
                             self.address_book_add_name.clear();
                             self.address_book_error = Some("Entry added".to_string());
@@ -1494,16 +1754,28 @@ impl App {
                 });
 
                 egui::CollapsingHeader::new("📥 Import CSV").show(ui, |ui| {
-                    ui.label(egui::RichText::new("Format: address,name,chainId").weak().small());
+                    ui.label(
+                        egui::RichText::new("Format: address,name,chainId")
+                            .weak()
+                            .small(),
+                    );
                     ui::multiline_input(ui, &mut self.address_book_import_text, "0x...,name,1", 3);
-                    
+
                     if ui.button("📥 Import CSV").clicked() {
-                        match self.safe_context.address_book.import_csv(&self.address_book_import_text) {
+                        match self
+                            .safe_context
+                            .address_book
+                            .import_csv(&self.address_book_import_text)
+                        {
                             Ok((count, skipped)) => {
                                 if skipped > 0 {
-                                    self.address_book_error = Some(format!("Imported {} entries, skipped {} invalid", count, skipped));
+                                    self.address_book_error = Some(format!(
+                                        "Imported {} entries, skipped {} invalid",
+                                        count, skipped
+                                    ));
                                 } else {
-                                    self.address_book_error = Some(format!("Successfully imported {} entries", count));
+                                    self.address_book_error =
+                                        Some(format!("Successfully imported {} entries", count));
                                 }
                                 self.address_book_import_text.clear();
                             }
@@ -1524,7 +1796,11 @@ impl App {
 
                 if let Some(ref msg) = self.address_book_error {
                     ui.add_space(5.0);
-                    ui.label(egui::RichText::new(msg).small().color(egui::Color32::from_rgb(100, 200, 100)));
+                    ui.label(
+                        egui::RichText::new(msg)
+                            .small()
+                            .color(egui::Color32::from_rgb(100, 200, 100)),
+                    );
                 }
             });
         self.address_book_open = open;
@@ -1532,10 +1808,10 @@ impl App {
 
     fn check_offline_decode_result(&mut self) {
         let result = {
-            let mut guard = self.offline_decode_result.lock().unwrap();
+            let mut guard = lock_or_recover!(self.offline_decode_result);
             guard.take()
         };
-        
+
         if let Some(result) = result {
             self.offline_state.is_loading = false;
             match result {
@@ -1548,13 +1824,13 @@ impl App {
             }
         }
     }
-    
+
     fn trigger_offline_compute(&mut self, ctx: egui::Context) {
         self.offline_state.is_loading = true;
         self.offline_state.error = None;
         self.offline_state.hashes = None;
         self.offline_state.decode_result = None;
-        
+
         // Compute hashes synchronously (fast, doesn't need async)
         match crate::hasher::compute_hashes(
             &self.safe_context.chain_name,
@@ -1574,7 +1850,7 @@ impl App {
             Ok(hashes) => {
                 self.offline_state.hashes = Some(hashes);
                 // Compute warnings
-                self.offline_state.warnings = get_warnings_for_tx(
+                match get_warnings_for_tx(
                     &self.offline_state.to,
                     &self.offline_state.value,
                     &self.offline_state.data,
@@ -1584,7 +1860,16 @@ impl App {
                     &self.offline_state.gas_price,
                     &self.offline_state.gas_token,
                     &self.offline_state.refund_receiver,
-                );
+                ) {
+                    Ok(warnings) => {
+                        self.offline_state.warnings = warnings;
+                        self.offline_state.warnings_error = None;
+                    }
+                    Err(e) => {
+                        debug_log!("Warning computation failed: {:#}", e);
+                        self.offline_state.warnings_error = Some(format!("{:#}", e));
+                    }
+                }
             }
             Err(e) => {
                 self.offline_state.is_loading = false;
@@ -1592,29 +1877,29 @@ impl App {
                 return;
             }
         }
-        
+
         // Decode async (uses 4byte API)
         let data = self.offline_state.data.clone();
         let lookup = self.signature_lookup.clone();
         let result = Arc::clone(&self.offline_decode_result);
-        
+
         #[cfg(target_arch = "wasm32")]
         {
             use wasm_bindgen_futures::spawn_local;
             spawn_local(async move {
                 let decode = decode::decode_offline(&data, &lookup).await;
-                let mut guard = result.lock().unwrap();
+                let mut guard = lock_or_recover!(result);
                 *guard = Some(OfflineDecodeResult::Success(decode));
                 ctx.request_repaint();
             });
         }
-        
+
         #[cfg(not(target_arch = "wasm32"))]
         {
             std::thread::spawn(move || {
                 let rt = tokio::runtime::Runtime::new().unwrap();
                 let decode = rt.block_on(decode::decode_offline(&data, &lookup));
-                let mut guard = result.lock().unwrap();
+                let mut guard = lock_or_recover!(result);
                 *guard = Some(OfflineDecodeResult::Success(decode));
                 ctx.request_repaint();
             });

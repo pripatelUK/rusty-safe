@@ -1,9 +1,9 @@
 //! Sidebar component for Safe context (chain, address, version, info)
 
-use eframe::egui;
 use crate::hasher::SafeInfo;
 use crate::state::{SafeContext, SidebarState, SAFE_VERSIONS};
 use crate::ui;
+use eframe::egui;
 use safe_utils::Of;
 
 /// Sidebar action returned after rendering
@@ -23,7 +23,7 @@ pub fn render(
     chain_names: &[String],
 ) -> SidebarAction {
     let mut action = SidebarAction::None;
-    
+
     egui::SidePanel::left("safe_context_panel")
         .resizable(true)
         .default_width(280.0)
@@ -329,7 +329,7 @@ pub fn render(
                 ui.add_space(20.0);
             });
         });
-    
+
     // Show expand button when collapsed
     if sidebar.collapsed {
         egui::SidePanel::left("collapsed_sidebar")
@@ -342,7 +342,6 @@ pub fn render(
                 }
             });
     }
-    
+
     action
 }
-

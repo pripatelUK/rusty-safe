@@ -95,7 +95,10 @@ pub fn validate_address(value: &str) -> AddressValidation {
         Ok(addr) => {
             let checksummed = addr.to_checksum(None);
             // EIP-55: if it's all lowercase or all uppercase, it's valid (just not checksummed)
-            if value == checksummed || value[2..] == value[2..].to_lowercase() || value[2..] == value[2..].to_uppercase() {
+            if value == checksummed
+                || value[2..] == value[2..].to_lowercase()
+                || value[2..] == value[2..].to_uppercase()
+            {
                 AddressValidation::Valid
             } else {
                 AddressValidation::ChecksumMismatch
@@ -122,7 +125,8 @@ pub struct AddressBook {
 impl AddressBook {
     pub fn get_name(&self, address: &str, chain_id: u64) -> Option<String> {
         let addr_lower = address.to_lowercase();
-        self.entries.iter()
+        self.entries
+            .iter()
             .find(|e| e.address.to_lowercase() == addr_lower && e.chain_id == chain_id)
             .map(|e| e.name.clone())
     }
@@ -134,8 +138,10 @@ impl AddressBook {
         }
 
         let addr_lower = entry.address.to_lowercase();
-        if let Some(existing) = self.entries.iter_mut()
-            .find(|e| e.address.to_lowercase() == addr_lower && e.chain_id == entry.chain_id) 
+        if let Some(existing) = self
+            .entries
+            .iter_mut()
+            .find(|e| e.address.to_lowercase() == addr_lower && e.chain_id == entry.chain_id)
         {
             existing.name = entry.name;
         } else {
@@ -145,7 +151,8 @@ impl AddressBook {
 
     pub fn remove(&mut self, address: &str, chain_id: u64) {
         let addr_lower = address.to_lowercase();
-        self.entries.retain(|e| e.address.to_lowercase() != addr_lower || e.chain_id != chain_id);
+        self.entries
+            .retain(|e| e.address.to_lowercase() != addr_lower || e.chain_id != chain_id);
     }
 
     pub fn validate_entry(&self, entry: &AddressBookEntry) -> AddressValidation {
@@ -161,23 +168,30 @@ impl AddressBook {
             if line.is_empty() || line.starts_with("address,") {
                 continue;
             }
-            
+
             let parts: Vec<&str> = line.split(',').collect();
             if parts.len() < 3 {
                 skipped += 1;
                 continue;
             }
-            
+
             let address = parts[0].trim().to_string();
             let name = parts[1].trim().to_string();
-            let chain_id = parts[2].trim().parse::<u64>().map_err(|_| format!("Invalid chainId on line {}", i + 1))?;
-            
+            let chain_id = parts[2]
+                .trim()
+                .parse::<u64>()
+                .map_err(|_| format!("Invalid chainId on line {}", i + 1))?;
+
             if validate_address(&address) == AddressValidation::Invalid {
                 skipped += 1;
                 continue;
             }
 
-            self.add_or_update(AddressBookEntry { address, name, chain_id });
+            self.add_or_update(AddressBookEntry {
+                address,
+                name,
+                chain_id,
+            });
             count += 1;
         }
         Ok((count, skipped))
@@ -187,7 +201,10 @@ impl AddressBook {
     pub fn export_csv(&self) -> String {
         let mut csv = String::from("address,name,chainId\n");
         for entry in &self.entries {
-            csv.push_str(&format!("{},{},{}\n", entry.address, entry.name, entry.chain_id));
+            csv.push_str(&format!(
+                "{},{},{}\n",
+                entry.address, entry.name, entry.chain_id
+            ));
         }
         csv
     }
@@ -197,24 +214,27 @@ impl SafeContext {
     /// Load SafeContext from eframe storage
     pub fn load(storage: Option<&dyn eframe::Storage>) -> Self {
         let chains = get_all_supported_chain_names();
-        let default_chain = chains.iter()
+        let default_chain = chains
+            .iter()
             .find(|c| *c == "ethereum")
             .cloned()
             .unwrap_or_else(|| chains.first().cloned().unwrap_or_default());
-        
+
         let (safe_address, recent_addresses, address_book) = if let Some(storage) = storage {
             let addr = storage.get_string(SAFE_ADDRESS_KEY).unwrap_or_default();
-            let recent: Vec<String> = storage.get_string(RECENT_ADDRESSES_KEY)
+            let recent: Vec<String> = storage
+                .get_string(RECENT_ADDRESSES_KEY)
                 .and_then(|s| serde_json::from_str(&s).ok())
                 .unwrap_or_default();
-            let book: AddressBook = storage.get_string(ADDRESS_BOOK_KEY)
+            let book: AddressBook = storage
+                .get_string(ADDRESS_BOOK_KEY)
                 .and_then(|s| serde_json::from_str(&s).ok())
                 .unwrap_or_default();
             (addr, recent, book)
         } else {
             (String::new(), Vec::new(), AddressBook::default())
         };
-        
+
         Self {
             chain_name: default_chain,
             safe_address,
@@ -223,7 +243,7 @@ impl SafeContext {
             address_book,
         }
     }
-    
+
     /// Save SafeContext to eframe storage
     pub fn save(&self, storage: &mut dyn eframe::Storage) {
         storage.set_string(SAFE_ADDRESS_KEY, self.safe_address.clone());
@@ -234,7 +254,7 @@ impl SafeContext {
             storage.set_string(ADDRESS_BOOK_KEY, json);
         }
     }
-    
+
     /// Clear all stored data
     pub fn clear(&mut self) {
         self.safe_address.clear();
@@ -269,6 +289,8 @@ pub struct TxVerifyState {
     pub fetched_tx: Option<SafeTransaction>,
     pub hashes: Option<ComputedHashes>,
     pub warnings: SafeWarnings,
+    /// Set when warnings couldn't be computed due to parse errors
+    pub warnings_error: Option<String>,
     pub is_loading: bool,
     pub error: Option<String>,
 }
@@ -278,6 +300,7 @@ impl TxVerifyState {
         self.fetched_tx = None;
         self.hashes = None;
         self.warnings = SafeWarnings::new();
+        self.warnings_error = None;
         self.expected.clear_result();
         self.decode = None;
         self.error = None;
@@ -349,12 +372,14 @@ pub struct OfflineState {
     pub gas_price: String,
     pub gas_token: String,
     pub refund_receiver: String,
-    
+
     // Results
     pub decode_result: Option<OfflineDecodeResult>,
     pub hashes: Option<ComputedHashes>,
     pub warnings: SafeWarnings,
-    
+    /// Set when warnings couldn't be computed due to parse errors
+    pub warnings_error: Option<String>,
+
     // State
     pub is_loading: bool,
     pub error: Option<String>,
@@ -376,6 +401,7 @@ impl Default for OfflineState {
             decode_result: None,
             hashes: None,
             warnings: SafeWarnings::new(),
+            warnings_error: None,
             is_loading: false,
             error: None,
         }
@@ -387,6 +413,7 @@ impl OfflineState {
         self.decode_result = None;
         self.hashes = None;
         self.warnings = SafeWarnings::new();
+        self.warnings_error = None;
         self.error = None;
     }
 }
@@ -400,18 +427,30 @@ mod tests {
         let mut book = AddressBook::default();
         // One valid checksummed, one valid unchecksummed (lowercase), one invalid
         let csv = "address,name,chainId\n0x4F2083f5fBede34C2714aFfb3105539775f7FE64,endowment.ensdao.eth,1\n0xfe89cc7abb2c4183683ab71653c4cdc9b02d44b7,test,1\n0xinvalid,bad,1";
-        
+
         let (count, skipped) = book.import_csv(csv).unwrap();
         assert_eq!(count, 2);
         assert_eq!(skipped, 1);
         assert_eq!(book.entries.len(), 2);
-        
+
         // Both should be checksummed now
-        assert_eq!(book.entries[0].address, "0x4F2083f5fBede34C2714aFfb3105539775f7FE64");
-        assert_eq!(book.entries[1].address, "0xFe89cc7aBB2C4183683ab71653C4cdc9B02D44b7");
-        
-        assert_eq!(book.get_name("0x4F2083f5fBede34C2714aFfb3105539775f7FE64", 1), Some("endowment.ensdao.eth".to_string()));
-        assert_eq!(book.get_name("0xfe89cc7abb2c4183683ab71653c4cdc9b02d44b7", 1), Some("test".to_string()));
+        assert_eq!(
+            book.entries[0].address,
+            "0x4F2083f5fBede34C2714aFfb3105539775f7FE64"
+        );
+        assert_eq!(
+            book.entries[1].address,
+            "0xFe89cc7aBB2C4183683ab71653C4cdc9B02D44b7"
+        );
+
+        assert_eq!(
+            book.get_name("0x4F2083f5fBede34C2714aFfb3105539775f7FE64", 1),
+            Some("endowment.ensdao.eth".to_string())
+        );
+        assert_eq!(
+            book.get_name("0xfe89cc7abb2c4183683ab71653c4cdc9b02d44b7", 1),
+            Some("test".to_string())
+        );
     }
 
     #[test]
@@ -427,7 +466,7 @@ mod tests {
             name: "New".to_string(),
             chain_id: 1,
         });
-        
+
         assert_eq!(book.entries.len(), 1);
         assert_eq!(book.get_name("0x123", 1), Some("New".to_string()));
     }

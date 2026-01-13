@@ -1,9 +1,6 @@
-name: Deploy with Verification
+name: Deploy without Verification
 on:
-    push:
-        branches: [main]
-    release:
-        types: [published]
+    workflow_dispatch: # Manual trigger only - disabled by default
 
 permissions:
     contents: write
@@ -39,6 +36,7 @@ jobs:
 
             # GitHub attestation (cryptographic proof)
             - name: Attest Build
+              if: ${{ !env.ACT }}
               uses: actions/attest-build-provenance@v1
               with:
                   subject-path: "dist/*.wasm"

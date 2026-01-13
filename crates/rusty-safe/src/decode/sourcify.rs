@@ -5,11 +5,11 @@
 //!
 //! Cache is persisted via eframe storage (works on both WASM and native).
 
-use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use eyre::{Result, WrapErr};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
 
 const SOURCIFY_API: &str = "https://api.4byte.sourcify.dev/signature-database/v1/lookup";
 
@@ -36,6 +36,19 @@ macro_rules! debug_log {
     };
 }
 
+/// Acquire mutex lock, recovering from poisoned state if necessary.
+macro_rules! lock_or_recover {
+    ($mutex:expr) => {
+        match $mutex.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => {
+                debug_log!("Warning: Mutex was poisoned, recovering");
+                poisoned.into_inner()
+            }
+        }
+    };
+}
+
 /// Response from Sourcify Signature Database API
 #[derive(Debug, Deserialize)]
 struct SourcifyResponse {
@@ -56,8 +69,14 @@ struct SignatureEntry {
     name: String,
     #[allow(dead_code)]
     filtered: bool,
-    #[allow(dead_code)]
     has_verified_contract: Option<bool>,
+}
+
+/// A signature with its verification status
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SignatureInfo {
+    pub signature: String,
+    pub verified: bool,
 }
 
 /// Cached 4byte signature lookup client with spurious connection detection
@@ -66,7 +85,7 @@ struct SignatureEntry {
 /// `MAX_FAILED_REQUESTS` consecutive failures (timeout, network error, 5xx).
 #[derive(Clone)]
 pub struct SignatureLookup {
-    cache: Arc<Mutex<HashMap<String, Vec<String>>>>,
+    cache: Arc<Mutex<HashMap<String, Vec<SignatureInfo>>>>,
     /// Whether the API connection appears to be down
     is_spurious: Arc<AtomicBool>,
     /// Count of consecutive failed requests
@@ -82,7 +101,7 @@ impl Default for SignatureLookup {
 /// Serializable cache format for storage
 #[derive(Serialize, Deserialize, Default)]
 struct StoredCache {
-    signatures: HashMap<String, Vec<String>>,
+    signatures: HashMap<String, Vec<SignatureInfo>>,
 }
 
 impl SignatureLookup {
@@ -93,41 +112,44 @@ impl SignatureLookup {
             failed_count: Arc::new(AtomicUsize::new(0)),
         }
     }
-    
+
     /// Load cache from eframe storage
     pub fn load(storage: Option<&dyn eframe::Storage>) -> Self {
         let cache = if let Some(storage) = storage {
-            storage.get_string(SIGNATURES_STORAGE_KEY)
+            storage
+                .get_string(SIGNATURES_STORAGE_KEY)
                 .and_then(|s| serde_json::from_str::<StoredCache>(&s).ok())
                 .map(|c| c.signatures)
                 .unwrap_or_default()
         } else {
             HashMap::new()
         };
-        
+
         debug_log!("Loaded {} cached signatures from storage", cache.len());
-        
+
         Self {
             cache: Arc::new(Mutex::new(cache)),
             is_spurious: Arc::new(AtomicBool::new(false)),
             failed_count: Arc::new(AtomicUsize::new(0)),
         }
     }
-    
+
     /// Save cache to eframe storage
     pub fn save(&self, storage: &mut dyn eframe::Storage) {
-        let cache = self.cache.lock().unwrap();
-        
+        let cache = lock_or_recover!(self.cache);
+
         // Limit cache size to prevent unbounded growth
-        let signatures: HashMap<String, Vec<String>> = if cache.len() > MAX_CACHED_SELECTORS {
-            cache.iter()
+        let signatures: HashMap<String, Vec<SignatureInfo>> = if cache.len() > MAX_CACHED_SELECTORS
+        {
+            cache
+                .iter()
                 .take(MAX_CACHED_SELECTORS)
                 .map(|(k, v)| (k.clone(), v.clone()))
                 .collect()
         } else {
             cache.clone()
         };
-        
+
         let stored = StoredCache { signatures };
         if let Ok(json) = serde_json::to_string(&stored) {
             storage.set_string(SIGNATURES_STORAGE_KEY, json);
@@ -155,13 +177,18 @@ impl SignatureLookup {
     fn on_failure(&self, err: &reqwest::Error) {
         // Only count connectivity-type errors (timeout, or server errors)
         // Note: is_connect() isn't available in WASM, so we check timeout and server errors
-        let is_connectivity_error = err.is_timeout() 
+        let is_connectivity_error = err.is_timeout()
             || err.status().map_or(false, |s| s.is_server_error())
-            || err.is_request();  // Catch other request-level failures
-        
+            || err.is_request(); // Catch other request-level failures
+
         if is_connectivity_error {
             let count = self.failed_count.fetch_add(1, Ordering::SeqCst) + 1;
-            debug_log!("Request failed ({}/{}): {}", count, MAX_FAILED_REQUESTS, err);
+            debug_log!(
+                "Request failed ({}/{}): {}",
+                count,
+                MAX_FAILED_REQUESTS,
+                err
+            );
             if count >= MAX_FAILED_REQUESTS {
                 debug_log!("Marking API as spurious after {} failures", count);
                 self.is_spurious.store(true, Ordering::Relaxed);
@@ -170,7 +197,8 @@ impl SignatureLookup {
     }
 
     /// Lookup a single selector (checks cache first)
-    pub async fn lookup(&self, selector: &str) -> Result<Vec<String>> {
+    /// Returns signatures with verification status, sorted by verified first
+    pub async fn lookup(&self, selector: &str) -> Result<Vec<SignatureInfo>> {
         // Short-circuit if API is marked as down
         if self.is_spurious() {
             debug_log!("Skipping lookup - API marked as spurious");
@@ -182,7 +210,7 @@ impl SignatureLookup {
 
         // Check cache
         {
-            let cache = self.cache.lock().unwrap();
+            let cache = lock_or_recover!(self.cache);
             if let Some(sigs) = cache.get(&selector) {
                 debug_log!("Cache hit for {}: {} signatures", selector, sigs.len());
                 return Ok(sigs.clone());
@@ -196,7 +224,7 @@ impl SignatureLookup {
 
         // Cache result
         {
-            let mut cache = self.cache.lock().unwrap();
+            let mut cache = lock_or_recover!(self.cache);
             cache.insert(selector, sigs.clone());
         }
 
@@ -204,13 +232,14 @@ impl SignatureLookup {
     }
 
     /// Batch lookup multiple selectors (deduplicates, uses cache)
-    pub async fn lookup_batch(&self, selectors: &[String]) -> HashMap<String, Vec<String>> {
+    /// Returns signatures with verification status for each selector
+    pub async fn lookup_batch(&self, selectors: &[String]) -> HashMap<String, Vec<SignatureInfo>> {
         let mut results = HashMap::new();
         let mut to_fetch = Vec::new();
 
         // Check cache, collect uncached
         {
-            let cache = self.cache.lock().unwrap();
+            let cache = lock_or_recover!(self.cache);
             for sel in selectors {
                 let normalized = normalize_selector(sel);
                 if let Some(sigs) = cache.get(&normalized) {
@@ -226,12 +255,16 @@ impl SignatureLookup {
             return results;
         }
 
-        debug_log!("Batch fetching {} selectors: {:?}", to_fetch.len(), to_fetch);
+        debug_log!(
+            "Batch fetching {} selectors: {:?}",
+            to_fetch.len(),
+            to_fetch
+        );
 
         // Fetch all uncached in one request
         match self.fetch_batch(&to_fetch).await {
             Ok(fetched) => {
-                let mut cache = self.cache.lock().unwrap();
+                let mut cache = lock_or_recover!(self.cache);
                 for (sel, sigs) in fetched {
                     cache.insert(sel.clone(), sigs.clone());
                     results.insert(sel, sigs);
@@ -248,19 +281,22 @@ impl SignatureLookup {
     /// Check if selector is cached
     pub fn is_cached(&self, selector: &str) -> bool {
         let selector = normalize_selector(selector);
-        let cache = self.cache.lock().unwrap();
+        let cache = lock_or_recover!(self.cache);
         cache.contains_key(&selector)
     }
 
     /// Fetch signatures for a selector from Sourcify
-    async fn fetch_single(&self, selector: &str) -> Result<Vec<String>> {
+    async fn fetch_single(&self, selector: &str) -> Result<Vec<SignatureInfo>> {
         self.fetch_batch(&[selector.to_string()])
             .await
             .map(|mut map| map.remove(selector).unwrap_or_default())
     }
 
     /// Fetch signatures for multiple selectors in one request
-    async fn fetch_batch(&self, selectors: &[String]) -> Result<HashMap<String, Vec<String>>> {
+    async fn fetch_batch(
+        &self,
+        selectors: &[String],
+    ) -> Result<HashMap<String, Vec<SignatureInfo>>> {
         if selectors.is_empty() {
             return Ok(HashMap::new());
         }
@@ -273,7 +309,11 @@ impl SignatureLookup {
 
         // Build URL with comma-delimited selectors
         // e.g., ?function=0xa9059cbb,0x095ea7b3&filter=true
-        let selectors_csv: String = selectors.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(",");
+        let selectors_csv: String = selectors
+            .iter()
+            .map(|s| s.as_str())
+            .collect::<Vec<_>>()
+            .join(",");
         let url = format!("{}?function={}&filter=true", SOURCIFY_API, selectors_csv);
         debug_log!("Fetching: {}", url);
 
@@ -310,19 +350,22 @@ impl SignatureLookup {
         // Success - reset failure count
         self.on_success();
 
-        // Convert to our format, prioritizing verified signatures
+        // Convert to our format, preserving verification status
+        // Sort: verified contracts first
         let mut results = HashMap::new();
         for (selector, entries) in api_response.result.function {
-            // Sort: verified contracts first
-            let mut sigs: Vec<(bool, String)> = entries
+            let mut sigs: Vec<SignatureInfo> = entries
                 .into_iter()
-                .map(|e| (e.has_verified_contract.unwrap_or(false), e.name))
+                .map(|e| SignatureInfo {
+                    signature: e.name,
+                    verified: e.has_verified_contract.unwrap_or(false),
+                })
                 .collect();
-            sigs.sort_by(|a, b| b.0.cmp(&a.0)); // verified first
+            // Sort: verified first
+            sigs.sort_by(|a, b| b.verified.cmp(&a.verified));
 
-            let sig_names: Vec<String> = sigs.into_iter().map(|(_, name)| name).collect();
-            debug_log!("Selector {}: {:?}", selector, sig_names);
-            results.insert(selector, sig_names);
+            debug_log!("Selector {}: {:?}", selector, sigs);
+            results.insert(selector, sigs);
         }
 
         Ok(results)
@@ -350,5 +393,3 @@ mod tests {
         assert_eq!(normalize_selector("0xa9059cbb"), "0xa9059cbb");
     }
 }
-
-
