@@ -343,10 +343,11 @@ impl App {
                     if pending_count > 0 {
                         if ui
                             .small_button(format!("⏳ Pending: {}", pending_count))
-                            .on_hover_text("Click to set nonce to pending count")
+                            .on_hover_text("Click to set nonce to latest pending transaction")
                             .clicked()
                         {
-                            self.tx_state.nonce = pending_count.to_string();
+                            // Nonce is 0-indexed, so latest pending is at pending_count - 1
+                            self.tx_state.nonce = (pending_count - 1).to_string();
                         }
                     }
                 }
