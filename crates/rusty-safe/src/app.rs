@@ -373,7 +373,7 @@ impl App {
 
         if self.tx_state.fetched_txs.len() > 1 {
             ui.add_space(10.0);
-            ui::section_header(ui, "Select Transaction");
+            ui::section_header(ui, &format!("Select Transaction for Nonce: {}", self.tx_state.nonce));
             ui::warning_banner(
                 ui,
                 "Multiple transactions found for this nonce. Safe API keeps all proposals with the same nonce (replacements/cancellations). Select one to verify.",
