@@ -516,8 +516,8 @@ impl App {
                     ui.end_row();
 
                     if let Some(execution_date) = &tx.execution_date {
-                        ui.label("Execution Date:");
-                        ui.label(execution_date);
+                        ui.label("Executed:");
+                        ui.label(Self::format_datetime(execution_date));
                         ui.label(""); // Empty for alignment
                         ui.end_row();
                     }
