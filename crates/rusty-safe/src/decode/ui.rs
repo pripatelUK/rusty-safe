@@ -212,7 +212,7 @@ fn render_single_section(
                 ui.label(
                     egui::RichText::new(format!("[{}]", selector))
                         .monospace()
-                        .weak(),
+                        .small(),
                 );
                 render_status_badge(ui, &decode.comparison);
             });
@@ -342,7 +342,7 @@ fn render_params_rows(
         if let Some(ap) = api_param {
             let label = format!("{} ({}):", ap.name, ap.typ);
             ui.vertical(|ui| {
-                ui.label(egui::RichText::new(label).weak());
+                ui.label(egui::RichText::new(label).small());
                 let color = if has_mismatch {
                     Some(egui::Color32::from_rgb(220, 80, 80))
                 } else {
@@ -359,7 +359,7 @@ fn render_params_rows(
         if let Some(lp) = local_param {
             let label = format!("param{} ({}):", i, lp.typ);
             ui.vertical(|ui| {
-                ui.label(egui::RichText::new(label).weak());
+                ui.label(egui::RichText::new(label).small());
                 let color = if has_mismatch {
                     Some(egui::Color32::from_rgb(100, 200, 100))
                 } else {
@@ -833,7 +833,7 @@ fn render_offline_decode(
             .striped(true)
             .show(ui, |ui| {
                 for (i, param) in local.params.iter().enumerate() {
-                    ui.label(egui::RichText::new(format!("param{} ({}):", i, param.typ)).weak());
+                    ui.label(egui::RichText::new(format!("param{} ({}):", i, param.typ)).small());
                     let id_salt = format!("{}_{}", id_prefix, i);
                     render_param_value(ui, &param.value, safe_ctx, None, &id_salt);
                     ui.end_row();

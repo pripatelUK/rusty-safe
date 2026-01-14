@@ -72,7 +72,7 @@ pub fn render_section(ui: &mut egui::Ui, state: &mut ExpectedState) {
         .show(ui, |ui| {
             ui.add_space(5.0);
             ui.label(
-                egui::RichText::new("Enter expected values to verify against API response:").weak(),
+                egui::RichText::new("Enter expected values to verify against API response:").small(),
             );
             ui.add_space(8.0);
 

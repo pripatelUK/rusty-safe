@@ -1599,9 +1599,9 @@ impl App {
                             .min_col_width(available_width * 0.2)
                             .show(ui, |ui| {
                                 // Header
-                                ui.label(egui::RichText::new("NAME").weak());
-                                ui.label(egui::RichText::new("ADDRESS").weak());
-                                ui.label(egui::RichText::new("CHAIN").weak());
+                                ui.label(egui::RichText::new("NAME").strong().small());
+                                ui.label(egui::RichText::new("ADDRESS").strong().small());
+                                ui.label(egui::RichText::new("CHAIN").strong().small());
                                 ui.label(""); // Actions
                                 ui.end_row();
 
