@@ -221,6 +221,51 @@ pub fn success_message(ui: &mut egui::Ui, message: &str) {
     });
 }
 
+/// Prominent success banner for important verification results
+pub fn success_banner(ui: &mut egui::Ui, message: &str) {
+    egui::Frame::none()
+        .fill(egui::Color32::from_rgb(30, 70, 50))
+        .rounding(4.0)
+        .inner_margin(egui::Margin::symmetric(10.0, 6.0))
+        .show(ui, |ui| {
+            ui.label(
+                egui::RichText::new(format!("✅ {}", message))
+                    .color(egui::Color32::from_rgb(120, 220, 140))
+                    .strong(),
+            );
+        });
+}
+
+/// Prominent error banner for important verification failures
+pub fn error_banner(ui: &mut egui::Ui, message: &str) {
+    egui::Frame::none()
+        .fill(egui::Color32::from_rgb(70, 30, 30))
+        .rounding(4.0)
+        .inner_margin(egui::Margin::symmetric(10.0, 6.0))
+        .show(ui, |ui| {
+            ui.label(
+                egui::RichText::new(format!("❌ {}", message))
+                    .color(egui::Color32::from_rgb(220, 120, 120))
+                    .strong(),
+            );
+        });
+}
+
+/// Prominent warning banner for important cautions
+pub fn warning_banner(ui: &mut egui::Ui, message: &str) {
+    egui::Frame::none()
+        .fill(egui::Color32::from_rgb(70, 55, 25))
+        .rounding(4.0)
+        .inner_margin(egui::Margin::symmetric(10.0, 6.0))
+        .show(ui, |ui| {
+            ui.label(
+                egui::RichText::new(format!("⚠️ {}", message))
+                    .color(egui::Color32::from_rgb(230, 190, 90))
+                    .strong(),
+            );
+        });
+}
+
 /// Warning message display
 pub fn warning_message(ui: &mut egui::Ui, message: &str, color: egui::Color32) {
     ui.horizontal(|ui| {

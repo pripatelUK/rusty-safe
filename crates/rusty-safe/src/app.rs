@@ -486,41 +486,24 @@ impl App {
 
             let w = &self.tx_state.warnings;
             if w.delegatecall {
-                ui::warning_message(
-                    ui,
-                    "⚠️ DELEGATECALL - can modify Safe state!",
-                    egui::Color32::from_rgb(220, 50, 50),
-                );
+                ui::error_banner(ui, "DELEGATECALL - can modify Safe state!");
             }
             if w.non_zero_gas_token {
-                ui::warning_message(
-                    ui,
-                    "Non-zero gas token",
-                    egui::Color32::from_rgb(220, 180, 50),
-                );
+                ui::warning_banner(ui, "Non-zero gas token");
             }
             if w.non_zero_refund_receiver {
-                ui::warning_message(
-                    ui,
-                    "Non-zero refund receiver",
-                    egui::Color32::from_rgb(220, 180, 50),
-                );
+                ui::warning_banner(ui, "Non-zero refund receiver");
             }
             if w.dangerous_methods {
-                ui::warning_message(
-                    ui,
-                    "⚠️ Dangerous method (owner/threshold change)",
-                    egui::Color32::from_rgb(220, 120, 50),
-                );
+                ui::warning_banner(ui, "Dangerous method (owner/threshold change)");
             }
             for mismatch in &w.argument_mismatches {
-                ui::warning_message(
+                ui::error_banner(
                     ui,
                     &format!(
                         "Mismatch in {}: API={}, computed={}",
                         mismatch.field, mismatch.api_value, mismatch.user_value
                     ),
-                    egui::Color32::from_rgb(220, 50, 50),
                 );
             }
         }
@@ -579,9 +562,9 @@ impl App {
             ui.add_space(10.0);
             if let Some(matches) = hashes.matches_api {
                 if matches {
-                    ui::success_message(ui, "Computed hash matches API data");
+                    ui::success_banner(ui, "Computed hash matches API data");
                 } else {
-                    ui::error_message(ui, "Computed hash does NOT match API data!");
+                    ui::error_banner(ui, "Computed hash does NOT match API data!");
                 }
             }
         }

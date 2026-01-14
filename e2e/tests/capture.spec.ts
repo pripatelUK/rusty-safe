@@ -35,3 +35,40 @@ test('capture current UI state', async ({ page }) => {
   // We can add more targeted captures as needed
   console.log('Screenshots captured successfully');
 });
+
+test('capture with transaction data', async ({ page }) => {
+  await page.goto('/');
+  await waitForCanvasRendered(page);
+
+  const canvas = page.locator('canvas');
+
+  // Enter Safe Address
+  await canvas.click({ position: { x: 127, y: 210 } });
+  await page.waitForTimeout(500);
+  await page.keyboard.press('Control+a');
+  await page.keyboard.type('0x595362A906a0B4e90AEe1430b1f80FDDe2bE80de', { delay: 3 });
+  await page.waitForTimeout(500);
+
+  // Click Fetch Details
+  await canvas.click({ position: { x: 70, y: 290 } });
+  await page.waitForTimeout(4000);
+
+  // Enter Nonce
+  await canvas.click({ position: { x: 430, y: 147 } });
+  await page.waitForTimeout(300);
+  await page.keyboard.press('Control+a');
+  await page.keyboard.type('5');
+  await page.waitForTimeout(500);
+
+  // Click Fetch & Verify
+  await canvas.click({ position: { x: 352, y: 222 } });
+  await page.waitForTimeout(6000);
+
+  // Scroll to see all verification results
+  await canvas.click({ position: { x: 640, y: 400 } });
+  await page.mouse.wheel(0, 250);
+  await page.waitForTimeout(500);
+
+  await page.screenshot({ path: 'screenshots/full-with-data.png', fullPage: true });
+  console.log('Transaction data screenshot captured');
+});

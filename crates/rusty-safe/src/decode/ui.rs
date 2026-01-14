@@ -666,18 +666,7 @@ fn render_status_badge(ui: &mut egui::Ui, result: &ComparisonResult) {
 fn render_comparison_message(ui: &mut egui::Ui, result: &ComparisonResult) {
     match result {
         ComparisonResult::Match => {
-            // Show match as a prominent success banner
-            egui::Frame::none()
-                .fill(egui::Color32::from_rgb(30, 70, 50))
-                .rounding(4.0)
-                .inner_margin(egui::Margin::symmetric(10.0, 6.0))
-                .show(ui, |ui| {
-                    ui.label(
-                        egui::RichText::new("✅ Decodings match - independently verified")
-                            .color(egui::Color32::from_rgb(120, 220, 140))
-                            .strong(),
-                    );
-                });
+            ui::success_banner(ui, "Decodings match - independently verified");
         }
         ComparisonResult::MethodMismatch { api, local } => {
             ui.label(
