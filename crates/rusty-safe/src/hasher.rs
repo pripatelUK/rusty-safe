@@ -22,6 +22,16 @@ pub struct SafeInfo {
     pub owners: Vec<Address>,
     pub modules: Vec<Address>,
     pub version: String,
+    /// Number of unique pending nonces (fetched separately)
+    #[serde(skip)]
+    pub pending_nonce_count: Option<u64>,
+}
+
+/// Response for pending transactions count
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PendingTxResponse {
+    count_unique_nonce: Option<u64>,
 }
 
 /// Deserialize a string number to u64
@@ -56,10 +66,21 @@ pub async fn fetch_safe_info(chain_name: &str, safe_address: &str) -> Result<Saf
         eyre::bail!("API error: {}", response.status());
     }
 
-    let safe_info: SafeInfo = response
+    let mut safe_info: SafeInfo = response
         .json()
         .await
         .wrap_err("Failed to parse Safe info")?;
+
+    // Fetch pending nonce count (non-blocking, don't fail if this errors)
+    let pending_url = format!(
+        "{}/api/v1/safes/{}/multisig-transactions/?executed=false&limit=1",
+        api_url, addr
+    );
+    if let Ok(pending_response) = reqwest::get(&pending_url).await {
+        if let Ok(pending_data) = pending_response.json::<PendingTxResponse>().await {
+            safe_info.pending_nonce_count = pending_data.count_unique_nonce;
+        }
+    }
 
     Ok(safe_info)
 }

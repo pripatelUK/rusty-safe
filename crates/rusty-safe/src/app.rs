@@ -312,7 +312,7 @@ impl App {
                 }
             }
 
-            // Show latest nonce info
+            // Show latest nonce info and pending count
             if let Some(ref info) = self.safe_info {
                 if ui
                     .small_button(format!("⟳ Latest: {}", info.nonce))
@@ -324,6 +324,19 @@ impl App {
                         self.tx_state.nonce = (info.nonce - 1).to_string();
                     } else {
                         self.tx_state.nonce = "0".to_string();
+                    }
+                }
+
+                // Show pending nonce count if available
+                if let Some(pending_count) = info.pending_nonce_count {
+                    if pending_count > 0 {
+                        if ui
+                            .small_button(format!("⏳ Pending: {}", pending_count))
+                            .on_hover_text("Click to set nonce to pending count")
+                            .clicked()
+                        {
+                            self.tx_state.nonce = pending_count.to_string();
+                        }
                     }
                 }
             }
