@@ -9,8 +9,6 @@ use safe_utils::{
     SafeWalletVersion,
 };
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
-use web_time::Instant;
 
 use crate::api::SafeTransaction;
 use crate::decode::{self, ComparisonResult, SignatureLookup, TransactionKind};
@@ -118,8 +116,6 @@ pub struct App {
     safe_info: Option<crate::hasher::SafeInfo>,
     /// Whether Safe info fetch is in progress
     safe_info_loading: bool,
-    /// Scheduled time for auto-fetch after Fetch Details (rate limit delay)
-    auto_fetch_after: Option<Instant>,
     /// Address book UI state
     address_book_open: bool,
     address_book_import_text: String,
@@ -171,7 +167,6 @@ impl App {
             offline_decode_result: Arc::new(Mutex::new(None)),
             safe_info: None,
             safe_info_loading: false,
-            auto_fetch_after: None,
             address_book_open: false,
             address_book_import_text: String::new(),
             address_book_error: None,
@@ -201,14 +196,6 @@ impl eframe::App for App {
 
         // Check for async Safe info results
         self.check_safe_info_result();
-
-        // Check if scheduled auto-fetch time has elapsed (1 second delay to avoid rate limits)
-        if let Some(fetch_time) = self.auto_fetch_after {
-            if Instant::now() >= fetch_time {
-                self.auto_fetch_after = None;
-                self.fetch_and_verify(ctx);
-            }
-        }
 
         // Check for async offline decode results
         self.check_offline_decode_result();
@@ -325,29 +312,27 @@ impl App {
 
             // Show latest nonce info and pending count
             if let Some(ref info) = self.safe_info {
+                // Latest nonce button - shows the nonce that will be set (nonce - 1)
+                let latest_nonce = if info.nonce > 0 { info.nonce - 1 } else { 0 };
                 if ui
-                    .small_button(format!("⟳ Latest: {}", info.nonce))
-                    .on_hover_text("Click to use latest nonce (next available)")
+                    .small_button(format!("⟳ Latest: {}", latest_nonce))
+                    .on_hover_text("Click to use most recent queued nonce")
                     .clicked()
                 {
-                    // Set to latest - 1 since we want the most recent queued tx
-                    if info.nonce > 0 {
-                        self.tx_state.nonce = (info.nonce - 1).to_string();
-                    } else {
-                        self.tx_state.nonce = "0".to_string();
-                    }
+                    self.tx_state.nonce = latest_nonce.to_string();
                 }
 
                 // Show pending nonce count if available
                 if let Some(pending_count) = info.pending_nonce_count {
                     if pending_count > 0 {
+                        // Pending button - shows the nonce that will be set (count - 1)
+                        let pending_nonce = pending_count - 1;
                         if ui
-                            .small_button(format!("⏳ Pending: {}", pending_count))
-                            .on_hover_text("Click to set nonce to latest pending transaction")
+                            .small_button(format!("⏳ Pending: {}", pending_nonce))
+                            .on_hover_text(format!("{} pending transaction(s)", pending_count))
                             .clicked()
                         {
-                            // Nonce is 0-indexed, so latest pending is at pending_count - 1
-                            self.tx_state.nonce = (pending_count - 1).to_string();
+                            self.tx_state.nonce = pending_nonce.to_string();
                         }
                     }
                 }
@@ -1624,18 +1609,40 @@ impl App {
                         &self.safe_context.safe_address,
                     );
 
-                    // Set nonce to latest pending (nonce - 1) for auto-fetch
-                    let latest_nonce = if info.nonce > 0 {
-                        info.nonce - 1
+                    // If we have a pre-fetched pending transaction, use it directly
+                    // instead of making another API call
+                    if let Some(pending_tx) = info.pending_transaction.clone() {
+                        // Set nonce from the pending transaction
+                        self.tx_state.nonce = pending_tx.nonce.to_string();
+
+                        // Clear previous state
+                        self.tx_state.is_loading = true;
+                        self.tx_state.error = None;
+                        self.tx_state.warnings = SafeWarnings::new();
+                        self.tx_state.hashes = None;
+                        self.tx_state.fetched_tx = None;
+                        self.tx_state.fetched_txs.clear();
+                        self.tx_state.selected_tx_index = None;
+                        self.tx_state.decode = None;
+                        self.tx_state.warnings_error = None;
+                        self.tx_state.show_full_data = false;
+
+                        // Populate fetch_result with the pre-fetched transaction
+                        {
+                            let mut guard = lock_or_recover!(self.fetch_result);
+                            *guard = Some(FetchResult::Success(vec![pending_tx]));
+                        }
                     } else {
-                        0
-                    };
-                    self.tx_state.nonce = latest_nonce.to_string();
+                        // No pending transaction, set nonce to latest - 1 for manual fetch
+                        let latest_nonce = if info.nonce > 0 {
+                            info.nonce - 1
+                        } else {
+                            0
+                        };
+                        self.tx_state.nonce = latest_nonce.to_string();
+                    }
 
                     self.safe_info = Some(info);
-
-                    // Schedule auto-fetch after brief delay for UI to update
-                    self.auto_fetch_after = Some(Instant::now() + Duration::from_millis(50));
                 }
                 SafeInfoResult::Error(e) => {
                     debug_log!("Failed to fetch Safe info: {}", e);

@@ -25,13 +25,17 @@ pub struct SafeInfo {
     /// Number of unique pending nonces (fetched separately)
     #[serde(skip)]
     pub pending_nonce_count: Option<u64>,
+    /// First pending transaction (pre-fetched to avoid duplicate API call)
+    #[serde(skip)]
+    pub pending_transaction: Option<SafeTransaction>,
 }
 
-/// Response for pending transactions count
+/// Response for pending transactions (includes count_unique_nonce)
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct PendingTxResponse {
     count_unique_nonce: Option<u64>,
+    results: Vec<SafeTransaction>,
 }
 
 /// Deserialize a string number to u64
@@ -71,7 +75,8 @@ pub async fn fetch_safe_info(chain_name: &str, safe_address: &str) -> Result<Saf
         .await
         .wrap_err("Failed to parse Safe info")?;
 
-    // Fetch pending nonce count (non-blocking, don't fail if this errors)
+    // Fetch pending transactions (non-blocking, don't fail if this errors)
+    // This also gives us the first pending transaction to avoid a duplicate API call later
     let pending_url = format!(
         "{}/api/v1/safes/{}/multisig-transactions/?executed=false&limit=1",
         api_url, addr
@@ -79,6 +84,8 @@ pub async fn fetch_safe_info(chain_name: &str, safe_address: &str) -> Result<Saf
     if let Ok(pending_response) = reqwest::get(&pending_url).await {
         if let Ok(pending_data) = pending_response.json::<PendingTxResponse>().await {
             safe_info.pending_nonce_count = pending_data.count_unique_nonce;
+            // Capture the first pending transaction to avoid duplicate fetch
+            safe_info.pending_transaction = pending_data.results.into_iter().next();
         }
     }
 
