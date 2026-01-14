@@ -316,7 +316,7 @@ impl App {
                 let latest_nonce = if info.nonce > 0 { info.nonce - 1 } else { 0 };
                 if ui
                     .small_button(format!("⟳ Latest: {}", latest_nonce))
-                    .on_hover_text("Click to use most recent queued nonce")
+                    .on_hover_text(format!("Set nonce to {}", latest_nonce))
                     .clicked()
                 {
                     self.tx_state.nonce = latest_nonce.to_string();
@@ -329,7 +329,7 @@ impl App {
                         let pending_nonce = pending_count - 1;
                         if ui
                             .small_button(format!("⏳ Pending: {}", pending_nonce))
-                            .on_hover_text(format!("{} pending transaction(s)", pending_count))
+                            .on_hover_text(format!("Set nonce to {}", pending_nonce))
                             .clicked()
                         {
                             self.tx_state.nonce = pending_nonce.to_string();
