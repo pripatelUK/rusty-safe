@@ -200,20 +200,27 @@ fn render_single_section(
     selector: &str,
     safe_ctx: &crate::state::SafeContext,
 ) {
-    // Header
-    ui.horizontal(|ui| {
-        ui.label(egui::RichText::new("📦 Calldata Decoding").strong());
-        ui.label(
-            egui::RichText::new(format!("[{}]", selector))
-                .monospace()
-                .weak(),
-        );
-        render_status_badge(ui, &decode.comparison);
-    });
+    // Wrap in a card for visual grouping
+    egui::Frame::none()
+        .fill(ui.visuals().faint_bg_color)
+        .rounding(6.0)
+        .inner_margin(12.0)
+        .show(ui, |ui| {
+            // Header with prominent status
+            ui.horizontal(|ui| {
+                ui.label(egui::RichText::new("📦 Calldata Decoding").strong());
+                ui.label(
+                    egui::RichText::new(format!("[{}]", selector))
+                        .monospace()
+                        .weak(),
+                );
+                render_status_badge(ui, &decode.comparison);
+            });
 
-    ui.add_space(8.0);
+            ui.add_space(10.0);
 
-    render_single_comparison_with_chain(ui, decode, safe_ctx);
+            render_single_comparison_with_chain(ui, decode, safe_ctx);
+        });
 }
 
 /// Render side-by-side comparison for a single decode (no chain awareness - for backwards compat)
@@ -659,10 +666,18 @@ fn render_status_badge(ui: &mut egui::Ui, result: &ComparisonResult) {
 fn render_comparison_message(ui: &mut egui::Ui, result: &ComparisonResult) {
     match result {
         ComparisonResult::Match => {
-            ui.label(
-                egui::RichText::new("✅ Decodings match - independently verified")
-                    .color(egui::Color32::from_rgb(100, 200, 100)),
-            );
+            // Show match as a prominent success banner
+            egui::Frame::none()
+                .fill(egui::Color32::from_rgb(30, 70, 50))
+                .rounding(4.0)
+                .inner_margin(egui::Margin::symmetric(10.0, 6.0))
+                .show(ui, |ui| {
+                    ui.label(
+                        egui::RichText::new("✅ Decodings match - independently verified")
+                            .color(egui::Color32::from_rgb(120, 220, 140))
+                            .strong(),
+                    );
+                });
         }
         ComparisonResult::MethodMismatch { api, local } => {
             ui.label(
