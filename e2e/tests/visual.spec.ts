@@ -2,10 +2,17 @@ import { test, expect } from '@playwright/test';
 
 // Helper to wait for egui canvas to render
 async function waitForCanvas(page: any) {
-  // Wait for the canvas element to exist
+  // Wait for canvas element
   await page.waitForSelector('canvas');
-  // Give egui time to render initial frame
-  await page.waitForTimeout(1000);
+
+  // Wait for WASM to initialize - loading element disappears when ready
+  await page.waitForFunction(() => {
+    const loading = document.getElementById('loading');
+    return !loading || loading.style.display === 'none';
+  }, { timeout: 30000 });
+
+  // Give egui time to render frames
+  await page.waitForTimeout(2000);
 }
 
 test.describe('Visual Regression Tests', () => {
@@ -28,24 +35,26 @@ test.describe('Visual Regression Tests', () => {
     });
 
     test('message tab', async ({ page }) => {
-      // Click somewhere in the Message tab area
-      // Since egui renders to canvas, we use coordinates
-      // Message tab is typically the second tab
-      await page.mouse.click(200, 50);
+      // Click on Message tab via canvas element
+      // Tab positions at y~32: Verify Safe API (~230-350), Message (~360-440), EIP-712 (~450-520), Offline (~530-600)
+      const canvas = page.locator('canvas');
+      await canvas.click({ position: { x: 390, y: 32 } });
       await page.waitForTimeout(500);
       await expect(page).toHaveScreenshot('tab-message.png');
     });
 
     test('eip-712 tab', async ({ page }) => {
-      // EIP-712 tab is typically the third tab
-      await page.mouse.click(300, 50);
+      // Click on EIP-712 tab via canvas
+      const canvas = page.locator('canvas');
+      await canvas.click({ position: { x: 470, y: 32 } });
       await page.waitForTimeout(500);
       await expect(page).toHaveScreenshot('tab-eip712.png');
     });
 
     test('offline tab', async ({ page }) => {
-      // Offline tab is typically the fourth tab
-      await page.mouse.click(400, 50);
+      // Click on Offline tab via canvas
+      const canvas = page.locator('canvas');
+      await canvas.click({ position: { x: 545, y: 32 } });
       await page.waitForTimeout(500);
       await expect(page).toHaveScreenshot('tab-offline.png');
     });
