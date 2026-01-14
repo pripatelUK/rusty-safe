@@ -194,8 +194,10 @@ impl eframe::App for App {
         // Check for async decode results
         self.check_decode_result();
 
-        // Check for async Safe info results
-        self.check_safe_info_result();
+        // Check for async Safe info results - auto-fetch latest tx if successful
+        if self.check_safe_info_result() {
+            self.fetch_and_verify(ctx);
+        }
 
         // Check for async offline decode results
         self.check_offline_decode_result();
@@ -462,7 +464,7 @@ impl App {
                     ui.end_row();
 
                     ui.label("Submitted:");
-                    ui.label(&tx.submission_date);
+                    ui.label(Self::format_datetime(&tx.submission_date));
                     ui.label(""); // Empty for alignment
                     ui.end_row();
 
@@ -708,7 +710,7 @@ impl App {
         let hash = Self::shorten_middle(&tx.safe_tx_hash, 8, 6);
         if compact {
             let submitted = if show_submission_date {
-                format!(" | {}", Self::shorten_datetime(&tx.submission_date))
+                format!(" | {}", Self::format_datetime(&tx.submission_date))
             } else {
                 String::new()
             };
@@ -723,7 +725,7 @@ impl App {
         }
 
         let to = Self::shorten_middle(&format!("{}", tx.to), 6, 4);
-        let submitted = Self::shorten_datetime(&tx.submission_date);
+        let submitted = Self::format_datetime(&tx.submission_date);
         format!(
             "Tx {}: {} | {} | to {} | submitted {} | {}",
             index + 1,
@@ -807,8 +809,38 @@ impl App {
         }
     }
 
-    fn shorten_datetime(value: &str) -> String {
+    /// Format ISO datetime to readable format: "Jan 13, 2026 02:56"
+    fn format_datetime(value: &str) -> String {
         let trimmed = value.trim();
+
+        // Try to parse ISO format: 2026-01-13T02:56:59.850757Z
+        if trimmed.len() >= 16 && trimmed.contains('T') {
+            let months = [
+                "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+            ];
+
+            // Extract parts: YYYY-MM-DDTHH:MM
+            if let (Ok(year), Ok(month), Ok(day), Ok(hour), Ok(min)) = (
+                trimmed[0..4].parse::<u32>(),
+                trimmed[5..7].parse::<usize>(),
+                trimmed[8..10].parse::<u32>(),
+                trimmed[11..13].parse::<u32>(),
+                trimmed[14..16].parse::<u32>(),
+            ) {
+                if month >= 1 && month <= 12 {
+                    return format!(
+                        "{} {}, {} {:02}:{:02}",
+                        months[month - 1],
+                        day,
+                        year,
+                        hour,
+                        min
+                    );
+                }
+            }
+        }
+
+        // Fallback: truncate to first 19 chars
         if trimmed.len() > 19 {
             trimmed[..19].to_string()
         } else {
@@ -1536,7 +1568,8 @@ impl App {
         ))
     }
 
-    fn check_safe_info_result(&mut self) {
+    /// Check for safe info result and return true if we should auto-fetch latest tx
+    fn check_safe_info_result(&mut self) -> bool {
         let result = {
             let mut guard = lock_or_recover!(self.safe_info_result);
             guard.take()
@@ -1566,7 +1599,16 @@ impl App {
                         &self.safe_context.safe_address,
                     );
 
+                    // Set nonce to latest pending (nonce - 1) for auto-fetch
+                    let latest_nonce = if info.nonce > 0 {
+                        info.nonce - 1
+                    } else {
+                        0
+                    };
+                    self.tx_state.nonce = latest_nonce.to_string();
+
                     self.safe_info = Some(info);
+                    return true; // Signal to auto-fetch
                 }
                 SafeInfoResult::Error(e) => {
                     debug_log!("Failed to fetch Safe info: {}", e);
@@ -1574,6 +1616,7 @@ impl App {
                 }
             }
         }
+        false
     }
 
     fn trigger_safe_info_fetch(&mut self) {
