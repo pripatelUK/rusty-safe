@@ -390,6 +390,26 @@ struct UintPopupState {
     decimals: u8,
 }
 
+/// Format wei value with ETH equivalent if large enough
+pub fn format_wei_value(wei: &str) -> String {
+    let trimmed = wei.trim();
+    if trimmed.is_empty() || trimmed == "0" {
+        return "0 wei".to_string();
+    }
+
+    // If value is large enough to show ETH equivalent (> 0.001 ETH = 1e15 wei)
+    if trimmed.len() > 15 {
+        let eth = format_uint_with_decimals(trimmed, 18);
+        format!("{} wei ({} ETH)", add_thousand_separators(trimmed), eth)
+    } else if trimmed.len() > 9 {
+        // Show Gwei for medium values
+        let gwei = format_uint_with_decimals(trimmed, 9);
+        format!("{} wei ({} Gwei)", add_thousand_separators(trimmed), gwei)
+    } else {
+        format!("{} wei", add_thousand_separators(trimmed))
+    }
+}
+
 /// Check if a value looks like a large uint (numeric, no decimals, > 1e6)
 pub fn is_large_uint(value: &str) -> bool {
     let trimmed = value.trim();
