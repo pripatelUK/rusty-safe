@@ -11,9 +11,7 @@ use safe_utils::{
 use std::sync::{Arc, Mutex};
 
 use crate::api::SafeTransaction;
-use crate::decode::{
-    self, get_selector, ComparisonResult, SignatureLookup, SingleDecode, TransactionKind,
-};
+use crate::decode::{self, ComparisonResult, SignatureLookup, TransactionKind};
 
 /// Log to console (works in both WASM and native)
 macro_rules! debug_log {
@@ -44,7 +42,7 @@ macro_rules! lock_or_recover {
 }
 use crate::expected;
 use crate::hasher::{
-    compute_hashes_from_api_tx, fetch_transaction, get_warnings_for_tx, get_warnings_from_api_tx,
+    compute_hashes_from_api_tx, fetch_transactions, get_warnings_for_tx, get_warnings_from_api_tx,
 };
 use crate::sidebar;
 use crate::state::{
@@ -56,7 +54,7 @@ use crate::ui;
 /// Result from async fetch operation
 #[derive(Clone)]
 pub enum FetchResult {
-    Success(SafeTransaction),
+    Success(Vec<SafeTransaction>),
     Error(String),
 }
 
@@ -278,9 +276,15 @@ impl App {
     fn render_verify_safe_api_tab(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
         ui::styled_heading(ui, "Verify Safe API");
         ui.label("Verify Safe transaction hashes before signing.");
-        ui.add_space(15.0);
 
-        // Nonce input
+        ui.add_space(12.0);
+        ui.separator();
+        ui.add_space(8.0);
+
+        // Select Transaction section
+        ui.label(egui::RichText::new("Select Transaction").strong().size(13.0));
+        ui.add_space(6.0);
+
         ui.horizontal(|ui| {
             ui.label("Nonce:");
 
@@ -306,18 +310,30 @@ impl App {
                 }
             }
 
-            // Show latest nonce info
+            // Show latest nonce info and pending count
             if let Some(ref info) = self.safe_info {
+                // Latest nonce button - shows the nonce that will be set (nonce - 1)
+                let latest_nonce = if info.nonce > 0 { info.nonce - 1 } else { 0 };
                 if ui
-                    .small_button(format!("⟳ Latest: {}", info.nonce))
-                    .on_hover_text("Click to use latest nonce (next available)")
+                    .small_button(format!("⟳ Latest: {}", latest_nonce))
+                    .on_hover_text(format!("Set nonce to {}", latest_nonce))
                     .clicked()
                 {
-                    // Set to latest - 1 since we want the most recent queued tx
-                    if info.nonce > 0 {
-                        self.tx_state.nonce = (info.nonce - 1).to_string();
-                    } else {
-                        self.tx_state.nonce = "0".to_string();
+                    self.tx_state.nonce = latest_nonce.to_string();
+                }
+
+                // Show pending nonce count if available
+                if let Some(pending_count) = info.pending_nonce_count {
+                    if pending_count > 0 {
+                        // Pending button - shows the nonce that will be set (count - 1)
+                        let pending_nonce = pending_count - 1;
+                        if ui
+                            .small_button(format!("⏳ Pending: {}", pending_nonce))
+                            .on_hover_text(format!("Set nonce to {}", pending_nonce))
+                            .clicked()
+                        {
+                            self.tx_state.nonce = pending_nonce.to_string();
+                        }
                     }
                 }
             }
@@ -355,14 +371,113 @@ impl App {
             ui::error_message(ui, error);
         }
 
+        if self.tx_state.fetched_txs.len() > 1 {
+            ui.add_space(10.0);
+            ui::section_header(ui, &format!("Select Transaction for Nonce: {}", self.tx_state.nonce));
+            ui::warning_banner(
+                ui,
+                "Multiple transactions found for this nonce. Safe API keeps all proposals with the same nonce (replacements/cancellations). Select one to verify.",
+            );
+
+            let mut selected_index = self.tx_state.selected_tx_index.unwrap_or(0);
+            if selected_index >= self.tx_state.fetched_txs.len() {
+                selected_index = 0;
+            }
+
+            let show_submission_date = true;
+            let mut selection_changed = false;
+            ui.add_space(6.0);
+            egui::ScrollArea::vertical()
+                .max_height(120.0)
+                .show(ui, |ui| {
+                    for (idx, tx) in self.tx_state.fetched_txs.iter().enumerate() {
+                        let label = self.format_tx_label(idx, tx, false, show_submission_date);
+                        let selected = selected_index == idx;
+                        let indicator = if selected { "●" } else { "○" };
+
+                        // Determine colors based on selection state
+                        let (bg_color, text_color) = if selected {
+                            (
+                                egui::Color32::from_rgb(0, 150, 120),
+                                egui::Color32::WHITE,
+                            )
+                        } else {
+                            (
+                                egui::Color32::from_rgb(45, 45, 45),
+                                egui::Color32::from_rgb(200, 200, 200),
+                            )
+                        };
+
+                        let full_label = format!("{} {}", indicator, label);
+                        let response = egui::Frame::none()
+                            .fill(bg_color)
+                            .rounding(4.0)
+                            .inner_margin(egui::Margin::symmetric(10.0, 6.0))
+                            .show(ui, |ui| {
+                                ui.set_min_width(ui.available_width());
+                                ui.label(
+                                    egui::RichText::new(&full_label)
+                                        .size(13.0)
+                                        .color(text_color),
+                                );
+                            })
+                            .response
+                            .interact(egui::Sense::click())
+                            .on_hover_cursor(egui::CursorIcon::PointingHand);
+
+                        if response.clicked() {
+                            selected_index = idx;
+                            selection_changed = true;
+                        }
+                        ui.add_space(4.0);
+                    }
+                });
+
+            if selection_changed {
+                self.tx_state.selected_tx_index = Some(selected_index);
+                if let Some(tx) = self.tx_state.fetched_txs.get(selected_index).cloned() {
+                    self.apply_fetched_tx(ctx, tx);
+                }
+            }
+        }
+
         if let Some(tx) = &self.tx_state.fetched_tx {
             ui.add_space(15.0);
             ui::section_header(ui, "Transaction Details");
+
+            let action_label = self.tx_action_label(tx);
+            let status_label = Self::tx_status_label(tx);
 
             egui::Grid::new("tx_details")
                 .num_columns(3)
                 .spacing([10.0, 6.0])
                 .show(ui, |ui| {
+                    ui.label("Safe Tx Hash:");
+                    ui.label(
+                        egui::RichText::new(&tx.safe_tx_hash)
+                            .monospace()
+                            .size(11.0),
+                    );
+                    if ui.small_button("📋").on_hover_text("Copy").clicked() {
+                        ui::copy_to_clipboard(&tx.safe_tx_hash);
+                    }
+                    ui.end_row();
+
+                    ui.label("Status:");
+                    ui.label(status_label);
+                    ui.label(""); // Empty for alignment
+                    ui.end_row();
+
+                    ui.label("Action:");
+                    ui.label(&action_label);
+                    ui.label(""); // Empty for alignment
+                    ui.end_row();
+
+                    ui.label("Submitted:");
+                    ui.label(Self::format_datetime(&tx.submission_date));
+                    ui.label(""); // Empty for alignment
+                    ui.end_row();
+
                     ui.label("To:");
                     let to_str = format!("{}", tx.to);
                     let chain_id =
@@ -375,7 +490,7 @@ impl App {
                     ui.end_row();
 
                     ui.label("Value:");
-                    ui.label(format!("{} wei", tx.value));
+                    ui.label(ui::format_wei_value(&tx.value));
                     ui.label(""); // Empty for alignment
                     ui.end_row();
 
@@ -396,6 +511,29 @@ impl App {
                     ));
                     ui.label(""); // Empty for alignment
                     ui.end_row();
+
+                    if let Some(execution_date) = &tx.execution_date {
+                        ui.label("Executed:");
+                        ui.label(Self::format_datetime(execution_date));
+                        ui.label(""); // Empty for alignment
+                        ui.end_row();
+                    }
+
+                    if let Some(tx_hash) = &tx.transaction_hash {
+                        ui.label("Transaction Hash:");
+                        ui.label(egui::RichText::new(tx_hash).monospace().size(11.0));
+                        if ui.small_button("📋").on_hover_text("Copy").clicked() {
+                            ui::copy_to_clipboard(tx_hash);
+                        }
+                        ui.end_row();
+                    }
+
+                    if !tx.origin.is_empty() {
+                        ui.label("Origin:");
+                        ui.label(&tx.origin);
+                        ui.label(""); // Empty for alignment
+                        ui.end_row();
+                    }
                 });
 
             // Data field - full width outside grid
@@ -567,6 +705,156 @@ impl App {
                     ui::error_banner(ui, "Computed hash does NOT match API data!");
                 }
             }
+        }
+    }
+
+    fn format_tx_label(
+        &self,
+        index: usize,
+        tx: &SafeTransaction,
+        compact: bool,
+        show_submission_date: bool,
+    ) -> String {
+        let status = Self::tx_status_label(tx);
+        let action = self.tx_action_label(tx);
+        let hash = Self::shorten_middle(&tx.safe_tx_hash, 8, 6);
+        if compact {
+            let submitted = if show_submission_date {
+                format!(" | {}", Self::format_datetime(&tx.submission_date))
+            } else {
+                String::new()
+            };
+            return format!(
+                "Tx {}: {} | {}{} | {}",
+                index + 1,
+                status,
+                action,
+                submitted,
+                hash
+            );
+        }
+
+        let to = Self::shorten_middle(&format!("{}", tx.to), 6, 4);
+        let submitted = Self::format_datetime(&tx.submission_date);
+        format!(
+            "Tx {}: {} | {} | to {} | submitted {} | {}",
+            index + 1,
+            status,
+            action,
+            to,
+            submitted,
+            hash
+        )
+    }
+
+    fn tx_action_label(&self, tx: &SafeTransaction) -> String {
+        if let Some(decoded) = &tx.data_decoded {
+            if !decoded.method.is_empty() {
+                return decoded.method.clone();
+            }
+        }
+
+        let data_empty = Self::is_empty_data(&tx.data);
+        let value_zero = Self::is_zero_value(&tx.value);
+        let self_call = self.is_self_call(tx);
+
+        if data_empty && value_zero && self_call && tx.operation == 0 {
+            return "cancel (self-call)".to_string();
+        }
+
+        if data_empty && !value_zero {
+            return "eth transfer".to_string();
+        }
+
+        if data_empty {
+            return "empty calldata".to_string();
+        }
+
+        "unknown call".to_string()
+    }
+
+    fn is_self_call(&self, tx: &SafeTransaction) -> bool {
+        let safe_address = self.safe_context.safe_address.trim();
+        if safe_address.is_empty() {
+            return false;
+        }
+        match safe_address.parse::<alloy::primitives::Address>() {
+            Ok(addr) => addr == tx.to,
+            Err(_) => false,
+        }
+    }
+
+    fn is_empty_data(data: &str) -> bool {
+        let trimmed = data.trim();
+        trimmed.is_empty() || trimmed == "0x" || trimmed == "0X"
+    }
+
+    fn is_zero_value(value: &str) -> bool {
+        let trimmed = value.trim();
+        trimmed.is_empty() || trimmed == "0" || trimmed == "0x0" || trimmed == "0X0"
+    }
+
+    fn tx_status_label(tx: &SafeTransaction) -> &'static str {
+        if tx.is_executed {
+            match tx.is_successful {
+                Some(true) => "executed (success)",
+                Some(false) => "executed (failed)",
+                None => "executed",
+            }
+        } else {
+            "pending"
+        }
+    }
+
+    fn shorten_middle(value: &str, head: usize, tail: usize) -> String {
+        let trimmed = value.trim();
+        if trimmed.len() <= head + tail + 3 {
+            trimmed.to_string()
+        } else {
+            format!(
+                "{}...{}",
+                &trimmed[..head],
+                &trimmed[trimmed.len() - tail..]
+            )
+        }
+    }
+
+    /// Format ISO datetime to readable format: "Jan 13, 2026 02:56"
+    fn format_datetime(value: &str) -> String {
+        let trimmed = value.trim();
+
+        // Try to parse ISO format: 2026-01-13T02:56:59.850757Z
+        if trimmed.len() >= 16 && trimmed.contains('T') {
+            let months = [
+                "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+            ];
+
+            // Extract parts: YYYY-MM-DDTHH:MM
+            if let (Ok(year), Ok(month), Ok(day), Ok(hour), Ok(min)) = (
+                trimmed[0..4].parse::<u32>(),
+                trimmed[5..7].parse::<usize>(),
+                trimmed[8..10].parse::<u32>(),
+                trimmed[11..13].parse::<u32>(),
+                trimmed[14..16].parse::<u32>(),
+            ) {
+                if month >= 1 && month <= 12 {
+                    return format!(
+                        "{} {}, {} {:02}:{:02}",
+                        months[month - 1],
+                        day,
+                        year,
+                        hour,
+                        min
+                    );
+                }
+            }
+        }
+
+        // Fallback: truncate to first 19 chars
+        if trimmed.len() > 19 {
+            trimmed[..19].to_string()
+        } else {
+            trimmed.to_string()
         }
     }
 
@@ -926,6 +1214,11 @@ impl App {
         self.tx_state.warnings = SafeWarnings::new();
         self.tx_state.hashes = None;
         self.tx_state.fetched_tx = None;
+        self.tx_state.fetched_txs.clear();
+        self.tx_state.selected_tx_index = None;
+        self.tx_state.decode = None;
+        self.tx_state.warnings_error = None;
+        self.tx_state.show_full_data = false;
 
         let chain_name = self.safe_context.chain_name.clone();
         let safe_address = self.safe_context.safe_address.clone();
@@ -945,10 +1238,10 @@ impl App {
         #[cfg(target_arch = "wasm32")]
         {
             wasm_bindgen_futures::spawn_local(async move {
-                let fetch_result = fetch_transaction(&chain_name, &safe_address, nonce).await;
+                let fetch_result = fetch_transactions(&chain_name, &safe_address, nonce).await;
                 let mut result_guard = lock_or_recover!(result);
                 *result_guard = Some(match fetch_result {
-                    Ok(tx) => FetchResult::Success(tx),
+                    Ok(txs) => FetchResult::Success(txs),
                     Err(e) => FetchResult::Error(format!("{:#}", e)),
                 });
                 ctx.request_repaint();
@@ -960,10 +1253,10 @@ impl App {
             std::thread::spawn(move || {
                 let rt = tokio::runtime::Runtime::new().unwrap();
                 let fetch_result =
-                    rt.block_on(fetch_transaction(&chain_name, &safe_address, nonce));
+                    rt.block_on(fetch_transactions(&chain_name, &safe_address, nonce));
                 let mut result_guard = lock_or_recover!(result);
                 *result_guard = Some(match fetch_result {
-                    Ok(tx) => FetchResult::Success(tx),
+                    Ok(txs) => FetchResult::Success(txs),
                     Err(e) => FetchResult::Error(format!("{:#}", e)),
                 });
                 ctx.request_repaint();
@@ -981,105 +1274,127 @@ impl App {
             self.tx_state.is_loading = false;
 
             match result {
-                FetchResult::Success(tx) => {
-                    // Compute hashes from the fetched transaction using validate_safe_tx_hash
-                    match compute_hashes_from_api_tx(
-                        &self.safe_context.chain_name,
-                        &self.safe_context.safe_address,
-                        &self.safe_context.safe_version,
-                        &tx,
-                    ) {
-                        Ok((hashes, mismatch)) => {
-                            // Add hash mismatch to warnings if present
-                            if let Some(m) = mismatch {
-                                self.tx_state.warnings.argument_mismatches.push(m);
-                            }
-                            self.tx_state.hashes = Some(hashes);
-                        }
-                        Err(e) => {
-                            self.tx_state.error = Some(format!("Hash computation failed: {:#}", e));
-                        }
+                FetchResult::Success(txs) => {
+                    if txs.is_empty() {
+                        self.tx_state.error =
+                            Some("No transaction found for the specified nonce".to_string());
+                        return;
                     }
 
-                    // Get warnings using check_suspicious_content (via get_warnings_from_api_tx)
-                    let chain_id = ChainId::of(&self.safe_context.chain_name).ok();
-                    match get_warnings_from_api_tx(&tx, chain_id) {
-                        Ok(warnings) => self.tx_state.warnings.union(warnings),
-                        Err(e) => {
-                            debug_log!("Warning computation failed: {:#}", e);
-                            self.tx_state.warnings_error = Some(format!("{:#}", e));
-                        }
+                    let mut sorted = txs;
+                    sorted.sort_by(|a, b| b.submission_date.cmp(&a.submission_date));
+                    self.tx_state.fetched_txs = sorted;
+                    let selected_index = self
+                        .tx_state
+                        .selected_tx_index
+                        .unwrap_or(0)
+                        .min(self.tx_state.fetched_txs.len() - 1);
+                    self.tx_state.selected_tx_index = Some(selected_index);
+
+                    if let Some(tx) = self.tx_state.fetched_txs.get(selected_index).cloned() {
+                        self.apply_fetched_tx(ctx, tx);
                     }
-
-                    // Validate against expected values if any were provided
-                    if self.tx_state.expected.has_values() {
-                        self.tx_state.expected.result =
-                            Some(expected::validate_against_api(&tx, &self.tx_state.expected));
-                    }
-
-                    // Initialize calldata decode
-                    debug_log!("Parsing calldata: {} bytes", tx.data.len());
-                    let decode_state = decode::parse_initial(&tx.data, tx.data_decoded.as_ref());
-                    debug_log!(
-                        "Decode kind: {:?}, selector: {}",
-                        match &decode_state.kind {
-                            TransactionKind::Empty => "Empty",
-                            TransactionKind::Single(_) => "Single",
-                            TransactionKind::MultiSend(_) => "MultiSend",
-                            TransactionKind::Unknown => "Unknown",
-                        },
-                        decode_state.selector
-                    );
-                    // Determine what verification to trigger
-                    let verification_action = match &decode_state.kind {
-                        TransactionKind::Single(_) if !decode_state.selector.is_empty() => {
-                            Some(("single", decode_state.selector.clone(), tx.data.clone(), 0))
-                        }
-                        TransactionKind::MultiSend(multi) => Some((
-                            "multi",
-                            String::new(),
-                            String::new(),
-                            multi.transactions.len(),
-                        )),
-                        _ => None,
-                    };
-
-                    self.tx_state.decode = Some(decode_state);
-
-                    // Trigger verification based on transaction type
-                    if let Some((kind, selector, data, tx_count)) = verification_action {
-                        match kind {
-                            "single" => {
-                                debug_log!("Triggering 4byte lookup for selector: {}", selector);
-                                self.trigger_decode_lookup(ctx, &selector, &data);
-                            }
-                            "multi" => {
-                                debug_log!(
-                                    "Triggering bulk verification for {} transactions",
-                                    tx_count
-                                );
-                                // Update verification state
-                                if let Some(ref mut decode) = self.tx_state.decode {
-                                    if let TransactionKind::MultiSend(ref mut multi) = decode.kind {
-                                        multi.verification_state =
-                                            decode::VerificationState::InProgress {
-                                                total: tx_count,
-                                            };
-                                    }
-                                }
-                                self.trigger_multisend_bulk_verify(ctx);
-                            }
-                            _ => {}
-                        }
-                    }
-
-                    self.tx_state.fetched_tx = Some(tx);
                 }
                 FetchResult::Error(e) => {
                     self.tx_state.error = Some(e);
                 }
             }
         }
+    }
+
+    fn apply_fetched_tx(&mut self, ctx: &egui::Context, tx: SafeTransaction) {
+        self.tx_state.error = None;
+        self.tx_state.hashes = None;
+        self.tx_state.warnings = SafeWarnings::new();
+        self.tx_state.warnings_error = None;
+        self.tx_state.decode = None;
+        self.tx_state.show_full_data = false;
+        self.tx_state.expected.clear_result();
+
+        // Compute hashes from the fetched transaction using validate_safe_tx_hash
+        match compute_hashes_from_api_tx(
+            &self.safe_context.chain_name,
+            &self.safe_context.safe_address,
+            &self.safe_context.safe_version,
+            &tx,
+        ) {
+            Ok((hashes, mismatch)) => {
+                // Add hash mismatch to warnings if present
+                if let Some(m) = mismatch {
+                    self.tx_state.warnings.argument_mismatches.push(m);
+                }
+                self.tx_state.hashes = Some(hashes);
+            }
+            Err(e) => {
+                self.tx_state.error = Some(format!("Hash computation failed: {:#}", e));
+            }
+        }
+
+        // Get warnings using check_suspicious_content (via get_warnings_from_api_tx)
+        let chain_id = ChainId::of(&self.safe_context.chain_name).ok();
+        match get_warnings_from_api_tx(&tx, chain_id) {
+            Ok(warnings) => self.tx_state.warnings.union(warnings),
+            Err(e) => {
+                debug_log!("Warning computation failed: {:#}", e);
+                self.tx_state.warnings_error = Some(format!("{:#}", e));
+            }
+        }
+
+        // Validate against expected values if any were provided
+        if self.tx_state.expected.has_values() {
+            self.tx_state.expected.result =
+                Some(expected::validate_against_api(&tx, &self.tx_state.expected));
+        }
+
+        // Initialize calldata decode
+        debug_log!("Parsing calldata: {} bytes", tx.data.len());
+        let decode_state = decode::parse_initial(&tx.data, tx.data_decoded.as_ref());
+        debug_log!(
+            "Decode kind: {:?}, selector: {}",
+            match &decode_state.kind {
+                TransactionKind::Empty => "Empty",
+                TransactionKind::Single(_) => "Single",
+                TransactionKind::MultiSend(_) => "MultiSend",
+                TransactionKind::Unknown => "Unknown",
+            },
+            decode_state.selector
+        );
+        // Determine what verification to trigger
+        let verification_action = match &decode_state.kind {
+            TransactionKind::Single(_) if !decode_state.selector.is_empty() => {
+                Some(("single", decode_state.selector.clone(), tx.data.clone(), 0))
+            }
+            TransactionKind::MultiSend(multi) => {
+                Some(("multi", String::new(), String::new(), multi.transactions.len()))
+            }
+            _ => None,
+        };
+
+        self.tx_state.decode = Some(decode_state);
+
+        // Trigger verification based on transaction type
+        if let Some((kind, selector, data, tx_count)) = verification_action {
+            match kind {
+                "single" => {
+                    debug_log!("Triggering 4byte lookup for selector: {}", selector);
+                    self.trigger_decode_lookup(ctx, &selector, &data);
+                }
+                "multi" => {
+                    debug_log!("Triggering bulk verification for {} transactions", tx_count);
+                    // Update verification state
+                    if let Some(ref mut decode) = self.tx_state.decode {
+                        if let TransactionKind::MultiSend(ref mut multi) = decode.kind {
+                            multi.verification_state =
+                                decode::VerificationState::InProgress { total: tx_count };
+                        }
+                    }
+                    self.trigger_multisend_bulk_verify(ctx);
+                }
+                _ => {}
+            }
+        }
+
+        self.tx_state.fetched_tx = Some(tx);
     }
 
     fn check_decode_result(&mut self) {
@@ -1263,6 +1578,7 @@ impl App {
         ))
     }
 
+    /// Check for safe info result and schedule auto-fetch if successful
     fn check_safe_info_result(&mut self) {
         let result = {
             let mut guard = lock_or_recover!(self.safe_info_result);
@@ -1292,6 +1608,39 @@ impl App {
                         &mut self.safe_context.recent_addresses,
                         &self.safe_context.safe_address,
                     );
+
+                    // If we have a pre-fetched pending transaction, use it directly
+                    // instead of making another API call
+                    if let Some(pending_tx) = info.pending_transaction.clone() {
+                        // Set nonce from the pending transaction
+                        self.tx_state.nonce = pending_tx.nonce.to_string();
+
+                        // Clear previous state
+                        self.tx_state.is_loading = true;
+                        self.tx_state.error = None;
+                        self.tx_state.warnings = SafeWarnings::new();
+                        self.tx_state.hashes = None;
+                        self.tx_state.fetched_tx = None;
+                        self.tx_state.fetched_txs.clear();
+                        self.tx_state.selected_tx_index = None;
+                        self.tx_state.decode = None;
+                        self.tx_state.warnings_error = None;
+                        self.tx_state.show_full_data = false;
+
+                        // Populate fetch_result with the pre-fetched transaction
+                        {
+                            let mut guard = lock_or_recover!(self.fetch_result);
+                            *guard = Some(FetchResult::Success(vec![pending_tx]));
+                        }
+                    } else {
+                        // No pending transaction, set nonce to latest - 1 for manual fetch
+                        let latest_nonce = if info.nonce > 0 {
+                            info.nonce - 1
+                        } else {
+                            0
+                        };
+                        self.tx_state.nonce = latest_nonce.to_string();
+                    }
 
                     self.safe_info = Some(info);
                 }

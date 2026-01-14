@@ -592,7 +592,7 @@ fn render_multisend_tx(
                     ui.end_row();
 
                     ui.label("Value:");
-                    ui.label(format!("{} wei", tx.value));
+                    ui.label(crate::ui::format_wei_value(&tx.value));
                     ui.end_row();
 
                     ui.label("Operation:");
@@ -994,7 +994,7 @@ fn render_offline_multisend_tx(
                     ui.end_row();
 
                     ui.label("Value:");
-                    ui.label(format!("{} wei", tx.value));
+                    ui.label(crate::ui::format_wei_value(&tx.value));
                     ui.end_row();
 
                     ui.label("Operation:");
