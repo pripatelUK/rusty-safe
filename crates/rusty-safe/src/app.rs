@@ -1465,27 +1465,22 @@ impl App {
 
                 let w = &self.offline_state.warnings;
                 if w.delegatecall {
-                    ui::warning_message(
-                        ui,
-                        "⚠️ DELEGATECALL - can modify Safe state!",
-                        egui::Color32::from_rgb(220, 50, 50),
-                    );
+                    ui::error_banner(ui, "DELEGATECALL - can modify Safe state!");
                 }
                 if w.non_zero_gas_token {
-                    ui::warning_message(
-                        ui,
-                        "Non-zero gas token",
-                        egui::Color32::from_rgb(220, 180, 50),
-                    );
+                    ui::warning_banner(ui, "Non-zero gas token");
                 }
                 if w.non_zero_refund_receiver {
-                    ui::warning_message(
-                        ui,
-                        "Non-zero refund receiver",
-                        egui::Color32::from_rgb(220, 180, 50),
-                    );
+                    ui::warning_banner(ui, "Non-zero refund receiver");
                 }
 
+                ui.add_space(10.0);
+            }
+
+            // Calldata Decoding (before hashes, like Verify Safe API tab)
+            if let Some(ref mut decode) = self.offline_state.decode_result {
+                ui::section_header(ui, "Calldata Decoding");
+                decode::render_offline_decode_section(ui, decode, &self.safe_context);
                 ui.add_space(10.0);
             }
 
@@ -1539,12 +1534,6 @@ impl App {
                         }
                         ui.end_row();
                     });
-            }
-
-            // Calldata Decoding
-            if let Some(ref mut decode) = self.offline_state.decode_result {
-                ui::section_header(ui, "Calldata Decoding");
-                decode::render_offline_decode_section(ui, decode, &self.safe_context);
             }
         }
     }
