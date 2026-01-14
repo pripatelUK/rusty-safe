@@ -1,11 +1,12 @@
 /target
 .env
-.DS_STore
+.DS_Store
 
 dist/
 .secrets
 
 /docs
+
 # Local development files
 local/
 
