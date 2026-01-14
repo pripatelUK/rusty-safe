@@ -334,11 +334,13 @@ impl App {
                 && !self.tx_state.nonce.is_empty()
                 && !self.tx_state.is_loading;
 
-            if ui.button("🔍 Fetch & Verify").clicked() && can_compute {
+            if ui::primary_button_enabled(ui, "🔍 Fetch & Verify", can_compute).clicked() {
                 self.fetch_and_verify(ctx);
             }
 
-            if ui.button("🗑 Clear").clicked() {
+            ui.add_space(8.0);
+
+            if ui::secondary_button(ui, "🗑 Clear").clicked() {
                 self.tx_state.clear_results();
             }
         });
@@ -608,7 +610,7 @@ impl App {
 
         ui.add_space(15.0);
 
-        if ui.button("🔐 Compute Hash").clicked() {
+        if ui::primary_button(ui, "🔐 Compute Hash").clicked() {
             self.compute_message_hash();
         }
 
@@ -678,7 +680,7 @@ impl App {
 
         ui.add_space(15.0);
 
-        if ui.button("🔐 Compute Hash").clicked() {
+        if ui::primary_button(ui, "🔐 Compute Hash").clicked() {
             self.compute_eip712_hash();
         }
 
@@ -1444,10 +1446,7 @@ impl App {
             && !self.offline_state.is_loading;
 
         ui.horizontal(|ui| {
-            if ui
-                .add_enabled(can_compute, egui::Button::new("🔐 Compute Hash & Decode"))
-                .clicked()
-            {
+            if ui::primary_button_enabled(ui, "🔐 Compute Hash & Decode", can_compute).clicked() {
                 self.trigger_offline_compute(ctx.clone());
             }
 

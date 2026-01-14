@@ -244,6 +244,58 @@ pub fn copyable_hash(ui: &mut egui::Ui, hash: &str) {
 }
 
 // =============================================================================
+// STYLED BUTTONS
+// =============================================================================
+
+/// Primary action button - teal/accent colored, prominent
+pub fn primary_button(ui: &mut egui::Ui, text: &str) -> egui::Response {
+    let accent = egui::Color32::from_rgb(0, 180, 150);
+    let btn = egui::Button::new(egui::RichText::new(text).size(14.0).color(egui::Color32::WHITE))
+        .min_size(egui::vec2(130.0, 34.0))
+        .fill(accent);
+    ui.add(btn)
+}
+
+/// Primary button with enabled state
+pub fn primary_button_enabled(ui: &mut egui::Ui, text: &str, enabled: bool) -> egui::Response {
+    let accent = egui::Color32::from_rgb(0, 180, 150);
+    let btn = egui::Button::new(egui::RichText::new(text).size(14.0).color(egui::Color32::WHITE))
+        .min_size(egui::vec2(130.0, 34.0))
+        .fill(accent);
+    ui.add_enabled(enabled, btn)
+}
+
+/// Secondary action button - subdued, outline style
+pub fn secondary_button(ui: &mut egui::Ui, text: &str) -> egui::Response {
+    let btn = egui::Button::new(egui::RichText::new(text).size(14.0))
+        .min_size(egui::vec2(90.0, 34.0));
+    ui.add(btn)
+}
+
+// =============================================================================
+// VISUAL GROUPING
+// =============================================================================
+
+/// Render content in a subtle card/frame
+pub fn card(ui: &mut egui::Ui, add_contents: impl FnOnce(&mut egui::Ui)) {
+    egui::Frame::none()
+        .fill(ui.visuals().faint_bg_color)
+        .rounding(6.0)
+        .inner_margin(12.0)
+        .show(ui, add_contents);
+}
+
+/// Render content in a highlighted card (slightly brighter)
+pub fn card_highlighted(ui: &mut egui::Ui, add_contents: impl FnOnce(&mut egui::Ui)) {
+    let bg = ui.visuals().faint_bg_color.linear_multiply(1.3);
+    egui::Frame::none()
+        .fill(bg)
+        .rounding(6.0)
+        .inner_margin(12.0)
+        .show(ui, add_contents);
+}
+
+// =============================================================================
 // LEDGER BINARY FORMAT
 // =============================================================================
 
