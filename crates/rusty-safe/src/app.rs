@@ -1634,8 +1634,8 @@ impl App {
 
                     self.safe_info = Some(info);
 
-                    // Schedule auto-fetch after 1 second delay to avoid API rate limits
-                    self.auto_fetch_after = Some(Instant::now() + Duration::from_millis(300));
+                    // Schedule auto-fetch after brief delay for UI to update
+                    self.auto_fetch_after = Some(Instant::now() + Duration::from_millis(50));
                 }
                 SafeInfoResult::Error(e) => {
                     debug_log!("Failed to fetch Safe info: {}", e);
