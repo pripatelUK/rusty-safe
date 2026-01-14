@@ -46,23 +46,23 @@ test('capture with transaction data', async ({ page }) => {
   await canvas.click({ position: { x: 127, y: 210 } });
   await page.waitForTimeout(500);
   await page.keyboard.press('Control+a');
-  await page.keyboard.type('0x595362A906a0B4e90AEe1430b1f80FDDe2bE80de', { delay: 3 });
+  await page.keyboard.type('0x7DC3B586d4f3Df925A707cD4ffa7C8f4C74C7498', { delay: 3 });
   await page.waitForTimeout(500);
 
   // Click Fetch Details
   await canvas.click({ position: { x: 70, y: 290 } });
   await page.waitForTimeout(4000);
 
-  // Enter Nonce
-  await canvas.click({ position: { x: 430, y: 147 } });
+  // Enter Nonce - click on the nonce input field (adjusted for new layout with separator)
+  await canvas.click({ position: { x: 480, y: 185 } });
   await page.waitForTimeout(300);
   await page.keyboard.press('Control+a');
-  await page.keyboard.type('5');
+  await page.keyboard.type('188');
   await page.waitForTimeout(500);
 
-  // Click Fetch & Verify
-  await canvas.click({ position: { x: 352, y: 222 } });
-  await page.waitForTimeout(6000);
+  // Click Fetch & Verify button (below the collapsed "Verify Expected Values")
+  await canvas.click({ position: { x: 390, y: 262 } });
+  await page.waitForTimeout(12000);
 
   // Scroll to see all verification results
   await canvas.click({ position: { x: 640, y: 400 } });
