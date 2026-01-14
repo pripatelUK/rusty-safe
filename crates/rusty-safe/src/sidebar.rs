@@ -31,7 +31,9 @@ pub fn render(
         .show_animated(ctx, !sidebar.collapsed, |ui| {
             // Footer with GitHub link and clear storage
             egui::TopBottomPanel::bottom("sidebar_footer")
-                .frame(egui::Frame::none().inner_margin(egui::Margin::symmetric(8.0, 8.0)))
+                .frame(egui::Frame::none()
+                    .inner_margin(egui::Margin::symmetric(8.0, 8.0))
+                    .fill(ui.visuals().faint_bg_color))
                 .show_inside(ui, |ui| {
                     ui.vertical_centered(|ui| {
 
@@ -49,7 +51,7 @@ pub fn render(
                             if ui.link(egui::RichText::new("Build Info")).clicked() {
                                 show_modal = true;
                             }
-                            
+
                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                 if ui.add(
                                     egui::Button::new(egui::RichText::new("🗑 Delete Data").size(14.0))
@@ -111,32 +113,35 @@ pub fn render(
                         }
 
                         ui.memory_mut(|m| m.data.insert_temp(modal_id, show_modal));
-                        
-                        // ui.add_space(4.0);
+
                     });
                 });
             
             egui::ScrollArea::vertical().show(ui, |ui| {
-                ui.add_space(10.0);
-                
+                ui.add_space(12.0);
+
                 // Header with collapse button
                 ui.horizontal(|ui| {
-                    ui.heading(egui::RichText::new("Safe Details").size(16.0).strong());
+                    ui.heading(egui::RichText::new("Safe Details").size(18.0).strong());
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if ui.button("◀").on_hover_text("Collapse sidebar").clicked() {
+                        let collapse_btn = egui::Button::new(
+                            egui::RichText::new("◀").size(14.0)
+                        ).min_size(egui::vec2(24.0, 24.0));
+                        if ui.add(collapse_btn).on_hover_text("Collapse sidebar").clicked() {
                             sidebar.collapsed = true;
                         }
                     });
                 });
+                ui.add_space(4.0);
                 ui.separator();
-                ui.add_space(5.0);
-                
+                ui.add_space(12.0);
+
                 // Chain selection
                 ui.horizontal(|ui| {
-                    ui.label("Chain:");
+                    ui.label(egui::RichText::new("Chain:").strong());
                     egui::ComboBox::from_id_salt("sidebar_chain")
                         .selected_text(&safe_ctx.chain_name)
-                        .width(150.0)
+                        .width(160.0)
                         .show_ui(ui, |ui| {
                             for chain_name in chain_names {
                                 ui.selectable_value(
@@ -147,15 +152,17 @@ pub fn render(
                             }
                         });
                 });
-                ui.add_space(8.0);
+                ui.add_space(12.0);
                 
                 // Safe Address with recent suggestions
-                ui.label("Safe Address:");
+                ui.label(egui::RichText::new("Safe Address:").strong());
+                ui.add_space(4.0);
                 let addr_response = ui.add(
                     egui::TextEdit::singleline(&mut safe_ctx.safe_address)
                         .hint_text("0x...")
                         .desired_width(f32::INFINITY)
-                        .font(egui::TextStyle::Monospace),
+                        .font(egui::TextStyle::Monospace)
+                        .margin(egui::vec2(8.0, 6.0)),
                 );
                 
                 // Track popup visibility in memory
@@ -224,11 +231,11 @@ pub fn render(
                 // Store popup state
                 ui.memory_mut(|m| m.data.insert_temp(popup_id, show_popup));
                 
-                ui.add_space(8.0);
-                
+                ui.add_space(12.0);
+
                 // Version display
                 ui.horizontal(|ui| {
-                    ui.label("Version:");
+                    ui.label(egui::RichText::new("Version:").strong());
                     
                     // If we have safe_info with a valid version, show as read-only
                     let version_from_api = safe_info.as_ref()
@@ -255,23 +262,25 @@ pub fn render(
                             });
                     }
                 });
-                ui.add_space(10.0);
-                
-                // Fetch Details button
-                let is_valid_address = safe_ctx.safe_address.starts_with("0x") 
+                ui.add_space(16.0);
+
+                // Fetch Details button - more prominent
+                let is_valid_address = safe_ctx.safe_address.starts_with("0x")
                     && safe_ctx.safe_address.len() == 42;
-                
+
                 ui.horizontal(|ui| {
-                    if ui.add_enabled(
-                        is_valid_address && !safe_info_loading,
-                        egui::Button::new("⟳ Fetch Details")
-                    ).on_hover_text("Fetch Safe info (threshold, owners, modules, nonce)")
-                     .clicked() 
+                    let button = egui::Button::new(
+                        egui::RichText::new("⟳ Fetch Details").size(14.0)
+                    ).min_size(egui::vec2(120.0, 28.0));
+
+                    if ui.add_enabled(is_valid_address && !safe_info_loading, button)
+                        .on_hover_text("Fetch Safe info (threshold, owners, modules, nonce)")
+                        .clicked()
                     {
                         crate::state::add_recent_address(&mut safe_ctx.recent_addresses, &safe_ctx.safe_address);
                         action = SidebarAction::FetchDetails;
                     }
-                    
+
                     if safe_info_loading {
                         ui.spinner();
                     }
@@ -334,10 +343,13 @@ pub fn render(
     if sidebar.collapsed {
         egui::SidePanel::left("collapsed_sidebar")
             .resizable(false)
-            .exact_width(30.0)
+            .exact_width(36.0)
             .show(ctx, |ui| {
                 ui.add_space(10.0);
-                if ui.button("▶").on_hover_text("Expand sidebar").clicked() {
+                let expand_btn = egui::Button::new(
+                    egui::RichText::new("▶").size(14.0)
+                ).min_size(egui::vec2(28.0, 28.0));
+                if ui.add(expand_btn).on_hover_text("Expand sidebar").clicked() {
                     sidebar.collapsed = false;
                 }
             });

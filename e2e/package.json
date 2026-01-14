@@ -1,0 +1,16 @@
+{
+  "name": "rusty-safe-e2e",
+  "version": "1.0.0",
+  "description": "Visual regression tests for RustySafe",
+  "scripts": {
+    "capture": "bunx playwright test tests/capture.spec.ts --reporter=list",
+    "test": "bunx playwright test tests/visual.spec.ts",
+    "test:update": "bunx playwright test --update-snapshots",
+    "test:ui": "bunx playwright test --ui",
+    "test:headed": "bunx playwright test --headed",
+    "report": "bunx playwright show-report"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.40.0"
+  }
+}

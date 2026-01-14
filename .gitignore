@@ -1,10 +1,19 @@
 /target
 .env
-.DS_STore
+.DS_Store
 
 dist/
 .secrets
 
 /docs
+
 # Local development files
 local/
+
+# Playwright E2E
+e2e/node_modules/
+e2e/test-results/
+e2e/playwright-report/
+e2e/.playwright/
+e2e/screenshots/
+e2e/tests/*.ts-snapshots/

@@ -200,20 +200,27 @@ fn render_single_section(
     selector: &str,
     safe_ctx: &crate::state::SafeContext,
 ) {
-    // Header
-    ui.horizontal(|ui| {
-        ui.label(egui::RichText::new("📦 Calldata Decoding").strong());
-        ui.label(
-            egui::RichText::new(format!("[{}]", selector))
-                .monospace()
-                .weak(),
-        );
-        render_status_badge(ui, &decode.comparison);
-    });
+    // Wrap in a card for visual grouping
+    egui::Frame::none()
+        .fill(ui.visuals().faint_bg_color)
+        .rounding(6.0)
+        .inner_margin(12.0)
+        .show(ui, |ui| {
+            // Header with prominent status
+            ui.horizontal(|ui| {
+                ui.label(egui::RichText::new("📦 Calldata Decoding").strong());
+                ui.label(
+                    egui::RichText::new(format!("[{}]", selector))
+                        .monospace()
+                        .small(),
+                );
+                render_status_badge(ui, &decode.comparison);
+            });
 
-    ui.add_space(8.0);
+            ui.add_space(10.0);
 
-    render_single_comparison_with_chain(ui, decode, safe_ctx);
+            render_single_comparison_with_chain(ui, decode, safe_ctx);
+        });
 }
 
 /// Render side-by-side comparison for a single decode (no chain awareness - for backwards compat)
@@ -335,7 +342,7 @@ fn render_params_rows(
         if let Some(ap) = api_param {
             let label = format!("{} ({}):", ap.name, ap.typ);
             ui.vertical(|ui| {
-                ui.label(egui::RichText::new(label).weak());
+                ui.label(egui::RichText::new(label).small());
                 let color = if has_mismatch {
                     Some(egui::Color32::from_rgb(220, 80, 80))
                 } else {
@@ -352,7 +359,7 @@ fn render_params_rows(
         if let Some(lp) = local_param {
             let label = format!("param{} ({}):", i, lp.typ);
             ui.vertical(|ui| {
-                ui.label(egui::RichText::new(label).weak());
+                ui.label(egui::RichText::new(label).small());
                 let color = if has_mismatch {
                     Some(egui::Color32::from_rgb(100, 200, 100))
                 } else {
@@ -659,10 +666,7 @@ fn render_status_badge(ui: &mut egui::Ui, result: &ComparisonResult) {
 fn render_comparison_message(ui: &mut egui::Ui, result: &ComparisonResult) {
     match result {
         ComparisonResult::Match => {
-            ui.label(
-                egui::RichText::new("✅ Decodings match - independently verified")
-                    .color(egui::Color32::from_rgb(100, 200, 100)),
-            );
+            ui::success_banner(ui, "Decodings match - independently verified");
         }
         ComparisonResult::MethodMismatch { api, local } => {
             ui.label(
@@ -829,7 +833,7 @@ fn render_offline_decode(
             .striped(true)
             .show(ui, |ui| {
                 for (i, param) in local.params.iter().enumerate() {
-                    ui.label(egui::RichText::new(format!("param{} ({}):", i, param.typ)).weak());
+                    ui.label(egui::RichText::new(format!("param{} ({}):", i, param.typ)).small());
                     let id_salt = format!("{}_{}", id_prefix, i);
                     render_param_value(ui, &param.value, safe_ctx, None, &id_salt);
                     ui.end_row();
