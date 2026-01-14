@@ -4790,6 +4790,7 @@ dependencies = [
  "tracing-wasm",
  "wasm-bindgen-futures",
  "web-sys",
+ "web-time",
 ]
 
 [[package]]

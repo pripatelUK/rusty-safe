@@ -9,6 +9,8 @@ use safe_utils::{
     SafeWalletVersion,
 };
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
+use web_time::Instant;
 
 use crate::api::SafeTransaction;
 use crate::decode::{self, ComparisonResult, SignatureLookup, TransactionKind};
@@ -116,6 +118,8 @@ pub struct App {
     safe_info: Option<crate::hasher::SafeInfo>,
     /// Whether Safe info fetch is in progress
     safe_info_loading: bool,
+    /// Scheduled time for auto-fetch after Fetch Details (rate limit delay)
+    auto_fetch_after: Option<Instant>,
     /// Address book UI state
     address_book_open: bool,
     address_book_import_text: String,
@@ -167,6 +171,7 @@ impl App {
             offline_decode_result: Arc::new(Mutex::new(None)),
             safe_info: None,
             safe_info_loading: false,
+            auto_fetch_after: None,
             address_book_open: false,
             address_book_import_text: String::new(),
             address_book_error: None,
@@ -194,9 +199,15 @@ impl eframe::App for App {
         // Check for async decode results
         self.check_decode_result();
 
-        // Check for async Safe info results - auto-fetch latest tx if successful
-        if self.check_safe_info_result() {
-            self.fetch_and_verify(ctx);
+        // Check for async Safe info results
+        self.check_safe_info_result();
+
+        // Check if scheduled auto-fetch time has elapsed (1 second delay to avoid rate limits)
+        if let Some(fetch_time) = self.auto_fetch_after {
+            if Instant::now() >= fetch_time {
+                self.auto_fetch_after = None;
+                self.fetch_and_verify(ctx);
+            }
         }
 
         // Check for async offline decode results
@@ -1581,8 +1592,8 @@ impl App {
         ))
     }
 
-    /// Check for safe info result and return true if we should auto-fetch latest tx
-    fn check_safe_info_result(&mut self) -> bool {
+    /// Check for safe info result and schedule auto-fetch if successful
+    fn check_safe_info_result(&mut self) {
         let result = {
             let mut guard = lock_or_recover!(self.safe_info_result);
             guard.take()
@@ -1621,7 +1632,9 @@ impl App {
                     self.tx_state.nonce = latest_nonce.to_string();
 
                     self.safe_info = Some(info);
-                    return true; // Signal to auto-fetch
+
+                    // Schedule auto-fetch after 1 second delay to avoid API rate limits
+                    self.auto_fetch_after = Some(Instant::now() + Duration::from_millis(300));
                 }
                 SafeInfoResult::Error(e) => {
                     debug_log!("Failed to fetch Safe info: {}", e);
@@ -1629,7 +1642,6 @@ impl App {
                 }
             }
         }
-        false
     }
 
     fn trigger_safe_info_fetch(&mut self) {
