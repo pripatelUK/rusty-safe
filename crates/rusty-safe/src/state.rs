@@ -287,6 +287,8 @@ pub struct TxVerifyState {
     pub decode: Option<DecodedTransaction>,
     pub show_full_data: bool,
     pub fetched_tx: Option<SafeTransaction>,
+    pub fetched_txs: Vec<SafeTransaction>,
+    pub selected_tx_index: Option<usize>,
     pub hashes: Option<ComputedHashes>,
     pub warnings: SafeWarnings,
     /// Set when warnings couldn't be computed due to parse errors
@@ -298,6 +300,8 @@ pub struct TxVerifyState {
 impl TxVerifyState {
     pub fn clear_results(&mut self) {
         self.fetched_tx = None;
+        self.fetched_txs.clear();
+        self.selected_tx_index = None;
         self.hashes = None;
         self.warnings = SafeWarnings::new();
         self.warnings_error = None;

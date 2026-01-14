@@ -1,7 +1,7 @@
 //! Hash computation - uses safe_hash library
 
 use crate::api::{
-    check_suspicious_content, get_safe_transaction_async, tx_signing_hashes, validate_safe_tx_hash,
+    check_suspicious_content, tx_signing_hashes, validate_safe_tx_hash, SafeApiResponse,
     SafeTransaction, TxInput,
 };
 use crate::state::ComputedHashes;
@@ -64,12 +64,12 @@ pub async fn fetch_safe_info(chain_name: &str, safe_address: &str) -> Result<Saf
     Ok(safe_info)
 }
 
-/// Fetch transaction from Safe API (async - works on WASM)
-pub async fn fetch_transaction(
+/// Fetch transactions from Safe API (async - works on WASM)
+pub async fn fetch_transactions(
     chain_name: &str,
     safe_address: &str,
     nonce: u64,
-) -> Result<SafeTransaction> {
+) -> Result<Vec<SafeTransaction>> {
     let chain_id = ChainId::of(chain_name)
         .map_err(|e| eyre::eyre!("Invalid chain '{}': {}", chain_name, e))?;
 
@@ -78,9 +78,28 @@ pub async fn fetch_transaction(
         .parse()
         .wrap_err("Invalid Safe address")?;
 
-    get_safe_transaction_async(chain_id, addr, nonce)
+    let api_url =
+        get_safe_api(chain_id).map_err(|e| eyre::eyre!("Failed to get API URL: {}", e))?;
+    let url = format!(
+        "{}/api/v1/safes/{}/multisig-transactions/?nonce={}",
+        api_url, addr, nonce
+    );
+
+    let response = reqwest::get(&url).await.wrap_err("Network error")?;
+    if !response.status().is_success() {
+        eyre::bail!("API error: {}", response.status());
+    }
+
+    let api_response: SafeApiResponse = response
+        .json()
         .await
-        .map_err(|e| eyre::eyre!(e))
+        .wrap_err("Failed to parse Safe transaction response")?;
+
+    if api_response.results.is_empty() {
+        eyre::bail!("No transaction found for the specified nonce");
+    }
+
+    Ok(api_response.results)
 }
 
 /// Compute hashes for a transaction using safe_hash::tx_signing_hashes
