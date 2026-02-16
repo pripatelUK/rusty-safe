@@ -1,0 +1,12 @@
+[submodule "deps/localsafe.eth"]
+	path = deps/localsafe.eth
+	url = git@github.com:Cyfrin/localsafe.eth.git
+[submodule "deps/foundry"]
+	path = deps/foundry
+	url = git@github.com:foundry-rs/foundry.git
+[submodule "deps/ledger-device-rust-sdk"]
+	path = deps/ledger-device-rust-sdk
+	url = git@github.com:LedgerHQ/ledger-device-rust-sdk.git
+[submodule "deps/alloy"]
+	path = deps/alloy
+	url = git@github.com:alloy-rs/alloy.git
