@@ -149,7 +149,9 @@ This architecture enables deterministic unit/property tests for critical behavio
 
 Runtime execution model enhancements:
 
-1. Single-writer orchestration enforced by per-flow lease (multi-tab safe).
+1. Single-writer orchestration enforced by:
+   - P0 single-tab writer lock.
+   - P1 per-flow leases for multi-tab coordination.
 2. Background reconciliation worker for Safe service sync, nonce refresh, and reorg-aware status updates.
 3. Web Worker offload for hashing/simulation preparation to keep render thread responsive.
 
@@ -254,7 +256,7 @@ Add a signing subsystem under `crates/rusty-safe/src/signing/`:
 13. `signing/orchestrator.rs`
    - Single-writer event loop coordinating state machine + side-effect execution.
 14. `signing/multitab.rs`
-   - Lease/leadership protocol across browser tabs using IndexedDB + BroadcastChannel.
+   - P1 lease/leadership protocol across browser tabs using IndexedDB + BroadcastChannel.
 15. `signing/reconcile.rs`
    - Background sync loop for Safe service truth reconciliation and drift detection.
 16. `signing/policy.rs`
@@ -276,12 +278,15 @@ FR-1 Provider Discovery And Connect
 FR-2 Signer Abstraction
 
 1. Introduce a `SafeSigner` trait with methods for tx typed-data signing, personal message signing, and account identity.
-2. Injected wallet signer must implement method mapping for:
+2. Injected wallet signer must implement method mapping for required methods:
    - `eth_signTypedData_v4`
    - `personal_sign`
-   - `eth_sign` (only when explicitly needed and supported)
-3. Signing method used per flow must be stored in signature provenance.
-4. Signature normalization rules (including `eth_sign` `v` normalization) must be centralized and deterministic.
+3. `eth_sign` is optional, disabled by default, and may only be enabled when:
+   - config `allow_eth_sign = true`
+   - policy profile mode is `Relaxed`
+   - wallet capability probe reports explicit support
+4. Signing method used per flow must be stored in signature provenance with expected signer address.
+5. Signature normalization rules (including `eth_sign` `v` normalization when enabled) must be centralized and deterministic.
 
 FR-3 Safe Transaction Pipeline
 
@@ -301,9 +306,9 @@ FR-5 WalletConnect Pipeline
 1. Support request lifecycle for:
    - `eth_sendTransaction`
    - `personal_sign`
-   - `eth_sign`
-   - `eth_signTypedData`
    - `eth_signTypedData_v4`
+   - optional compatibility (P1): `eth_signTypedData`
+   - optional compatibility (guarded): `eth_sign`
 2. Support quick response (Safe tx hash) and deferred response (on-chain tx hash after execution).
 3. On request expiry/cancel, preserve local signing progress and expose recovery UX.
 
@@ -332,29 +337,33 @@ FR-9 Contract Owner Compatibility
 
 1. Signature collection and threshold checks must support owner types beyond EOAs where Safe semantics require it (for example `EIP-1271` contract owners).
 2. Owner validation path must distinguish `EOA`, `ContractOwner`, and `Unknown` with deterministic handling rules.
+3. `EIP-1271` validation timeouts must fail closed (`Unknown`) and block threshold progression until resolved.
+4. `EIP-1271` validation policy defaults: timeout `5000ms`, max retries `3`.
 
 FR-10 Recovery And Resume
 
 1. On app refresh/crash, in-flight tx/message/WalletConnect flows must resume from persisted state without loss of signed artifacts.
 2. Deferred WalletConnect responses must survive app restarts until explicit completion or expiration.
 
-FR-11 Multi-Tab Consistency
+FR-11 Concurrency Modes
 
-1. Only one tab may hold the write lease for a given flow at a time.
-2. Non-owner tabs must run in read-only mirror mode and can request lease handoff.
-3. Lease expiry/heartbeat failure must trigger deterministic leader re-election.
+1. P0 defaults to single-tab writer mode with one app-writer lock per browser profile.
+2. P1 adds multi-tab write coordination with per-flow leases, epoch fencing, deterministic lease handoff, and a reconcile master lease for background jobs.
+3. Non-owner tabs must run in read-only mirror mode and can request handoff.
+4. Lease expiry/heartbeat failure must trigger deterministic leader re-election.
 
-FR-12 Continuous Reconciliation
+FR-12 Continuous Reconciliation (P1)
 
 1. Background reconciliation must periodically compare local state with Safe service state.
 2. Reconciliation must detect and resolve drift for nonce, confirmation sets, and tx terminal status.
 3. Reconciliation must surface explicit `LocalVsRemoteDivergence` diagnostics when automatic merge is unsafe.
 
-FR-13 Policy Guardrails
+FR-13 Policy Guardrails (P1)
 
 1. App must support configurable risk policies:
    - target allowlist/denylist
    - method selector risk tiers
+   - signing-method controls (`eth_sign` default-blocked in `Standard`/`Strict`)
    - optional per-day value limit
 2. High-risk policy violations must require explicit override flow with signed audit trail.
 3. Policy profile applied at sign time must be persisted with the flow.
@@ -376,11 +385,13 @@ SR-2 Chain And Account Binding
 
 1. Signer account must be confirmed as Safe owner before signature acceptance.
 2. Chain mismatch between UI, Safe context, and wallet provider must hard-block signing/execution.
+3. Provider-returned signatures must be recovered and verified against expected signer before acceptance.
 
 SR-3 Signature Provenance And Integrity
 
 1. Every signature stores source, method, signer, and timestamp metadata.
-2. Persisted queue objects include integrity metadata; failed integrity checks fail closed.
+2. Every signature must be bound to flow context (`chain_id`, `safe_address`, payload hash) before merge/import acceptance.
+3. Persisted queue objects include authenticated integrity metadata; failed integrity checks fail closed.
 
 SR-4 WalletConnect Origin Safety
 
@@ -396,11 +407,15 @@ SR-6 Safe Context Attestation
 
 1. App must verify Safe version/domain inputs against on-chain context before signature acceptance.
 2. Any mismatch between expected domain separator inputs and resolved Safe context must hard-block signing.
+3. Safe version claims must be attested against on-chain proxy/implementation mapping (not service metadata alone).
 
 SR-7 Local Data Hardening
 
-1. Persisted signing queue must be versioned with schema migration guards and integrity verification.
-2. Corrupt or untrusted imported state must be quarantined, never auto-merged silently.
+1. Persisted signing queue must be versioned with schema migration guards and authenticated integrity verification.
+2. Integrity metadata must be MAC-based (`HMAC-SHA256` or equivalent), keyed by key material not stored in plaintext alongside queue objects.
+3. Sensitive queue fields (`signatures`, request payloads, provenance metadata) must be encrypted at rest in IndexedDB.
+4. Corrupt or untrusted imported state must be quarantined, never auto-merged silently.
+5. Queue encryption/MAC keys must be derived from user passphrase material (`Argon2id` preferred, `PBKDF2` fallback) and never persisted in recoverable plaintext.
 
 SR-8 Human-Readable Intent Verification
 
@@ -411,6 +426,23 @@ SR-9 Session And Origin Pinning
 
 1. WalletConnect topic/origin pair must be pinned for request lifecycle; mismatches must be rejected.
 2. Provider identity changes during active signing flow must require explicit user re-authorization.
+
+SR-10 Host Deployment Hardening
+
+1. WASM host page must enforce strict CSP (no `unsafe-inline` and no `unsafe-eval` in production).
+2. WASM and JS loader artifacts must be integrity-pinned (SRI) and served from approved origins only.
+
+SR-11 Export/Import Authenticity
+
+1. Export bundles must include an authenticity proof (`exporter` + signature over canonical bundle digest).
+2. Import must verify exporter authenticity before merge; unverifiable bundles are quarantined.
+3. Import pipeline must enforce size/object-count limits and rate limiting to prevent resource abuse.
+4. `exporter` must be the currently connected wallet owner used for export signing.
+
+SR-12 High-Risk Method Policy
+
+1. `eth_sign` is disabled by default.
+2. `eth_sign` may only be enabled with explicit operator override in `Relaxed` policy mode and must show a high-risk warning before each sign action.
 
 ## Non-Functional Requirements
 
@@ -425,22 +457,27 @@ NFR-2 Performance
 1. Hashing/merge operations should complete in under 50 ms for typical single-tx flows on commodity laptops.
 2. Queue load/rehydration target: under 200 ms for 500 pending objects.
 3. UI should remain responsive during service polling and provider event bursts.
+4. Queue UI must use virtualized rendering/indexed subsets for large flow counts (avoid full-object per-frame traversal).
+5. Rehydration must be bounded by snapshot + log tail, not unbounded full-WAL replay.
 
 NFR-3 Operability
 
-1. Emit structured telemetry for lifecycle events, errors, and retry behavior with redaction-safe payloads.
+1. Emit structured telemetry for lifecycle events, errors, and retry behavior with default-safe redaction (no raw signatures, addresses, or raw `flow_id` outside debug-local sinks).
 2. Expose per-flow diagnostics (current state, last transition, last external error) for support and debugging.
 
 NFR-4 Compatibility
 
 1. P0 wallet matrix must include at least MetaMask and one alternate injected provider.
 2. Provider capability probing must gracefully degrade when method support differs by wallet.
+3. P0 browser support contract is Chromium extension wallets (`Chrome` and `Brave`); Firefox/Safari parity is P1+.
 
 NFR-5 Concurrency And Scale
 
 1. System must support at least 2,000 persisted flow objects with deterministic rehydration.
 2. Reconciliation loop must avoid blocking UI and enforce bounded work per tick.
-3. Multi-tab lease conflict resolution must complete within 2 seconds under normal conditions.
+3. Lease heartbeats must be active only for hot flows (visible or side-effect-active); idle flows rely on checkpointed snapshots.
+4. P0 single-tab writer lock acquisition must complete within 100 ms on normal startup.
+5. P1 multi-tab lease conflict resolution must complete within 2 seconds under normal conditions.
 
 NFR-6 SLOs
 
@@ -470,7 +507,7 @@ pub struct PendingSafeTx {
     pub idempotency_key: String,
     pub service_tx_id: Option<String>,
     pub preflight: Option<PreflightReport>,
-    pub integrity_hash: B256,
+    pub integrity_mac: B256,
     pub last_error: Option<FlowError>,
     pub retry_count: u32,
     pub created_at: u64,
@@ -487,6 +524,47 @@ pub enum TxStatus {
     ReadyToExecute,
     Executed,
     Failed,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CollectedSignature {
+    pub signer: Address,
+    pub signature: Bytes,
+    pub source: SignatureSource,
+    pub method: SignatureMethod,
+    pub chain_id: u64,
+    pub safe_address: Address,
+    pub payload_hash: B256, // safe_tx_hash or message_hash depending on flow
+    pub expected_signer: Address,
+    pub recovered_signer: Option<Address>,
+    pub added_at: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FlowLease {
+    pub flow_id: String,
+    pub holder_tab_id: String,
+    pub lease_epoch: u64,
+    pub acquired_at: u64,
+    pub heartbeat_at: u64,
+    pub expires_at: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AppWriterLock {
+    pub holder_tab_id: String,
+    pub lock_epoch: u64,
+    pub acquired_at: u64,
+    pub expires_at: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReconcileMasterLease {
+    pub holder_tab_id: String,
+    pub lease_epoch: u64,
+    pub acquired_at: u64,
+    pub heartbeat_at: u64,
+    pub expires_at: u64,
 }
 ```
 
@@ -519,7 +597,7 @@ PendingSafeTx {
   idempotency_key: String
   service_tx_id: Option<String>
   preflight: Option<PreflightReport>
-  integrity_hash: B256
+  integrity_mac: B256
   last_error: Option<FlowError>
   retry_count: u32
   created_at: u64
@@ -539,7 +617,7 @@ PendingSafeMessage {
   origin: Manual | WalletConnect { request_id: String } | Import
   policy_profile_id: String
   idempotency_key: String
-  integrity_hash: B256
+  integrity_mac: B256
   last_error: Option<FlowError>
   retry_count: u32
   created_at: u64
@@ -552,7 +630,7 @@ PendingWalletConnectRequest {
   topic: String
   origin: String
   chain_id: u64
-  method: EthSendTransaction | PersonalSign | EthSign | EthSignTypedData | EthSignTypedDataV4
+  method: EthSendTransaction | PersonalSign | EthSign (guarded) | EthSignTypedData (P1 optional) | EthSignTypedDataV4
   status: Received | Validated | Queued | RespondingQuick | RespondingDeferred | Responded | Rejected | Expired | Failed
   linked_safe_tx_hash: Option<B256>
   idempotency_key: String
@@ -569,6 +647,11 @@ CollectedSignature {
   signature: Bytes
   source: Wallet | Manual | Import
   method: SafeTypedData | PersonalSign | EthSign
+  chain_id: u64
+  safe_address: Address
+  payload_hash: B256
+  expected_signer: Address
+  recovered_signer: Option<Address>
   added_at: u64
 }
 
@@ -594,6 +677,22 @@ TransitionLogEntry {
 FlowLease {
   flow_id: String
   holder_tab_id: String
+  lease_epoch: u64
+  acquired_at: u64
+  heartbeat_at: u64
+  expires_at: u64
+}
+
+AppWriterLock {
+  holder_tab_id: String
+  lock_epoch: u64
+  acquired_at: u64
+  expires_at: u64
+}
+
+ReconcileMasterLease {
+  holder_tab_id: String
+  lease_epoch: u64
   acquired_at: u64
   heartbeat_at: u64
   expires_at: u64
@@ -617,6 +716,18 @@ ReconcileCursor {
   last_observed_nonce: Option<u64>
   last_remote_checkpoint: Option<String>
 }
+
+SignatureExportBundle {
+  schema_version: u16
+  exported_at: u64
+  exporter: Address
+  bundle_digest: B256
+  bundle_signature: Bytes
+  txs: Vec<PendingSafeTx>
+  messages: Vec<PendingSafeMessage>
+  wc_requests: Vec<PendingWalletConnectRequest>
+  integrity_mac: B256
+}
 ```
 
 ### Validation Rules
@@ -624,26 +735,33 @@ ReconcileCursor {
 | Entity | Validation Rules |
 |---|---|
 | `ConnectedWallet` | `chain_id > 0`; `account` must be checksummed/display-normalized; `provider_id` non-empty |
-| `PendingSafeTx` | `safe_tx_hash` must match recomputed hash for `payload`; `state_revision` monotonic; `idempotency_key` stable per action; `status=Executed` requires `executed_tx_hash` |
-| `PendingSafeMessage` | `message_hash` must match normalized message content; `status=Responded` requires linked completion event |
+| `PendingSafeTx` | `safe_tx_hash` must match recomputed hash for `payload`; `state_revision` monotonic; `idempotency_key` stable per action; `status=Executed` requires `executed_tx_hash`; `safe_version` must be attested against on-chain implementation context; `integrity_mac` must verify before use |
+| `PendingSafeMessage` | `message_hash` must match normalized message content; `status=Responded` requires linked completion event; `integrity_mac` must verify before use |
 | `PendingWalletConnectRequest` | `request_id` unique per topic; expiration must be checked before response; unsupported method transitions only to `Rejected` |
-| `CollectedSignature` | `signer` must be Safe owner or allowed owner type; signature bytes must parse and normalize before merge |
+| `CollectedSignature` | `signer` must be Safe owner or allowed owner type; signature bytes must parse and normalize; `(chain_id, safe_address, payload_hash)` must match target flow; `recovered_signer` must equal `expected_signer` |
 | `PreflightReport` | `generated_at` must be <= execution attempt time; stale preflight must be invalidated by payload/chain/account changes |
 | `TransitionLogEntry` | `(flow_id, state_revision)` unique; `from_state -> to_state` must be legal per FSM table |
-| `FlowLease` | only one active lease per `flow_id`; expired lease can be stolen by new tab with monotonic timestamp check |
-| `RiskPolicyProfile` | `mode=Strict` implies `require_preflight=true`; `denied_selectors` supersede allowlist |
+| `FlowLease` | only one active lease per `flow_id`; acquisition/heartbeat/release must enforce compare-and-swap on `lease_epoch`; expired lease takeover increments `lease_epoch` |
+| `AppWriterLock` | at most one active lock for app scope; lock acquisition/release must enforce compare-and-swap on `lock_epoch` |
+| `ReconcileMasterLease` | exactly one active lease for background reconcile scope; heartbeat/liveness semantics mirror `FlowLease` |
+| `RiskPolicyProfile` | `mode=Strict` implies `require_preflight=true`; `denied_selectors` supersede allowlist; `mode in {Standard,Strict}` implies `eth_sign` blocked |
 | `ReconcileCursor` | `last_synced_at` monotonic per `(chain_id,safe_address)`; stale cursor must trigger full refresh |
+| `SignatureExportBundle` | `bundle_digest` must match canonicalized payload; `bundle_signature` must recover to `exporter`; bundle must satisfy import size/count limits |
 
 ### Entity Relationships
 
 1. `PendingSafeTx.signatures[*].signer` references Safe owners resolved for `(chain_id, safe_address)`.
-2. `PendingWalletConnectRequest.linked_safe_tx_hash` references `PendingSafeTx.safe_tx_hash`.
-3. `PendingSafeMessage.origin.WalletConnect.request_id` references `PendingWalletConnectRequest.request_id`.
-4. `TransitionLogEntry.flow_id` references one of `PendingSafeTx`/`PendingSafeMessage`/`PendingWalletConnectRequest`.
-5. `PreflightReport` belongs to exactly one `PendingSafeTx` revision.
-6. `FlowLease.flow_id` references one of `PendingSafeTx`/`PendingSafeMessage`/`PendingWalletConnectRequest`.
-7. `PendingSafeTx` and `PendingSafeMessage` reference exactly one `RiskPolicyProfile` snapshot at sign time.
-8. `ReconcileCursor` references one `(chain_id, safe_address)` reconciliation stream.
+2. `PendingSafeTx.signatures[*].payload_hash` must equal `PendingSafeTx.safe_tx_hash`.
+3. `PendingWalletConnectRequest.linked_safe_tx_hash` references `PendingSafeTx.safe_tx_hash`.
+4. `PendingSafeMessage.origin.WalletConnect.request_id` references `PendingWalletConnectRequest.request_id`.
+5. `TransitionLogEntry.flow_id` references one of `PendingSafeTx`/`PendingSafeMessage`/`PendingWalletConnectRequest`.
+6. `PreflightReport` belongs to exactly one `PendingSafeTx` revision.
+7. `FlowLease.flow_id` references one of `PendingSafeTx`/`PendingSafeMessage`/`PendingWalletConnectRequest`.
+8. `PendingSafeTx` and `PendingSafeMessage` reference exactly one `RiskPolicyProfile` snapshot at sign time.
+9. `ReconcileCursor` references one `(chain_id, safe_address)` reconciliation stream.
+10. `SignatureExportBundle` embeds `PendingSafeTx`/`PendingSafeMessage`/`PendingWalletConnectRequest` objects and binds them to `exporter` via `bundle_signature`.
+11. `AppWriterLock` governs global write authority for P0 single-tab mode.
+12. `ReconcileMasterLease` governs exclusive background reconciliation authority for P1 multi-tab mode.
 
 ## 4. CLI/API Surface
 
@@ -664,9 +782,11 @@ There is no end-user CLI in P0 scope. The execution surface consists of:
 | `confirm_tx` | Submit signer confirmation | `{ "command":"confirm_tx", "safe_tx_hash":"0xabc...", "signature":"0x...", "request_id":"req-4" }` | `{ "ok":true, "state":"Confirming" }` |
 | `execute_tx` | Execute threshold-met tx | `{ "command":"execute_tx", "safe_tx_hash":"0xabc...", "request_id":"req-5" }` | `{ "ok":true, "executed_tx_hash":"0xdef...", "state":"Executed" }` |
 | `respond_wc` | Complete WalletConnect request | `{ "command":"respond_wc", "request_id":"wc-7", "mode":"quick" }` | `{ "ok":true, "wc_status":"Responded" }` |
-| `acquire_flow_lease` | Acquire single-writer lease for flow | `{ "command":"acquire_flow_lease", "flow_id":"tx:0xabc...", "tab_id":"tab-9", "request_id":"req-6" }` | `{ "ok":true, "lease":{"holder_tab_id":"tab-9","expires_at":1739750405000} }` |
-| `run_reconcile` | Trigger immediate reconciliation pass | `{ "command":"run_reconcile", "chain_id":1, "safe_address":"0xSafe...", "request_id":"req-7" }` | `{ "ok":true, "summary":{"updated":3,"conflicts":1} }` |
-| `evaluate_policy` | Evaluate tx against active risk policy | `{ "command":"evaluate_policy", "safe_tx_hash":"0xabc...", "request_id":"req-8" }` | `{ "ok":true, "decision":"allow_with_warning", "violations":["HIGH_RISK_SELECTOR"] }` |
+| `acquire_writer_lock` | Acquire P0 single-tab app writer lock | `{ "command":"acquire_writer_lock", "tab_id":"tab-9", "request_id":"req-6" }` | `{ "ok":true, "lock":{"holder_tab_id":"tab-9","lock_epoch":12,"expires_at":1739750405000} }` |
+| `acquire_flow_lease` | Acquire P1 per-flow write lease | `{ "command":"acquire_flow_lease", "flow_id":"tx:0xabc...", "tab_id":"tab-9", "request_id":"req-7" }` | `{ "ok":true, "lease":{"holder_tab_id":"tab-9","lease_epoch":4,"expires_at":1739750405000} }` |
+| `acquire_reconcile_master_lease` | Acquire P1 reconcile master lease for background jobs | `{ "command":"acquire_reconcile_master_lease", "tab_id":"tab-9", "request_id":"req-8" }` | `{ "ok":true, "lease":{"holder_tab_id":"tab-9","lease_epoch":2,"expires_at":1739750430000} }` |
+| `run_reconcile` | Trigger immediate reconciliation pass | `{ "command":"run_reconcile", "chain_id":1, "safe_address":"0xSafe...", "request_id":"req-9" }` | `{ "ok":true, "summary":{"updated":3,"conflicts":1} }` |
+| `evaluate_policy` | Evaluate tx against active risk policy | `{ "command":"evaluate_policy", "safe_tx_hash":"0xabc...", "request_id":"req-10" }` | `{ "ok":true, "decision":"allow_with_warning", "violations":["HIGH_RISK_SELECTOR"] }` |
 
 Command error envelope:
 
@@ -682,6 +802,8 @@ Command error envelope:
 }
 ```
 
+Common error codes include: `CHAIN_MISMATCH`, `ETH_SIGN_DISABLED`, `SIGNER_MISMATCH`, `UNSUPPORTED_METHOD`, `LEASE_NOT_HELD`, `IMPORT_LIMIT_EXCEEDED`.
+
 ### 4.2 `EIP-1193` Request Surface
 
 Required methods:
@@ -691,7 +813,13 @@ Required methods:
 3. `eth_signTypedData_v4`
 4. `personal_sign`
 5. `eth_sendTransaction`
-6. Optional fallback: `eth_sign`
+6. Optional compatibility (P1): `eth_signTypedData`
+7. Optional high-risk fallback (disabled by default): `eth_sign`
+
+Policy gate:
+
+1. `eth_sign` requests must be rejected with `ETH_SIGN_DISABLED` unless `allow_eth_sign=true` and policy mode is `Relaxed`.
+2. Any returned signature must pass local signer recovery validation before acceptance.
 
 Example (`eth_signTypedData_v4`):
 
@@ -808,9 +936,9 @@ Supported request methods:
 
 1. `eth_sendTransaction`
 2. `personal_sign`
-3. `eth_sign`
-4. `eth_signTypedData`
-5. `eth_signTypedData_v4`
+3. optional compatibility (P1): `eth_signTypedData`
+4. `eth_signTypedData_v4`
+5. optional high-risk compatibility: `eth_sign` (same policy gate as above)
 
 Quick response payload example:
 
@@ -855,12 +983,17 @@ Reject response payload example:
 | Duplicate propose/confirm attempt | 409/conflict or matching idempotency replay | Collapse duplicates to single logical action | Stable idempotency keys + dedupe |
 | Safe service timeout/rate limit | HTTP timeout/429/5xx | Retry with bounded exponential backoff | Retry budget + jitter + circuit-breaker window |
 | Nonce stale/conflict | Service returns mismatch or conflicting tx state | Reconcile nonce, surface conflict UI, require re-propose | Stale nonce remediation workflow |
-| Corrupted imported signature bundle | Schema/integrity validation failure | Quarantine import; show actionable error | Versioned envelope + hash integrity checks |
+| Provider returns malformed/wrong signature | Signature parse or recovered signer mismatch | Reject signature, keep flow state, surface deterministic error | Local recovery validation against expected signer |
+| Corrupted imported signature bundle | Schema/integrity validation failure | Quarantine import; show actionable error | Versioned envelope + MAC integrity + exporter authenticity checks |
+| Oversized import bundle | Size/object limits exceeded | Reject import before decode/merge | Import quotas + rate limiting |
 | WalletConnect request expires during signing | Compare `expires_at` with now | Persist local signing artifacts; mark request `Expired` | Resume/export path for completed signatures |
 | App crash/refresh during deferred response | Missing in-memory context after restart | Rehydrate from persisted queue + transition log; replay pending side effects | Durable `PendingWalletConnectRequest` store |
 | Preflight stale at execute time | Payload/account/chain revision changed since report | Invalidate report and rerun preflight | State revision binding on `PreflightReport` |
 | EIP-1271 owner signature ambiguity | Owner type detection returns `Unknown` | Block threshold progression until owner type is resolved | Explicit `EOA`/`ContractOwner`/`Unknown` policy |
-| Multi-tab write race | Lease contention or stale heartbeat detected | Transfer/steal expired lease and replay from last persisted revision | Per-flow `FlowLease` with heartbeat |
+| EIP-1271 owner validation timeout | `isValidSignature` check exceeds timeout budget | Keep owner type unresolved, retry with backoff, block threshold progression | Dedicated timeout budget + deterministic `OWNER_VALIDATION_TIMEOUT` error |
+| Writer lock lost (P0 mode) | lock heartbeat fails or lock epoch mismatch | Transition tab to read-only, request lock reacquire | CAS + lock-epoch fencing |
+| Reconcile master lease lost (P1 mode) | master lease heartbeat fails or epoch mismatch | Pause background reconcile and reacquire lease | CAS + lease-epoch fencing |
+| Multi-tab write race (P1 mode) | Lease contention or stale heartbeat detected | Transfer/steal expired lease and replay from last persisted revision | Per-flow `FlowLease` with CAS + epoch fencing |
 | Chain reorg after preflight/confirm | Remote tx status/nonce diverges from last checkpoint | Trigger reconcile pass and invalidate stale confidence markers | Reorg-aware reconcile cursor with checkpoint tracking |
 | Web Worker failure/termination | Worker channel error | Fallback to main-thread execution with degraded-mode warning | Dual-path execution guardrails |
 
@@ -928,7 +1061,7 @@ Parity acceptance rules:
 | `safers-cli` (reference only) | Behavioral parity vectors | Offline/reference | Do not pull native HID/runtime code |
 | WalletConnect runtime | Session/request lifecycle | Browser WASM | Expiration/retry semantics required |
 | Chain RPC provider (for simulation/read calls) | `eth_call`, gas estimate, owner/context reads | HTTPS RPC | Must support per-chain fallback endpoints |
-| `BroadcastChannel` + IndexedDB lease store | Multi-tab coordination | Browser WASM | Must gracefully degrade on unsupported environments |
+| `BroadcastChannel` + IndexedDB lease store | P1 multi-tab coordination | Browser WASM | Must gracefully degrade on unsupported environments; CAS semantics required |
 
 ### Secret And Credential Handling
 
@@ -936,6 +1069,8 @@ Parity acceptance rules:
 2. Safe service endpoints are public; optional auth headers must be loaded from runtime config only.
 3. Any optional RPC API key used for simulation must be read from config and never persisted in queue exports.
 4. Telemetry payloads must redact addresses/signatures unless explicit debug mode is enabled.
+5. Queue-integrity/encryption key material must never be persisted in plaintext alongside queue object stores.
+6. P0 key model uses passphrase-derived key material (`Argon2id`, `PBKDF2` fallback) for queue encryption and MAC.
 
 ### Configuration Management
 
@@ -943,7 +1078,7 @@ Config source order:
 
 1. Compile-time defaults (`crates/rusty-safe/src/signing/config.rs`).
 2. Runtime overrides from browser storage (`rusty_safe.signing.config.v1`).
-3. Optional query-string/dev override in debug builds only.
+3. Optional query-string/dev override in debug builds only, gated by compile-time `#[cfg(debug_assertions)]` and key allowlist.
 
 Config keys:
 
@@ -955,11 +1090,29 @@ Config keys:
 | `retry_max_attempts` | `5` | global retry budget per side effect |
 | `retry_base_delay_ms` | `300` | backoff seed |
 | `retry_max_delay_ms` | `5000` | backoff cap |
-| `wc_deferred_ttl_ms` | `86400000` | deferred WC response retention |
+| `eip1271_timeout_ms` | `5000` | contract-owner validation timeout budget |
+| `eip1271_max_retries` | `3` | retries for timed-out `isValidSignature` checks |
+| `wc_deferred_ttl_ms` | `7200000` | deferred WC response retention (2 hours) |
 | `diagnostics_enabled` | `false` | enable verbose flow diagnostics |
 | `reconcile_interval_ms` | `15000` | background reconcile cadence |
-| `lease_ttl_ms` | `5000` | flow lease expiration window |
-| `lease_heartbeat_ms` | `1500` | lease heartbeat interval |
+| `single_tab_mode` | `true` | default P0 writer lock mode |
+| `writer_lock_ttl_ms` | `15000` | P0 writer lock expiration window |
+| `lease_ttl_ms` | `15000` | flow lease expiration window (P1 multi-tab mode) |
+| `lease_heartbeat_ms` | `3000` | lease heartbeat interval (P1 multi-tab mode) |
+| `reconcile_master_ttl_ms` | `30000` | P1 reconcile master lease expiration window |
+| `reconcile_master_heartbeat_ms` | `5000` | P1 reconcile master lease heartbeat interval |
+| `allow_eth_sign` | `false` | enable high-risk `eth_sign` fallback |
+| `import_max_bundle_bytes` | `2097152` | hard cap for import payload size |
+| `import_max_object_count` | `2000` | max tx/message/wc objects per import bundle |
+| `import_rate_limit_per_min` | `5` | max accepted imports per minute |
+| `kdf_profile` | `argon2id_balanced` | key-derivation profile for queue encryption/MAC keys |
+| `kdf_argon2_mem_kib` | `65536` | Argon2id memory cost (64 MiB) |
+| `kdf_argon2_time_cost` | `3` | Argon2id iteration/time cost |
+| `kdf_argon2_parallelism` | `1` | Argon2id lanes |
+| `kdf_pbkdf2_iterations` | `600000` | fallback PBKDF2 iteration count when Argon2id unavailable |
+| `browser_support_contract` | `chromium_extensions` | P0 browser support policy (`Chrome`/`Brave`) |
+| `schema_migration_mode` | `forward_backup_recover` | migration behavior on schema upgrades |
+| `signing_v1_rollout_mode` | `internal_until_phase_k_canary` | rollout policy for `signing_v1` feature flag |
 | `policy_profile_default` | `standard` | active policy profile id |
 | `worker_offload_enabled` | `true` | enable Web Worker hashing path |
 
@@ -997,7 +1150,7 @@ Maintain parity tests between `rusty-safe` hash/service payload outputs and know
 
 SRC-4
 
-Port or recreate signature normalization fixtures for `eth_sign` and confirmation payload shapes to avoid subtle signature-semantic drift.
+Port or recreate signature normalization fixtures for confirmation payload shapes and guarded `eth_sign` flows to avoid subtle signature-semantic drift.
 
 ### Integration Requirements: `safe-hash-rs`
 
@@ -1069,6 +1222,8 @@ crates/rusty-safe/tests/signing/
 
 Primary store: IndexedDB database `rusty_safe_signing_v1`.
 
+Sensitive records must be encrypted at rest (`AES-GCM`) with runtime key material derived via WebCrypto and not persisted in plaintext with queue data.
+
 Object stores:
 
 1. `pending_safe_txs` keyed by `safe_tx_hash`
@@ -1079,8 +1234,12 @@ Object stores:
 6. `flow_leases` keyed by `flow_id`
 7. `policy_profiles` keyed by `profile_id`
 8. `reconcile_cursors` keyed by `(chain_id, safe_address)`
+9. `app_writer_lock` keyed by static key `writer_lock`
+10. `reconcile_master_lease` keyed by static key `reconcile_master`
 
 Secondary store: `localStorage`.
+
+`localStorage` is restricted to non-sensitive preferences/config only.
 
 Keys:
 
@@ -1096,26 +1255,39 @@ Export bundle format: JSON, versioned envelope.
 {
   "schema_version": 1,
   "exported_at": 1739750400000,
+  "exporter": "0xOwner...",
+  "bundle_digest": "0x...",
+  "bundle_signature": "0x...",
   "txs": [/* PendingSafeTx */],
   "messages": [/* PendingSafeMessage */],
   "wc_requests": [/* PendingWalletConnectRequest */],
-  "integrity_hash": "0x..."
+  "integrity_mac": "0x..."
 }
 ```
 
 Import behavior:
 
 1. Validate schema version and required fields.
-2. Validate integrity hash.
-3. Quarantine invalid objects (do not auto-merge).
-4. Merge valid objects through deterministic dedupe rules.
+2. Enforce import limits (`max_bundle_bytes`, `max_object_count`, rate-limit window).
+3. Validate integrity MAC and exporter authenticity proof.
+4. Quarantine invalid or unverifiable objects (do not auto-merge).
+5. Merge valid objects through deterministic dedupe rules and flow-context signature binding checks.
 
 Write pattern:
 
 1. Append transition intent to `transition_log` (WAL-style).
 2. Apply object-store mutation.
 3. Mark transition as committed in `flow_metadata`.
-4. Background compaction prunes superseded transition log entries by revision checkpoint.
+4. Background compaction enforces snapshot + log-tail strategy with hard thresholds on log depth/bytes.
+
+Schema migration strategy:
+
+1. Forward-only migrations only.
+2. Before migration, write backup snapshot of pre-migration stores (`*_backup_v<from_version>`).
+3. On migration failure, switch app to recover mode and offer:
+   - restore from backup snapshot,
+   - export raw backup bundle for manual recovery.
+4. Automatic destructive reset is disallowed in production mode.
 
 ### Caching Strategy
 
@@ -1125,35 +1297,98 @@ Write pattern:
 4. Provider capability cache: session-lifetime key `(provider_id, wallet_version)`.
 5. Cache misses never bypass required guards (for example preflight-required policy).
 6. Reconcile cursor cache: keep last successful checkpoint per `(chain_id, safe_address)`.
-7. Lease cache: in-memory mirror of `flow_leases` with BroadcastChannel invalidation.
+7. Lease cache: in-memory mirror of active/hot `flow_leases` with BroadcastChannel invalidation.
+8. Writer-lock cache: in-memory mirror of `app_writer_lock` with immediate invalidation on lock epoch change.
 
 ## 8. Implementation Roadmap
 
 1. Phase A (P0): Core state machine scaffolding + schema versioning + provider discovery (`EIP-6963` + fallback).
-2. Phase B (P0): Orchestrator + multi-tab lease protocol (`multitab.rs`) + persistence WAL flow.
+2. Phase B (P0): Orchestrator + single-tab writer lock + persistence WAL flow.
 3. Phase C (P0): Signer abstraction + tx hash/sign/propose/confirm path + idempotent service interactions.
 4. Phase D (P0): Execute pipeline with mandatory preflight simulation and deterministic `safe-utils::FullTx` calldata generation.
 5. Phase E (P0): Message signing + threshold collection + combined signatures, including contract-owner compatibility checks.
 6. Phase F (P0): WalletConnect request pipeline (tx + sign methods) with durable deferred response queue.
-7. Phase G (P1): Background reconciliation engine + drift/reorg detection + conflict UX.
-8. Phase H (P1): Policy engine + risk guardrails + override audit trail.
-9. Phase I (P2): Experimental direct hardware signers through Alloy, gated by compatibility matrix.
-10. Phase J (P2): Canary rollout instrumentation, kill-switch wiring, and production runbook validation.
+7. Phase G (P1): Multi-tab lease protocol (`multitab.rs`) with atomic CAS + epoch fencing + lazy leasing strategy.
+8. Phase H (P1): Background reconciliation engine + drift/reorg detection + conflict UX.
+9. Phase I (P1): Policy engine + risk guardrails + override audit trail + optional `eth_signTypedData` compatibility.
+10. Phase J (P2): Experimental direct hardware signers through Alloy, gated by compatibility matrix.
+11. Phase K (P2): Canary rollout instrumentation, kill-switch wiring, and production runbook validation.
 
 ### Phase Dependencies, Complexity, and Parallelization
 
 | Phase | Depends On | Key Tasks | Complexity | Parallelization Opportunities |
 |---|---|---|---|---|
 | A | none | `domain.rs`, `state_machine.rs`, `queue.rs` schema versioning, provider registry skeleton | L | state machine + provider discovery can run in parallel |
-| B | A | `orchestrator.rs`, `multitab.rs`, WAL commit/compaction path in `queue.rs` | L | lease protocol + WAL implementation in parallel |
+| B | A | `orchestrator.rs`, single-tab writer lock, WAL commit/compaction path in `queue.rs` | M | orchestrator + WAL implementation in parallel |
 | C | A,B | `signer.rs`, `eip1193.rs`, `safe_service.rs`, tx propose/confirm flow | L | provider adapter + service adapter in parallel |
 | D | C | `preflight.rs`, `execute.rs`, `FullTx::calldata()` parity vectors | M | preflight + execute orchestration split |
 | E | A,C | message pipeline + signature aggregation + EIP-1271 owner handling | M | owner-resolution and message merge test tracks |
 | F | A,C,E | `wc.rs` durable request/response queue + deferred completion | L | WC adapter and persistence replay testing |
-| G | C,F | `reconcile.rs`, drift detection UI, reorg handling | M | reconcile core + UX resolution flows |
-| H | D,E | `policy.rs`, risk scoring, override audit trail | M | policy core + UI warnings/override flow |
-| I | C | experimental Alloy hardware signer adapters behind flags | M | ledger/trezor experiments parallel |
-| J | A-H | canary metrics, kill-switch plumbing, runbook validation | S | rollout docs + instrumentation parallel |
+| G | B,F | `multitab.rs` CAS lease store, `lease_epoch` fencing, lazy lease scheduler | M | lease protocol + metrics instrumentation in parallel |
+| H | C,F | `reconcile.rs`, drift detection UI, reorg handling | M | reconcile core + UX resolution flows |
+| I | D,E | `policy.rs`, risk scoring, override audit trail, optional `eth_signTypedData` compatibility | M | policy core + method-compatibility track in parallel |
+| J | C | experimental Alloy hardware signer adapters behind flags | M | ledger/trezor experiments parallel |
+| K | A-I | canary metrics, kill-switch plumbing, runbook validation | S | rollout docs + instrumentation parallel |
+
+### Branching And Milestone Commit Strategy (Normative)
+
+Repository strategy:
+
+1. Protected integration branch: `main`.
+2. One primary implementation branch per phase:
+   - `feat/prd05-phase-a-core-state`
+   - `feat/prd05-phase-b-orchestrator-writer-lock`
+   - `feat/prd05-phase-c-signer-service`
+   - `feat/prd05-phase-d-execute-preflight`
+   - `feat/prd05-phase-e-message-pipeline`
+   - `feat/prd05-phase-f-walletconnect`
+   - `feat/prd05-phase-g-multitab-leases`
+   - `feat/prd05-phase-h-reconcile`
+   - `feat/prd05-phase-i-policy`
+   - `feat/prd05-phase-j-hardware-experiments`
+   - `feat/prd05-phase-k-rollout-runbook`
+3. Optional sub-branches per phase workstream (for parallel agents), rebased into the phase branch before merge to `main`.
+
+Commit policy:
+
+1. Use atomic commits grouped by milestone, not by file type.
+2. Required commit format: `type(scope): summary` (for example `feat(signing/state_machine): add deterministic tx transition guards`).
+3. Each milestone commit must include:
+   - code changes,
+   - tests/fixtures updates,
+   - docs delta (if behavior/API changed).
+4. No direct commit to `main`.
+
+Milestone merge gates (per phase branch):
+
+1. Phase branch merges only after its mapped acceptance criteria pass in CI.
+2. Required checks before merge:
+   - `cargo fmt --check`
+   - `cargo clippy --workspace --all-targets -- -D warnings`
+   - targeted test suite for touched modules
+   - for security-sensitive phases (`C`, `D`, `F`, `G`, `I`): full signing integration suite (`crates/rusty-safe/tests/signing/integration/*`) plus provider-matrix smoke
+   - updated parity checklist status in PR description
+3. Security-sensitive phases (`C`, `D`, `F`, `G`, `I`) require explicit security review sign-off.
+4. Each merged phase is tagged: `prd05-phase-<letter>-done`.
+
+Rollback/change control:
+
+1. Keep each phase merge independently revertible.
+2. `signing_v1` remains internal-only through Phases A-F (dev/test + internal dogfood only).
+3. External production exposure begins only in Phase K with staged canary rollout (`5% -> 25% -> 100%`) gated by SLO and incident budget.
+4. Any production incident during rollout requires branch freeze and hotfix from latest tag.
+
+### Decision Log (Locked)
+
+1. DL-1 Persistent encryption/MAC key model: **B** (`Argon2id` passphrase-derived key, `PBKDF2` fallback).
+2. DL-2 Export authenticity signer model: **A** (currently connected wallet owner signs export bundle digest).
+3. DL-3 `EIP-1271` timeout/retry policy: **B** (`timeout=5000ms`, `retries=3`).
+4. DL-4 Optional typed-data compatibility in P0: **B** (`eth_signTypedData_v4` in P0, `eth_signTypedData` in P1).
+5. DL-5 Browser support contract for P0: **A** (Chromium extension wallet baseline: `Chrome`/`Brave`).
+6. DL-6 Schema migration failure behavior: **A** (forward-only migration with pre-migration backup + recover UI).
+7. DL-7 Argon2id profile: **A** (balanced: `m=64MiB`, `t=3`, `p=1`).
+8. DL-8 Phase merge test strictness: **A** (touched-module tests for all phases + full signing integration suite for security-sensitive phases).
+9. DL-9 `signing_v1` rollout mode: **A** (internal-only A-F, staged production canary in Phase K).
 
 ## Risks And Mitigations
 
@@ -1168,11 +1403,15 @@ Write pattern:
 5. Service inconsistency or lag:
    - Mitigation: optimistic local state with reconciliation loop and explicit stale-state UX.
 6. Multi-tab contention causing conflicting writes:
-   - Mitigation: per-flow lease protocol with heartbeat and takeover rules.
+   - Mitigation: P0 single-tab writer lock; P1 per-flow lease protocol with CAS + epoch fencing and lazy heartbeat.
 7. Reorg or remote drift invalidating local confidence:
    - Mitigation: periodic reconcile + checkpointed transition provenance.
 8. Policy false positives harming UX:
    - Mitigation: profile modes (`Relaxed`/`Standard`/`Strict`) with explicit override audit flow.
+9. Local storage tampering or exfiltration:
+   - Mitigation: encrypted-at-rest sensitive fields + authenticated integrity MAC + fail-closed validation.
+10. Import payload abuse or social engineering:
+   - Mitigation: exporter authenticity proof verification + strict size/count/rate limits + quarantine path.
 
 ## Acceptance Criteria
 
@@ -1186,15 +1425,22 @@ Write pattern:
 8. Crash/reload recovery restores in-flight tx/message/WC flows without signature loss.
 9. P0 wallet compatibility matrix passes with deterministic behavior for all required methods.
 10. Preflight simulation results are persisted and visible before execution.
-11. Multi-tab lease model prevents concurrent conflicting writes for the same flow.
-12. Reconciliation detects and resolves local/remote drift with explicit audit trail.
-13. Policy engine enforces configured risk profile and records override events.
+11. P0 single-tab writer lock prevents concurrent conflicting local writers.
+12. P1 multi-tab lease model (if enabled) prevents concurrent conflicting writes for the same flow.
+13. P1 reconciliation detects and resolves local/remote drift with explicit audit trail.
+14. P1 policy engine enforces configured risk profile and records override events.
+15. Provider-returned signatures are locally recovered and rejected on signer mismatch.
+16. Import/export authenticity checks reject tampered or unverifiable bundles deterministically.
+17. Sensitive queue fields are encrypted at rest and rejected on integrity MAC failure.
+18. Production deployment checklist enforces CSP/SRI host hardening requirements.
+19. P1 optional `eth_signTypedData` compatibility is behind feature gate and passes deterministic signature validation tests before enablement.
 
 ## 9. Testing Strategy
 
 1. Unit tests:
    - Safe tx/message hash vectors and signature merge ordering.
    - EIP-1193 request/response normalization and error mapping.
+   - provider signature recovery checks (`recovered_signer == expected_signer`) and flow-context signature binding.
    - Service payload serialization and integrity checks.
    - `FullTx::calldata()` byte-parity vectors for `execTransaction` payload generation.
    - state-machine transition legality and invariant tests.
@@ -1209,13 +1455,19 @@ Write pattern:
    - Provider connect/disconnect, account switch, chain switch.
    - wallet matrix run (MetaMask + at least one alternate wallet) for all required methods.
    - multi-provider environment with deterministic provider selection.
+   - `eth_sign` remains blocked by default and only activates under explicit relaxed policy override.
+   - production build smoke validates CSP/SRI deployment policy.
 4. Negative tests:
    - unsupported method, chain mismatch, stale request id, malformed signature import.
    - duplicate request replay, service timeout budget exhaustion, corrupted local queue envelope.
+   - oversized import bundle rejection and import rate-limit enforcement.
 5. Differential tests:
    - compare hash/calldata/service payload outputs against pinned fixtures from `safe-hash-rs` and selected `safers-cli` vectors.
+   - compare signature normalization output for typed-data/personal-sign/guarded-eth-sign vectors.
 6. Concurrency tests:
-   - multi-tab lease contention, lease expiry, and deterministic handoff.
+   - P0 single-tab writer lock behavior under duplicate app instances.
+   - P1 multi-tab lease contention, lease expiry, and deterministic handoff.
+   - lease CAS/epoch fencing under competing acquisitions.
    - duplicate event delivery/replay under race conditions.
 7. Fault-injection tests:
    - worker crash fallback, transient Safe service failures, provider disconnect during side effect.
@@ -1243,11 +1495,14 @@ Write pattern:
    - expired request path
 5. Corruption fixtures:
    - malformed import envelope
-   - integrity hash mismatch
+   - integrity MAC mismatch
+   - invalid export authenticity signature
    - illegal state transition replay
 6. Concurrency fixtures:
-   - competing lease acquisition attempts across tabs
-   - stale heartbeat and lease takeover scenarios
+   - single-tab writer lock conflict
+   - competing lease acquisition attempts across tabs (P1 mode)
+   - reconcile master lease takeover (P1 mode)
+   - stale heartbeat and lease takeover scenarios (P1 mode)
 7. Policy fixtures:
    - allowlisted target with safe selector
    - denied selector hard-block
@@ -1266,12 +1521,13 @@ Write pattern:
 5. `crates/rusty-safe/tests/signing/integration/walletconnect_deferred.rs`
 6. `crates/rusty-safe/tests/signing/e2e/provider_matrix_smoke.rs`
 7. `crates/rusty-safe/tests/signing/fixtures/*.json`
-8. `crates/rusty-safe/tests/signing/integration/multitab_leases.rs`
-9. `crates/rusty-safe/tests/signing/integration/reconcile_drift.rs`
-10. `crates/rusty-safe/tests/signing/load/rehydration_bench.rs`
-11. `crates/rusty-safe/tests/signing/property/fsm_invariants_proptest.rs`
-12. `crates/rusty-safe/tests/signing/fault/worker_crash_fallback.rs`
-13. `crates/rusty-safe/tests/signing/fault/service_chaos_retry.rs`
+8. `crates/rusty-safe/tests/signing/integration/writer_lock_single_tab.rs`
+9. `crates/rusty-safe/tests/signing/integration/multitab_leases.rs`
+10. `crates/rusty-safe/tests/signing/integration/reconcile_drift.rs`
+11. `crates/rusty-safe/tests/signing/load/rehydration_bench.rs`
+12. `crates/rusty-safe/tests/signing/property/fsm_invariants_proptest.rs`
+13. `crates/rusty-safe/tests/signing/fault/worker_crash_fallback.rs`
+14. `crates/rusty-safe/tests/signing/fault/service_chaos_retry.rs`
 
 ## Execution Specification (Normative)
 
@@ -1280,7 +1536,7 @@ Write pattern:
 | Event | Allowed From | Guards | Side Effects | Next State | Failure Handling |
 |---|---|---|---|---|---|
 | `StartPreflight` | `Draft`, `Failed` | decode/hash computed; chain/account bound | run `eth_call` simulation + gas estimate; persist `PreflightReport` | `Preflighted` | set `last_error`; increment `retry_count`; move to `Failed` |
-| `AddSignature` | `Preflighted`, `Proposed`, `Confirming` | signer is valid owner; signature parses and normalizes | merge/dedupe signature set; recalc threshold | same state or `ReadyToExecute` (if threshold met) | reject event; keep state unchanged |
+| `AddSignature` | `Preflighted`, `Proposed`, `Confirming` | signer is valid owner; signature parses and normalizes; signature context matches `(chain_id,safe_address,safe_tx_hash)`; recovered signer matches expected signer | merge/dedupe signature set; recalc threshold | same state or `ReadyToExecute` (if threshold met) | reject event; keep state unchanged |
 | `ProposeTx` | `Preflighted`, `Failed` | nonce resolved; idempotency key available; not `Executed` | call Safe Service propose endpoint | `Proposed` | map error; keep deterministic retry metadata; move `Failed` |
 | `ConfirmTx` | `Proposed`, `Confirming` | signer confirmation missing; threshold not already satisfied | call Safe Service confirmation endpoint | `Confirming` | map error; stay `Confirming` if retryable else `Failed` |
 | `MarkThresholdMet` | `Proposed`, `Confirming` | signatures >= threshold | none | `ReadyToExecute` | reject event if guard fails |
@@ -1293,7 +1549,7 @@ Write pattern:
 | Event | Allowed From | Guards | Side Effects | Next State | Failure Handling |
 |---|---|---|---|---|---|
 | `BeginCollect` | `Draft`, `Failed` | method resolved; hash computed | initialize collection metadata | `Collecting` | move `Failed` with `last_error` |
-| `AddSignature` | `Collecting`, `ThresholdMet` | signer ownership and signature format valid | merge/dedupe signatures; threshold evaluation | `Collecting` or `ThresholdMet` | reject malformed/unauthorized signature |
+| `AddSignature` | `Collecting`, `ThresholdMet` | signer ownership and signature format valid; signature context matches `(chain_id,safe_address,message_hash)`; recovered signer matches expected signer | merge/dedupe signatures; threshold evaluation | `Collecting` or `ThresholdMet` | reject malformed/unauthorized signature |
 | `RespondMessage` | `ThresholdMet` | linked WC request exists and not expired | send WC response payload | `Responding` then `Responded` | if transport error, set `Failed` and retain resumable context |
 | `FinalizeWithoutWC` | `ThresholdMet` | no linked WC request | mark output complete for export/share | `Responded` | set `Failed` if serialization/export fails |
 | `ExternalError` | any non-terminal | none | persist error envelope + transition log | `Failed` | n/a |
@@ -1315,13 +1571,16 @@ Write pattern:
 ### State Machine Invariants
 
 1. `state_revision` is monotonic and increments exactly once per accepted transition.
-2. Transition application is single-writer per flow id.
+2. Transition application is single-writer for the active authority scope (P0 app lock or P1 flow lease).
 3. Same `(flow_id, state_revision, event_id)` replay is idempotent no-op.
 4. Terminal states (`Executed`, `Responded`, `Rejected`, `Expired`) cannot transition except for diagnostics-only metadata updates.
 5. Any side effect must be emitted from transition output, never executed directly inside UI handlers.
-6. Mutating transition is allowed only when caller holds active `FlowLease` for `flow_id`.
+6. Mutating transition is allowed only when caller holds writer authority:
+   - P0: active single-tab writer lock.
+   - P1: active `FlowLease` for `flow_id`.
 7. Reconciliation updates must record provenance (`source = local|remote|merged`) in transition metadata.
 8. Policy profile used for sign/execute must be immutable for that flow revision.
+9. Signature acceptance requires flow-context binding + recovered-signer verification.
 
 ## API Contracts (Normative)
 
@@ -1340,16 +1599,43 @@ pub enum ProviderCapability {
     SwitchChain,
     SignTypedDataV4,
     PersonalSign,
+    SignTypedData, // optional P1 compatibility
     EthSign,
     SendTransaction,
 }
 
+pub enum Eip1193Method {
+    RequestAccounts,
+    ChainId,
+    SignTypedDataV4,
+    PersonalSign,
+    SendTransaction,
+    SignTypedData, // optional P1 compatibility
+    EthSign, // disabled by default
+}
+
+pub enum Eip1193Params {
+    None,
+    PersonalSign { account: Address, message: Bytes },
+    SignTypedDataV4 { account: Address, typed_data_json: String },
+    SignTypedData { account: Address, typed_data_json: String },
+    EthSign { account: Address, message_hash: B256 },
+    SendTransaction { tx: serde_json::Value },
+}
+
 pub struct RequestEnvelope {
     pub request_id: String,
-    pub method: String,
-    pub params: serde_json::Value,
+    pub method: Eip1193Method,
+    pub params: Eip1193Params,
     pub chain_id: Option<u64>,
     pub timeout_ms: u64,
+}
+
+pub enum ProviderResponse {
+    Accounts(Vec<Address>),
+    ChainId(u64),
+    Signature(Bytes),
+    TxHash(B256),
 }
 
 pub enum ProviderEvent {
@@ -1362,7 +1648,7 @@ pub enum ProviderEvent {
 pub trait Eip1193Client {
     fn discover_providers(&self) -> Vec<ProviderDescriptor>; // EIP-6963 first, legacy fallback
     fn select_provider(&mut self, provider_id: &str) -> Result<(), ProviderError>;
-    async fn request(&self, req: RequestEnvelope) -> Result<serde_json::Value, ProviderError>;
+    async fn request(&self, req: RequestEnvelope) -> Result<ProviderResponse, ProviderError>;
     fn subscribe_events(&self) -> ProviderEventStream;
 }
 ```
@@ -1371,7 +1657,9 @@ Contract requirements:
 
 1. Provider errors must map to stable taxonomy (`ProviderRejected`, `UnsupportedMethod`, `ChainMismatch`, `TransportFailure`, `RateLimited`).
 2. Method/param normalization must be deterministic per wallet capability profile.
-3. Event stream normalization must dedupe bursts and preserve order for the same provider.
+3. Signature responses must be verified with local recovery before they are accepted into state.
+4. `eth_sign` requests must fail closed unless config/policy gate explicitly allows them.
+5. Event stream normalization must dedupe bursts and preserve order for the same provider.
 
 ### `signing/safe_service.rs`
 
@@ -1426,14 +1714,14 @@ Contract requirements:
 ### `signing/state_machine.rs`
 
 ```rust
-pub fn apply_tx_event(state: PendingSafeTx, event: TxEvent, now_ms: u64)
-    -> TransitionOutcome<PendingSafeTx, SideEffect>;
+pub fn apply_tx_event(state: &mut PendingSafeTx, event: TxEvent, now_ms: u64)
+    -> TransitionOutcome<SideEffect>;
 
-pub fn apply_message_event(state: PendingSafeMessage, event: MessageEvent, now_ms: u64)
-    -> TransitionOutcome<PendingSafeMessage, SideEffect>;
+pub fn apply_message_event(state: &mut PendingSafeMessage, event: MessageEvent, now_ms: u64)
+    -> TransitionOutcome<SideEffect>;
 
-pub fn apply_wc_event(state: PendingWalletConnectRequest, event: WcEvent, now_ms: u64)
-    -> TransitionOutcome<PendingWalletConnectRequest, SideEffect>;
+pub fn apply_wc_event(state: &mut PendingWalletConnectRequest, event: WcEvent, now_ms: u64)
+    -> TransitionOutcome<SideEffect>;
 ```
 
 Contract requirements:
@@ -1446,18 +1734,31 @@ Contract requirements:
 
 ```rust
 pub trait FlowLeaseStore {
-    async fn acquire_lease(&self, flow_id: &str, tab_id: &str, ttl_ms: u64) -> Result<FlowLease, LeaseError>;
-    async fn heartbeat_lease(&self, flow_id: &str, tab_id: &str) -> Result<FlowLease, LeaseError>;
-    async fn release_lease(&self, flow_id: &str, tab_id: &str) -> Result<(), LeaseError>;
+    async fn acquire_lease(&self, flow_id: &str, tab_id: &str, now_ms: u64, ttl_ms: u64) -> Result<FlowLease, LeaseError>;
+    async fn heartbeat_lease(&self, flow_id: &str, tab_id: &str, expected_epoch: u64, now_ms: u64) -> Result<FlowLease, LeaseError>;
+    async fn release_lease(&self, flow_id: &str, tab_id: &str, expected_epoch: u64) -> Result<(), LeaseError>;
     async fn get_lease(&self, flow_id: &str) -> Result<Option<FlowLease>, LeaseError>;
+    async fn acquire_reconcile_master_lease(&self, tab_id: &str, now_ms: u64, ttl_ms: u64) -> Result<ReconcileMasterLease, LeaseError>;
+    async fn heartbeat_reconcile_master_lease(&self, tab_id: &str, expected_epoch: u64, now_ms: u64) -> Result<ReconcileMasterLease, LeaseError>;
+    async fn release_reconcile_master_lease(&self, tab_id: &str, expected_epoch: u64) -> Result<(), LeaseError>;
+}
+
+pub trait WriterLockStore {
+    async fn acquire_writer_lock(&self, tab_id: &str, now_ms: u64, ttl_ms: u64) -> Result<AppWriterLock, LeaseError>;
+    async fn heartbeat_writer_lock(&self, tab_id: &str, expected_epoch: u64, now_ms: u64) -> Result<AppWriterLock, LeaseError>;
+    async fn release_writer_lock(&self, tab_id: &str, expected_epoch: u64) -> Result<(), LeaseError>;
 }
 ```
 
 Contract requirements:
 
-1. Lease acquisition must be atomic and monotonic under concurrent tabs.
-2. Expired lease takeover must emit deterministic `LEASE_STOLEN` telemetry.
-3. Non-holder tab cannot emit mutating commands for that flow.
+1. Lease acquisition must be atomic and monotonic under concurrent tabs (single IDB readwrite transaction with CAS semantics).
+2. `lease_epoch` acts as fencing token and must increase on each successful takeover.
+3. Expired lease takeover must emit deterministic `LEASE_STOLEN` telemetry.
+4. Only hot/active flows receive heartbeats; inactive flows must not generate heartbeat churn.
+5. Non-holder tab cannot emit mutating commands for that flow.
+6. P0 writer lock operations must enforce CAS semantics on `lock_epoch`.
+7. P1 reconcile jobs must run only under active `ReconcileMasterLease`.
 
 ### `signing/reconcile.rs`
 
@@ -1514,9 +1815,10 @@ Matrix completion rules:
 
 1. P0 release gate: MetaMask + at least one alternate wallet must pass all required methods.
 2. Required methods: `eth_requestAccounts`, `eth_chainId`, `eth_signTypedData_v4`, `personal_sign`, `eth_sendTransaction`.
-3. `eth_sign` may be unsupported; if unsupported, UX must show deterministic fallback path.
+3. `eth_sign` is optional and disabled by default; if enabled by policy override, wallet behavior must be explicitly documented and tested.
 4. Determinism run must show zero signature/hash mismatches across repeated identical payload tests.
 5. Results must record wallet version, browser version, OS, and test commit SHA.
+6. P0 certification target is Chromium-based browsers (`Chrome` and `Brave`) only.
 
 ## 10. Comparison & Trade-offs
 
@@ -1536,7 +1838,7 @@ Matrix completion rules:
 2. Idempotent/replay-safe architecture adds complexity up front.
 3. Mandatory preflight can add latency before execute.
 4. Local-first persistence improves resilience but increases migration/versioning burden.
-5. Multi-tab lease protocol adds coordination overhead but removes conflicting write classes.
+5. P1 multi-tab lease protocol adds coordination overhead but removes conflicting write classes when collaboration mode is enabled.
 6. Policy guardrails can block legitimate advanced calls; override workflow is required.
 
 ### Future Considerations
