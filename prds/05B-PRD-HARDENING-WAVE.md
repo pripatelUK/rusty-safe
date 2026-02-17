@@ -1,8 +1,517 @@
+# PRD 05B: WASM Signing Hardening And Scale Wave
+
+Status: Draft-Active  
+Owner: Rusty Safe  
+Prerequisite: `prds/05A-PRD-PARITY-WAVE.md` complete and stable
+
+Source of truth inputs:
+
+- `prds/05A-PRD-PARITY-WAVE.md` (parity baseline contract)
+- `prds/LOCALSAFE_SIGNING_FLOW_AND_CAPABILITIES.md` (baseline comparison anchor)
+- Legacy combined PRD 05 snapshot (embedded as Appendix A in this document)
+
+## 1. Executive Summary
+
+### Problem Statement
+
+After parity functionality is shipped, production reliability and security at scale require additional systems not necessary for first-value parity:
+
+1. Multi-tab coordination and lease fencing.
+2. Remote/local drift detection and reconciliation.
+3. Policy controls, override auditability, and operational guardrails.
+4. Migration-resilient persistence and rollout safety controls.
+
+### Solution Overview
+
+Implement a hardening wave that layers resilience and operability on top of parity wave:
+
+1. Multi-tab lease + reconcile-master lease protocol with CAS and fencing epochs.
+2. Background reconcile engine for nonce/status/conflict drift detection.
+3. Risk policy engine with deterministic decisions and auditable overrides.
+4. Persistence hardening and migration recovery workflows.
+5. Canary rollout instrumentation and runbook standards.
+
+### Key Innovations (Hardening Wave)
+
+| Innovation | Why It Matters | Operational Benefit |
+|---|---|---|
+| Lease epochs + CAS semantics | Prevents split-brain writer behavior | Safe multi-tab mutation control |
+| Reconcile provenance model | Distinguishes local vs remote vs merged truth | Debuggable conflict resolution |
+| Policy engine with signed override trail | Enforces configurable risk posture | Better governance and auditability |
+| Forward-only migration + backup recover mode | Protects user state during schema upgrades | Lower corruption blast radius |
+| Staged canary with explicit gates | Reduces rollout risk | Controlled production exposure |
+
+### Hardening Scope Contract
+
+1. 05B starts only after 05A release gate is green.
+2. 05B cannot add new user-facing signing methods or connector ecosystems.
+3. 05B changes must be transparent overlays on 05A behavior, not parity rewrites.
+4. If a hardening item threatens parity behavior, ship it behind a disabled-by-default flag.
+
+## 2. Core Architecture
+
+### System Diagram (Hardening Additions)
+
+```text
++---------------------------+
+| P0 Parity Core            |
+| (05A)                     |
++------------+--------------+
+             |
+             v
++---------------------------+      +----------------------------+
+| Multitab Lease Layer      |<---->| Reconcile Engine           |
+| multitab.rs               |      | reconcile.rs               |
++------------+--------------+      +----------------------------+
+             |
+             v
++---------------------------+
+| Policy Engine + Telemetry |
+| policy.rs + telemetry.rs  |
++---------------------------+
+```
+
+### Design Principles
+
+1. Preserve deterministic core behavior from parity wave.
+2. Add coordination and policy features as strict overlays.
+3. Keep failure modes explicit and observable.
+4. Prefer reversible migrations and bounded background work.
+5. Guard rollout with measurable SLO gates.
+6. Avoid hardening overreach that delays parity feature adoption.
+7. Preserve 05A crate boundaries: hardening logic lands in signing core/adapters crates, not UI shell.
+
+### Data Flow Overview
+
+1. Parity flow mutation request enters orchestrator.
+2. Lease authority is checked (`AppWriterLock` or `FlowLease` mode).
+3. Side effects execute and are reconciled against remote snapshots.
+4. Policy decisions gate high-risk operations.
+5. Telemetry + transition logs support audit and incident response.
+
+## 3. Data Models
+
+### Rust Type Definitions (Hardening Scope)
+
+```rust
+pub struct TimestampMs(pub u64); // Unix epoch milliseconds only
+
+pub enum PolicyMode {
+    Strict,
+    Standard,
+    Relaxed,
+}
+
+pub enum GuardResult {
+    Passed,
+    Blocked(String),
+}
+
+pub enum SideEffectStatus {
+    NotStarted,
+    Succeeded,
+    Retrying,
+    FailedPermanent,
+}
+
+pub enum TransitionProvenance {
+    LocalUser,
+    RemoteService,
+    ReconcileMerge,
+    RecoveryReplay,
+}
+
+pub struct FlowLease {
+    pub flow_id: String,
+    pub holder_tab_id: String,
+    pub holder_tab_nonce: B256,
+    pub lease_epoch: u64,
+    pub acquired_at_ms: TimestampMs,
+    pub heartbeat_at_ms: TimestampMs,
+    pub expires_at_ms: TimestampMs,
+}
+
+pub struct ReconcileMasterLease {
+    pub holder_tab_id: String,
+    pub holder_tab_nonce: B256,
+    pub lease_epoch: u64,
+    pub acquired_at_ms: TimestampMs,
+    pub heartbeat_at_ms: TimestampMs,
+    pub expires_at_ms: TimestampMs,
+}
+
+pub struct RiskPolicyProfile {
+    pub profile_id: String,
+    pub mode: PolicyMode,
+    pub allowed_targets: Vec<Address>,
+    pub denied_selectors: Vec<Bytes4>,
+    pub max_value_per_day_wei: Option<U256>,
+    pub require_preflight: bool,
+}
+
+pub struct TransitionLogEntry {
+    pub flow_id: String,
+    pub state_revision: u64,
+    pub correlation_id: String,
+    pub event: String,
+    pub from_state: String,
+    pub to_state: String,
+    pub guard_result: GuardResult,
+    pub side_effect_status: SideEffectStatus,
+    pub timestamp_ms: TimestampMs,
+    pub provenance: TransitionProvenance,
+}
+
+pub struct ReconcileCursor {
+    pub chain_id: u64,
+    pub safe_address: Address,
+    pub last_synced_at_ms: TimestampMs,
+    pub last_observed_nonce: Option<u64>,
+    pub last_remote_checkpoint: Option<String>,
+}
+
+pub struct CryptoKeyMetadata {
+    pub key_id: String,
+    pub created_at_ms: TimestampMs,
+    pub activated_at_ms: TimestampMs,
+    pub rotated_from_key_id: Option<String>,
+}
+```
+
+### Validation Rules
+
+1. Lease acquire/heartbeat/release must be CAS-guarded by epoch.
+2. Non-holder tabs must not issue mutating commands.
+3. Lease owner must prove tab identity with `tab_nonce` challenge-response.
+4. Reconcile updates must preserve provenance metadata.
+5. Policy decisions must be deterministic for identical input.
+6. Transition timestamps must be Unix epoch milliseconds.
+7. Migration state must never auto-reset production data.
+8. Key rotation must preserve decrypt+verify support for prior key versions until migration finalization.
+
+### Entity Relationships
+
+1. `FlowLease.flow_id` references active tx/message/WC flow IDs.
+2. `ReconcileMasterLease` governs background reconciliation ownership.
+3. `RiskPolicyProfile` snapshots attach to flow revision at decision time.
+4. `TransitionLogEntry` records reconcile/policy/lease provenance.
+5. `CryptoKeyMetadata` links parity-wave `mac_key_id` / `enc_key_id` lifecycles.
+
+## 4. CLI/API Surface
+
+### Internal Hardening Commands
+
+| Command | Purpose | Input Example | Output Example |
+|---|---|---|---|
+| `acquire_flow_lease` | Acquire per-flow lease | `{ "command":"acquire_flow_lease", "flow_id":"tx:0xabc...", "tab_id":"tab-9" }` | `{ "ok":true, "lease":{"lease_epoch":7} }` |
+| `heartbeat_flow_lease` | Extend active lease | `{ "command":"heartbeat_flow_lease", "flow_id":"tx:0xabc...", "expected_epoch":7 }` | `{ "ok":true }` |
+| `acquire_reconcile_master_lease` | Acquire reconcile authority | `{ "command":"acquire_reconcile_master_lease", "tab_id":"tab-9" }` | `{ "ok":true, "lease":{"lease_epoch":2} }` |
+| `run_reconcile` | Trigger reconcile pass | `{ "command":"run_reconcile", "chain_id":1, "safe_address":"0xSafe..." }` | `{ "ok":true, "summary":{"updated":3,"conflicts":1} }` |
+| `evaluate_policy` | Evaluate tx/message risk | `{ "command":"evaluate_policy", "flow_id":"tx:0xabc..." }` | `{ "ok":true, "decision":"block" }` |
+| `record_policy_override` | Persist override audit event | `{ "command":"record_policy_override", "flow_id":"tx:0xabc...", "reason":"ops approved" }` | `{ "ok":true }` |
+| `rotate_store_keys` | Rotate encrypted-store keys | `{ "command":"rotate_store_keys", "new_key_id":"key-v2" }` | `{ "ok":true, "rotation":{"from":"key-v1","to":"key-v2"} }` |
+| `run_migration_dry_run` | Validate schema upgrade preconditions | `{ "command":"run_migration_dry_run", "target_schema":2 }` | `{ "ok":true, "dry_run":{"eligible":true} }` |
+
+### Error Contract Additions
+
+```json
+{
+  "ok": false,
+  "error": {
+    "code": "LEASE_CONFLICT",
+    "message": "Lease epoch mismatch",
+    "retryable": true,
+    "correlation_id": "corr-992"
+  }
+}
+```
+
+Additional hardening error families:
+
+1. `LEASE_CONFLICT`, `LEASE_LOST`, `LEASE_STOLEN`, `LEASE_ATTESTATION_FAILED`.
+2. `RECONCILE_DIVERGENCE`, `REORG_DETECTED`, `RECONCILE_BUDGET_EXCEEDED`.
+3. `POLICY_BLOCKED`, `POLICY_OVERRIDE_REQUIRED`, `POLICY_PROFILE_INVALID`.
+4. `MIGRATION_FAILED`, `KEY_ROTATION_FAILED`, `CANARY_GATE_FAILED`.
+
+## 5. Error Handling & Edge Cases
+
+| Failure Mode | Detection | Recovery | Mitigation |
+|---|---|---|---|
+| Concurrent lease acquisition | CAS conflict | retry acquire with jitter | epoch-fenced lease store |
+| Lease takeover spoof attempt | tab-nonce challenge failure | deny takeover and raise audit event | lease attestation protocol |
+| Stale leader heartbeat | expired lease | deterministic takeover | lease heartbeat + TTL + telemetry |
+| Reconcile drift unsafe merge | nonce/status mismatch | create explicit conflict record | no silent overwrite policy |
+| Policy false positive | policy block with override path | explicit override flow | signed override audit event |
+| Migration failure | migration step failure | recover mode + restore backup | forward-only + pre-migration snapshots |
+| Key rotation interrupted | mixed key-version dataset | resume rotation journal from checkpoint | dual-key read during rotation window |
+| WAL growth under load | log depth/bytes threshold exceeded | trigger compaction | snapshot + log-tail strategy |
+
+## 6. Integration Points
+
+### External Dependencies
+
+| Dependency | Hardening Role |
+|---|---|
+| `BroadcastChannel` + IndexedDB | lease coordination and invalidation |
+| Safe Transaction Service | reconcile source-of-truth checks |
+| Chain RPC read endpoints | owner/context/nonce verification and preflight confidence |
+| WebCrypto (`SubtleCrypto`) | key rotation and MAC verification primitives |
+| Telemetry sink (optional) | operational diagnostics and incident analysis |
+
+### Reuse Continuation Policy
+
+1. Continue using `safe-hash-rs` as canonical hash/service model source.
+2. Continue using `alloy` for primitives, encoding, and signer/provider abstractions.
+3. Hardening code must extend orchestration/policy/lease behavior, not fork hash/signature logic.
+4. If an upstream dependency adds a required capability, adopt it before implementing custom logic.
+
+### Configuration
+
+Hardening config keys (in addition to 05A):
+
+1. `lease_ttl_ms`
+2. `lease_heartbeat_ms`
+3. `reconcile_master_ttl_ms`
+4. `reconcile_master_heartbeat_ms`
+5. `reconcile_interval_ms`
+6. `reconcile_work_budget_ms`
+7. `policy_profile_default`
+8. `schema_migration_mode`
+9. `signing_v1_rollout_mode`
+10. `wal_compact_threshold_entries`
+11. `wal_compact_threshold_bytes`
+12. `key_rotation_grace_period_ms`
+
+### Secret/Credential Handling
+
+1. No plaintext persistence for key material.
+2. Policy/telemetry exports must redact sensitive payload fields.
+3. Debug-only config overrides must remain compile-time gated.
+4. Key-rotation events must be audit-logged with old/new key IDs and timestamps.
+
+## 7. Storage & Persistence
+
+### Directory Additions
+
+```text
+crates/rusty-safe-signing-core/src/
+  multitab.rs
+  reconcile.rs
+  policy.rs
+  telemetry.rs
+
+crates/rusty-safe-signing-adapters/src/
+  migration.rs
+  key_rotation.rs
+
+crates/rusty-safe-signing-core/tests/
+  multitab_leases.rs
+  reconcile_drift.rs
+  writer_lock_single_tab.rs
+
+crates/rusty-safe-signing-adapters/tests/
+  key_rotation.rs
+  service_chaos_retry.rs
+  rehydration_bench.rs
+```
+
+### Persistence Contract
+
+1. `transition_log` is WAL-style and compaction-governed.
+2. `flow_leases` and `reconcile_master_lease` stores are authoritative for multi-tab mode.
+3. Migration backups (`*_backup_v<from_version>`) required before schema conversion.
+4. Import quotas and authenticity checks remain enforced from parity wave.
+5. Compaction policy defaults:
+   - compact when `transition_log` > `10000` entries or `16 MiB`,
+   - keep at least the latest `2000` transition entries post-compaction.
+
+### Caching/Performance Constraints
+
+1. Reconcile loop must enforce bounded per-tick work budget (`reconcile_work_budget_ms`).
+2. Only hot/active flows receive lease heartbeats.
+3. Queue rendering must avoid full-object per-frame traversal.
+4. Lease heartbeat and reconcile loops must not block the UI thread.
+
+## 8. Implementation Roadmap
+
+### Complexity Legend
+
+| Size | Definition |
+|---|---|
+| S | <= 2 engineer-days |
+| M | 3-6 engineer-days |
+| L | 7-12 engineer-days |
+
+### Phase Plan (Hardening Wave)
+
+| Phase | Required Tasks | Deliverables | Depends On | Complexity | Parallelization Opportunities |
+|---|---|---|---|---|---|
+| B1 | Implement flow leases + reconcile-master lease + attestation checks | `crates/rusty-safe-signing-core/src/multitab.rs` + lease integration tests | 05A complete | M | Lease store and heartbeat worker can be developed in parallel |
+| B2 | Implement reconcile engine + conflict records + work budgeting | `crates/rusty-safe-signing-core/src/reconcile.rs` + drift tests | B1 | M | Remote snapshot fetch and merge classifier in parallel |
+| B3 | Implement risk policy evaluation + override audit trail | `crates/rusty-safe-signing-core/src/policy.rs` + policy integration tests | B2 | M | Selector rules and override persistence in parallel |
+| B4 | Implement migration recover-mode + key rotation + WAL compaction | `crates/rusty-safe-signing-adapters/src/migration.rs`, `crates/rusty-safe-signing-adapters/src/key_rotation.rs`, storage tests | B1,B2 | L | Key rotation and compaction tooling in parallel |
+| B5 | Implement canary gates + operational runbooks + rollback drills | `crates/rusty-safe-signing-core/src/telemetry.rs`, rollout docs, canary harness | B1-B4 | S | SLO dashboarding and drill automation in parallel |
+
+### Phase Exit Gates
+
+| Gate | Required Evidence | Threshold |
+|---|---|---|
+| B1 Gate | competing-tab lease tests + attestation tests | `0` split-brain writes across `1000` contention runs |
+| B2 Gate | reconcile divergence tests + bounded-loop benchmarks | no silent merges; reconcile tick p95 <= `250ms` under benchmark load |
+| B3 Gate | policy determinism + override audit tests | deterministic decisions for identical inputs; `100%` override events auditable |
+| B4 Gate | migration dry-run + fail/recover drills + key rotation tests | recovery succeeds with zero data loss in fault-injection suite |
+| B5 Gate | staged canary (`5% -> 25% -> 100%`) and incident drill | no gate regressions beyond SLO budget; rollback drill completed |
+
+### Branch + Commit Milestones
+
+Phase branches:
+
+1. `feat/prd05b-phase-b1-multitab-leases`
+2. `feat/prd05b-phase-b2-reconcile`
+3. `feat/prd05b-phase-b3-policy`
+4. `feat/prd05b-phase-b4-persistence-hardening`
+5. `feat/prd05b-phase-b5-canary-runbook`
+
+Per-phase commit contract:
+
+1. Commit `phase/<id>-scaffold` after interfaces and harness compile.
+2. Commit `phase/<id>-feature-complete` after implementation is complete.
+3. Commit `phase/<id>-gate-green` after all phase gates pass.
+4. Tag `prd05b-<id>-gate` on merge-ready commit for rollback anchors.
+
+Merge rules:
+
+1. Same commit conventions as parity wave.
+2. Security-sensitive hardening milestones require explicit security review sign-off.
+3. Full signing integration suite + provider matrix smoke required for `B1`, `B2`, `B3` merges.
+4. Hardening branch merges must not regress 05A parity acceptance tests.
+5. Hardening code must not add signing business logic to `crates/rusty-safe/src/app.rs`.
+
+### Success Criteria
+
+| Metric | Target | Measurement Method |
+|---|---|---|
+| Split-brain mutation incidents | `0` in automated contention suite | Lease chaos tests with competing tabs |
+| Reconcile correctness | `0` silent conflict merges | Reconcile drift corpus + provenance checks |
+| Policy auditability | `100%` override events traceable | Transition log + policy event correlation checks |
+| Migration resilience | zero data loss in controlled failure drills | Backup/restore and migration replay tests |
+| Canary safety | no SLO breach beyond release budget | staged rollout telemetry gates |
+
+## 9. Testing Strategy
+
+### Unit
+
+1. Lease epoch CAS invariants.
+2. Policy determinism and selector/value rule behavior.
+3. Reconcile merge/conflict classification logic.
+4. Key rotation and migration state machine invariants.
+
+### Integration
+
+1. Competing tab lease acquisition and deterministic takeover.
+2. Reconcile drift detection and conflict surfacing.
+3. Policy block/override persistence behavior.
+4. Migration fail/recover and mixed-key-version read paths.
+
+### Fault/Load
+
+1. service timeouts/rate limits with retry budgets.
+2. 2,000-flow rehydration and WAL compaction thresholds.
+3. worker/adapter failure recovery paths.
+4. forced refresh/crash mid-rotation and mid-migration scenarios.
+
+### Operational Validation
+
+1. staged canary gates (`5% -> 25% -> 100%`) with SLO checks.
+2. incident drill for rollback from tagged milestones.
+3. on-call runbook walk-through before `B5` full rollout.
+
+### Test Data Requirements
+
+1. Drift corpus with nonce/order/status divergence scenarios.
+2. Multi-tab lease contention traces with deterministic expected winners.
+3. Policy fixtures for allow/block/override edge cases.
+4. Migration fixtures spanning at least two schema upgrades.
+
+## 10. Comparison & Trade-offs
+
+### Why Separate Hardening Wave
+
+1. Avoids delaying parity delivery with platform-scale subsystems.
+2. Keeps hardening work explicit, measurable, and independently reversible.
+3. Improves operational quality without conflating product parity scope.
+
+### Trade-offs
+
+1. Additional phase overhead and documentation overhead.
+2. Multi-tab and policy power arrive after parity wave completion.
+3. Some advanced guardrails are intentionally deferred for delivery speed.
+
+### Overengineering Guardrails
+
+1. No hardening item can block baseline 05A parity bug fixes.
+2. Optional operational tooling stays feature-flagged until canary criteria are met.
+3. Rejected scope in 05B:
+   - new wallet connectors,
+   - new signing methods,
+   - full backend service rewrite.
+
+### Future Considerations
+
+1. Expand browser support beyond Chromium contract.
+2. Add optional account-abstraction workflows.
+3. Re-evaluate direct hardware adapters after passthrough stability.
+
+## Context Preservation Map
+
+1. This document executes hardening/reliability scope that was previously embedded in combined PRD 05.
+2. Parity feature scope is now in `prds/05A-PRD-PARITY-WAVE.md`.
+3. Full cross-cutting historical context is preserved in Appendix A (legacy combined PRD 05 full snapshot).
+
+
+## Appendix A: Legacy Combined PRD 05 Full Snapshot (Migrated)
+
+The content below is preserved verbatim from `prds/05-PRD-WASM-EIP1193-PARITY-ARCHITECTURE.md` at migration time. It is retained for full context preservation and traceability after deleting the standalone legacy file.
+
+Historical note: links inside this snapshot may reference the legacy file path and should be interpreted as archival context.
+
 # PRD 05: WASM EIP-1193 Signing Architecture For Localsafe Parity
 
-Status: Draft  
+Status: Deprecated (Historical Combined Snapshot; not required for execution)  
 Owner: Rusty Safe  
 Target: Ship a production signing architecture in `rusty-safe` with feature parity to core `localsafe.eth` flows
+
+## Migration Status
+
+Execution has been split into two canonical implementation PRDs:
+
+1. `prds/05A-PRD-PARITY-WAVE.md` (parity delivery scope).
+2. `prds/05B-PRD-HARDENING-WAVE.md` (hardening and scale scope).
+
+Required execution path:
+
+1. Use `prds/05A-PRD-PARITY-WAVE.md` for parity implementation.
+2. Use `prds/05B-PRD-HARDENING-WAVE.md` for hardening implementation.
+3. Do not treat this file as an active execution checklist.
+
+Migration-specific overrides now tracked in split plans:
+
+1. `eth_signTypedData` compatibility is in first parity wave (05A), alongside `eth_signTypedData_v4`.
+2. Chromium scope is accepted for parity wave, with Ledger/Trezor passthrough required through MetaMask/Rabby/WalletConnect-connected wallets.
+
+This combined document is retained to preserve full architectural context and traceability.
+
+Context split map:
+
+| Combined section family | Primary execution PRD |
+|---|---|
+| Parity capability matrix and localsafe flow equivalence | `prds/05A-PRD-PARITY-WAVE.md` |
+| Tx/message/WalletConnect user-facing signing flows | `prds/05A-PRD-PARITY-WAVE.md` |
+| P0 provider compatibility and hardware passthrough acceptance | `prds/05A-PRD-PARITY-WAVE.md` |
+| Single-tab writer authority and parity persistence/export/import | `prds/05A-PRD-PARITY-WAVE.md` |
+| Multi-tab leases, reconcile engine, and drift handling | `prds/05B-PRD-HARDENING-WAVE.md` |
+| Policy engine, override audit trail, and operability controls | `prds/05B-PRD-HARDENING-WAVE.md` |
+| WAL compaction, migration recovery, and rollout hardening | `prds/05B-PRD-HARDENING-WAVE.md` |
 
 ## 1. Executive Summary
 
