@@ -16,6 +16,10 @@ path = "src/main.rs"
 eframe.workspace = true
 egui.workspace = true
 
+# Signing workspace crates
+rusty-safe-signing-core = { path = "../rusty-safe-signing-core" }
+rusty-safe-signing-adapters = { path = "../rusty-safe-signing-adapters" }
+
 # Safe hash computation
 safe-utils.workspace = true
 safe-hash.workspace = true

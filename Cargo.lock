@@ -4778,6 +4778,8 @@ dependencies = [
  "getrandom 0.2.16",
  "open",
  "reqwest",
+ "rusty-safe-signing-adapters",
+ "rusty-safe-signing-core",
  "safe-hash",
  "safe-utils",
  "semver 1.0.27",
@@ -4791,6 +4793,28 @@ dependencies = [
  "wasm-bindgen-futures",
  "web-sys",
  "web-time",
+]
+
+[[package]]
+name = "rusty-safe-signing-adapters"
+version = "0.1.0"
+dependencies = [
+ "alloy",
+ "reqwest",
+ "rusty-safe-signing-core",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.17",
+]
+
+[[package]]
+name = "rusty-safe-signing-core"
+version = "0.1.0"
+dependencies = [
+ "alloy",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.17",
 ]
 
 [[package]]
