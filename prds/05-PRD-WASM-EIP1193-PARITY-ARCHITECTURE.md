@@ -147,6 +147,12 @@ Split the signing subsystem into four layers:
 
 This architecture enables deterministic unit/property tests for critical behavior and isolates browser/runtime instability to adapter boundaries.
 
+Runtime execution model enhancements:
+
+1. Single-writer orchestration enforced by per-flow lease (multi-tab safe).
+2. Background reconciliation worker for Safe service sync, nonce refresh, and reorg-aware status updates.
+3. Web Worker offload for hashing/simulation preparation to keep render thread responsive.
+
 ### State Machine Model
 
 Define explicit finite state machines for `PendingSafeTx`, `PendingSafeMessage`, and `WalletConnectRequest`.
@@ -245,6 +251,16 @@ Add a signing subsystem under `crates/rusty-safe/src/signing/`:
    - Final execution path once threshold is met, including deferred WC response resolution and deterministic `execTransaction` calldata generation via `safe-utils::FullTx`.
 12. `signing/telemetry.rs`
    - Structured event/error emission and redaction-safe diagnostics.
+13. `signing/orchestrator.rs`
+   - Single-writer event loop coordinating state machine + side-effect execution.
+14. `signing/multitab.rs`
+   - Lease/leadership protocol across browser tabs using IndexedDB + BroadcastChannel.
+15. `signing/reconcile.rs`
+   - Background sync loop for Safe service truth reconciliation and drift detection.
+16. `signing/policy.rs`
+   - Risk policy engine (allowlists, spending limits, calldata/target risk tiers).
+17. `signing/worker.rs`
+   - Web Worker bridge for heavy hashing/serialization paths.
 
 ## Product Requirements
 
@@ -322,6 +338,33 @@ FR-10 Recovery And Resume
 1. On app refresh/crash, in-flight tx/message/WalletConnect flows must resume from persisted state without loss of signed artifacts.
 2. Deferred WalletConnect responses must survive app restarts until explicit completion or expiration.
 
+FR-11 Multi-Tab Consistency
+
+1. Only one tab may hold the write lease for a given flow at a time.
+2. Non-owner tabs must run in read-only mirror mode and can request lease handoff.
+3. Lease expiry/heartbeat failure must trigger deterministic leader re-election.
+
+FR-12 Continuous Reconciliation
+
+1. Background reconciliation must periodically compare local state with Safe service state.
+2. Reconciliation must detect and resolve drift for nonce, confirmation sets, and tx terminal status.
+3. Reconciliation must surface explicit `LocalVsRemoteDivergence` diagnostics when automatic merge is unsafe.
+
+FR-13 Policy Guardrails
+
+1. App must support configurable risk policies:
+   - target allowlist/denylist
+   - method selector risk tiers
+   - optional per-day value limit
+2. High-risk policy violations must require explicit override flow with signed audit trail.
+3. Policy profile applied at sign time must be persisted with the flow.
+
+FR-14 Actionable Signing UX
+
+1. For each pending tx/message, UI must show missing owners required to reach threshold.
+2. UI must provide deterministic “next best action” hints (sign, confirm, execute, wait, reconcile).
+3. Flow status page must include transition timeline and last side-effect attempt status.
+
 ## Security Requirements
 
 SR-1 Verify-Before-Sign Gate
@@ -359,6 +402,16 @@ SR-7 Local Data Hardening
 1. Persisted signing queue must be versioned with schema migration guards and integrity verification.
 2. Corrupt or untrusted imported state must be quarantined, never auto-merged silently.
 
+SR-8 Human-Readable Intent Verification
+
+1. Before signing, app must render decoded intent (target, function, value, calldata summary) and risk tier.
+2. Unknown/opaque calldata must display explicit warning and default to blocked under strict policy mode.
+
+SR-9 Session And Origin Pinning
+
+1. WalletConnect topic/origin pair must be pinned for request lifecycle; mismatches must be rejected.
+2. Provider identity changes during active signing flow must require explicit user re-authorization.
+
 ## Non-Functional Requirements
 
 NFR-1 Reliability
@@ -383,6 +436,18 @@ NFR-4 Compatibility
 1. P0 wallet matrix must include at least MetaMask and one alternate injected provider.
 2. Provider capability probing must gracefully degrade when method support differs by wallet.
 
+NFR-5 Concurrency And Scale
+
+1. System must support at least 2,000 persisted flow objects with deterministic rehydration.
+2. Reconciliation loop must avoid blocking UI and enforce bounded work per tick.
+3. Multi-tab lease conflict resolution must complete within 2 seconds under normal conditions.
+
+NFR-6 SLOs
+
+1. P0 target: 99.5% of propose/confirm attempts complete without manual retry under healthy dependencies.
+2. P0 target: 99% of transitions persisted without recovery replay on normal shutdown.
+3. P0 target: median command-to-state-update latency under 120 ms for local-only transitions.
+
 ## 3. Data Models
 
 ### Equivalent Rust Type Definitions (Schema Source of Truth)
@@ -401,6 +466,7 @@ pub struct PendingSafeTx {
     pub status: TxStatus,
     pub state_revision: u64,
     pub origin: FlowOrigin,
+    pub policy_profile_id: String,
     pub idempotency_key: String,
     pub service_tx_id: Option<String>,
     pub preflight: Option<PreflightReport>,
@@ -449,6 +515,7 @@ PendingSafeTx {
   status: Draft | Preflighted | Proposed | Confirming | ReadyToExecute | Executed | Failed
   state_revision: u64
   origin: Manual | WalletConnect { request_id: String } | Import
+  policy_profile_id: String
   idempotency_key: String
   service_tx_id: Option<String>
   preflight: Option<PreflightReport>
@@ -470,6 +537,7 @@ PendingSafeMessage {
   status: Draft | Collecting | ThresholdMet | Responding | Responded | Failed
   state_revision: u64
   origin: Manual | WalletConnect { request_id: String } | Import
+  policy_profile_id: String
   idempotency_key: String
   integrity_hash: B256
   last_error: Option<FlowError>
@@ -522,6 +590,33 @@ TransitionLogEntry {
   side_effect: None | Requested | Succeeded | Failed
   timestamp: u64
 }
+
+FlowLease {
+  flow_id: String
+  holder_tab_id: String
+  acquired_at: u64
+  heartbeat_at: u64
+  expires_at: u64
+}
+
+RiskPolicyProfile {
+  profile_id: String
+  mode: Relaxed | Standard | Strict
+  allowed_targets: Vec<Address>
+  denied_selectors: Vec<Bytes4>
+  max_value_per_day_wei: Option<U256>
+  require_preflight: bool
+  created_at: u64
+  updated_at: u64
+}
+
+ReconcileCursor {
+  chain_id: u64
+  safe_address: Address
+  last_synced_at: u64
+  last_observed_nonce: Option<u64>
+  last_remote_checkpoint: Option<String>
+}
 ```
 
 ### Validation Rules
@@ -535,6 +630,9 @@ TransitionLogEntry {
 | `CollectedSignature` | `signer` must be Safe owner or allowed owner type; signature bytes must parse and normalize before merge |
 | `PreflightReport` | `generated_at` must be <= execution attempt time; stale preflight must be invalidated by payload/chain/account changes |
 | `TransitionLogEntry` | `(flow_id, state_revision)` unique; `from_state -> to_state` must be legal per FSM table |
+| `FlowLease` | only one active lease per `flow_id`; expired lease can be stolen by new tab with monotonic timestamp check |
+| `RiskPolicyProfile` | `mode=Strict` implies `require_preflight=true`; `denied_selectors` supersede allowlist |
+| `ReconcileCursor` | `last_synced_at` monotonic per `(chain_id,safe_address)`; stale cursor must trigger full refresh |
 
 ### Entity Relationships
 
@@ -543,6 +641,9 @@ TransitionLogEntry {
 3. `PendingSafeMessage.origin.WalletConnect.request_id` references `PendingWalletConnectRequest.request_id`.
 4. `TransitionLogEntry.flow_id` references one of `PendingSafeTx`/`PendingSafeMessage`/`PendingWalletConnectRequest`.
 5. `PreflightReport` belongs to exactly one `PendingSafeTx` revision.
+6. `FlowLease.flow_id` references one of `PendingSafeTx`/`PendingSafeMessage`/`PendingWalletConnectRequest`.
+7. `PendingSafeTx` and `PendingSafeMessage` reference exactly one `RiskPolicyProfile` snapshot at sign time.
+8. `ReconcileCursor` references one `(chain_id, safe_address)` reconciliation stream.
 
 ## 4. CLI/API Surface
 
@@ -563,6 +664,9 @@ There is no end-user CLI in P0 scope. The execution surface consists of:
 | `confirm_tx` | Submit signer confirmation | `{ "command":"confirm_tx", "safe_tx_hash":"0xabc...", "signature":"0x...", "request_id":"req-4" }` | `{ "ok":true, "state":"Confirming" }` |
 | `execute_tx` | Execute threshold-met tx | `{ "command":"execute_tx", "safe_tx_hash":"0xabc...", "request_id":"req-5" }` | `{ "ok":true, "executed_tx_hash":"0xdef...", "state":"Executed" }` |
 | `respond_wc` | Complete WalletConnect request | `{ "command":"respond_wc", "request_id":"wc-7", "mode":"quick" }` | `{ "ok":true, "wc_status":"Responded" }` |
+| `acquire_flow_lease` | Acquire single-writer lease for flow | `{ "command":"acquire_flow_lease", "flow_id":"tx:0xabc...", "tab_id":"tab-9", "request_id":"req-6" }` | `{ "ok":true, "lease":{"holder_tab_id":"tab-9","expires_at":1739750405000} }` |
+| `run_reconcile` | Trigger immediate reconciliation pass | `{ "command":"run_reconcile", "chain_id":1, "safe_address":"0xSafe...", "request_id":"req-7" }` | `{ "ok":true, "summary":{"updated":3,"conflicts":1} }` |
+| `evaluate_policy` | Evaluate tx against active risk policy | `{ "command":"evaluate_policy", "safe_tx_hash":"0xabc...", "request_id":"req-8" }` | `{ "ok":true, "decision":"allow_with_warning", "violations":["HIGH_RISK_SELECTOR"] }` |
 
 Command error envelope:
 
@@ -756,6 +860,9 @@ Reject response payload example:
 | App crash/refresh during deferred response | Missing in-memory context after restart | Rehydrate from persisted queue + transition log; replay pending side effects | Durable `PendingWalletConnectRequest` store |
 | Preflight stale at execute time | Payload/account/chain revision changed since report | Invalidate report and rerun preflight | State revision binding on `PreflightReport` |
 | EIP-1271 owner signature ambiguity | Owner type detection returns `Unknown` | Block threshold progression until owner type is resolved | Explicit `EOA`/`ContractOwner`/`Unknown` policy |
+| Multi-tab write race | Lease contention or stale heartbeat detected | Transfer/steal expired lease and replay from last persisted revision | Per-flow `FlowLease` with heartbeat |
+| Chain reorg after preflight/confirm | Remote tx status/nonce diverges from last checkpoint | Trigger reconcile pass and invalidate stale confidence markers | Reorg-aware reconcile cursor with checkpoint tracking |
+| Web Worker failure/termination | Worker channel error | Fallback to main-thread execution with degraded-mode warning | Dual-path execution guardrails |
 
 Error response contract:
 
@@ -778,6 +885,7 @@ Required error enum families:
 2. Service: `SAFE_SERVICE_TIMEOUT`, `SAFE_SERVICE_RATE_LIMITED`, `SAFE_SERVICE_CONFLICT`
 3. State: `ILLEGAL_TRANSITION`, `INTEGRITY_FAILURE`, `PRECONDITION_FAILED`
 4. WalletConnect: `WC_EXPIRED`, `WC_UNSUPPORTED_METHOD`, `WC_RESPONSE_FAILED`
+5. Concurrency/Reconcile: `LEASE_CONFLICT`, `LEASE_LOST`, `REORG_DETECTED`, `RECONCILE_DIVERGENCE`
 
 ## Localsafe Parity Matrix
 
@@ -819,6 +927,8 @@ Parity acceptance rules:
 | `safe-hash-rs` (`safe-utils`, `safe-hash`) | Hashing + service model parity | Rust/WASM-safe subset | No CLI-only codepaths |
 | `safers-cli` (reference only) | Behavioral parity vectors | Offline/reference | Do not pull native HID/runtime code |
 | WalletConnect runtime | Session/request lifecycle | Browser WASM | Expiration/retry semantics required |
+| Chain RPC provider (for simulation/read calls) | `eth_call`, gas estimate, owner/context reads | HTTPS RPC | Must support per-chain fallback endpoints |
+| `BroadcastChannel` + IndexedDB lease store | Multi-tab coordination | Browser WASM | Must gracefully degrade on unsupported environments |
 
 ### Secret And Credential Handling
 
@@ -840,12 +950,18 @@ Config keys:
 | Key | Default | Purpose |
 |---|---|---|
 | `safe_service_base_url` | per-chain default | Safe service endpoint root |
+| `rpc_read_urls` | per-chain list | read/simulation RPC fallback endpoints |
 | `preflight_required` | `true` | block execute when preflight unavailable/failed |
 | `retry_max_attempts` | `5` | global retry budget per side effect |
 | `retry_base_delay_ms` | `300` | backoff seed |
 | `retry_max_delay_ms` | `5000` | backoff cap |
 | `wc_deferred_ttl_ms` | `86400000` | deferred WC response retention |
 | `diagnostics_enabled` | `false` | enable verbose flow diagnostics |
+| `reconcile_interval_ms` | `15000` | background reconcile cadence |
+| `lease_ttl_ms` | `5000` | flow lease expiration window |
+| `lease_heartbeat_ms` | `1500` | lease heartbeat interval |
+| `policy_profile_default` | `standard` | active policy profile id |
+| `worker_offload_enabled` | `true` | enable Web Worker hashing path |
 
 ### Integration Requirements: Alloy
 
@@ -905,6 +1021,20 @@ SHR-5
 
 Safe hash, calldata hash, and `execTransaction` calldata generation must be regression-tested against pinned `safe-hash-rs` commit vectors before each release.
 
+### Integration Requirements: RPC Read/Simulation Providers
+
+RPC-1
+
+Simulation and owner/context reads must support per-chain fallback URL sets with retry-on-failover.
+
+RPC-2
+
+Provider wallet RPC and read/simulation RPC must be logically separated to prevent wallet transport stalls from blocking preflight.
+
+RPC-3
+
+RPC response normalization must enforce chain consistency and reject mismatched chain responses.
+
 ## 7. Storage & Persistence
 
 ### Repository Directory Structure
@@ -914,6 +1044,10 @@ crates/rusty-safe/src/signing/
   domain.rs
   state_machine.rs
   orchestrator.rs
+  multitab.rs
+  reconcile.rs
+  policy.rs
+  worker.rs
   eip1193.rs
   providers.rs
   safe_service.rs
@@ -942,6 +1076,9 @@ Object stores:
 3. `pending_wc_requests` keyed by `request_id`
 4. `transition_log` keyed by `(flow_id, state_revision)`
 5. `flow_metadata` keyed by `flow_id`
+6. `flow_leases` keyed by `flow_id`
+7. `policy_profiles` keyed by `profile_id`
+8. `reconcile_cursors` keyed by `(chain_id, safe_address)`
 
 Secondary store: `localStorage`.
 
@@ -973,6 +1110,13 @@ Import behavior:
 3. Quarantine invalid objects (do not auto-merge).
 4. Merge valid objects through deterministic dedupe rules.
 
+Write pattern:
+
+1. Append transition intent to `transition_log` (WAL-style).
+2. Apply object-store mutation.
+3. Mark transition as committed in `flow_metadata`.
+4. Background compaction prunes superseded transition log entries by revision checkpoint.
+
 ### Caching Strategy
 
 1. Safe service tx snapshot cache: TTL 15s, key `(chain_id, safe_tx_hash)`.
@@ -980,30 +1124,36 @@ Import behavior:
 3. Preflight result cache: TTL 30s, key `(chain_id, safe_tx_hash, state_revision)`.
 4. Provider capability cache: session-lifetime key `(provider_id, wallet_version)`.
 5. Cache misses never bypass required guards (for example preflight-required policy).
+6. Reconcile cursor cache: keep last successful checkpoint per `(chain_id, safe_address)`.
+7. Lease cache: in-memory mirror of `flow_leases` with BroadcastChannel invalidation.
 
 ## 8. Implementation Roadmap
 
 1. Phase A (P0): Core state machine scaffolding + schema versioning + provider discovery (`EIP-6963` + fallback).
-2. Phase B (P0): Signer abstraction + tx hash/sign/propose/confirm path + idempotent service interactions.
-3. Phase C (P0): Execute pipeline with mandatory preflight simulation and deterministic `safe-utils::FullTx` calldata generation.
-4. Phase D (P0): Message signing + threshold collection + combined signatures, including contract-owner compatibility checks.
-5. Phase E (P0): WalletConnect request pipeline (tx + sign methods) with durable deferred response queue.
-6. Phase F (P1): Collaboration hardening (integrity, conflict resolution, recovery UX, diagnostics panel).
-7. Phase G (P2): Experimental direct hardware signers through Alloy, gated by compatibility matrix.
-8. Phase H (P2): Canary rollout instrumentation, kill-switch wiring, and production runbook validation.
+2. Phase B (P0): Orchestrator + multi-tab lease protocol (`multitab.rs`) + persistence WAL flow.
+3. Phase C (P0): Signer abstraction + tx hash/sign/propose/confirm path + idempotent service interactions.
+4. Phase D (P0): Execute pipeline with mandatory preflight simulation and deterministic `safe-utils::FullTx` calldata generation.
+5. Phase E (P0): Message signing + threshold collection + combined signatures, including contract-owner compatibility checks.
+6. Phase F (P0): WalletConnect request pipeline (tx + sign methods) with durable deferred response queue.
+7. Phase G (P1): Background reconciliation engine + drift/reorg detection + conflict UX.
+8. Phase H (P1): Policy engine + risk guardrails + override audit trail.
+9. Phase I (P2): Experimental direct hardware signers through Alloy, gated by compatibility matrix.
+10. Phase J (P2): Canary rollout instrumentation, kill-switch wiring, and production runbook validation.
 
 ### Phase Dependencies, Complexity, and Parallelization
 
 | Phase | Depends On | Key Tasks | Complexity | Parallelization Opportunities |
 |---|---|---|---|---|
 | A | none | `domain.rs`, `state_machine.rs`, `queue.rs` schema versioning, provider registry skeleton | L | state machine + provider discovery can run in parallel |
-| B | A | `signer.rs`, `eip1193.rs`, `safe_service.rs`, tx propose/confirm flow | L | provider adapter + service adapter in parallel |
-| C | B | `preflight.rs`, `execute.rs`, `FullTx::calldata()` parity vectors | M | preflight + execute orchestration split |
-| D | A,B | message pipeline + signature aggregation + EIP-1271 owner handling | M | owner-resolution and message merge test tracks |
-| E | A,B,D | `wc.rs` durable request/response queue + deferred completion | L | WC adapter and persistence replay testing |
-| F | A-E | diagnostics panel + integrity hardening + import quarantine UX | M | diagnostics and quarantine flows parallel |
-| G | B | experimental Alloy hardware signer adapters behind flags | M | ledger/trezor experiments parallel |
-| H | A-F | canary metrics, kill-switch plumbing, runbook validation | S | rollout docs + instrumentation parallel |
+| B | A | `orchestrator.rs`, `multitab.rs`, WAL commit/compaction path in `queue.rs` | L | lease protocol + WAL implementation in parallel |
+| C | A,B | `signer.rs`, `eip1193.rs`, `safe_service.rs`, tx propose/confirm flow | L | provider adapter + service adapter in parallel |
+| D | C | `preflight.rs`, `execute.rs`, `FullTx::calldata()` parity vectors | M | preflight + execute orchestration split |
+| E | A,C | message pipeline + signature aggregation + EIP-1271 owner handling | M | owner-resolution and message merge test tracks |
+| F | A,C,E | `wc.rs` durable request/response queue + deferred completion | L | WC adapter and persistence replay testing |
+| G | C,F | `reconcile.rs`, drift detection UI, reorg handling | M | reconcile core + UX resolution flows |
+| H | D,E | `policy.rs`, risk scoring, override audit trail | M | policy core + UI warnings/override flow |
+| I | C | experimental Alloy hardware signer adapters behind flags | M | ledger/trezor experiments parallel |
+| J | A-H | canary metrics, kill-switch plumbing, runbook validation | S | rollout docs + instrumentation parallel |
 
 ## Risks And Mitigations
 
@@ -1017,6 +1167,12 @@ Import behavior:
    - Mitigation: single-writer orchestrator and serialized transition application.
 5. Service inconsistency or lag:
    - Mitigation: optimistic local state with reconciliation loop and explicit stale-state UX.
+6. Multi-tab contention causing conflicting writes:
+   - Mitigation: per-flow lease protocol with heartbeat and takeover rules.
+7. Reorg or remote drift invalidating local confidence:
+   - Mitigation: periodic reconcile + checkpointed transition provenance.
+8. Policy false positives harming UX:
+   - Mitigation: profile modes (`Relaxed`/`Standard`/`Strict`) with explicit override audit flow.
 
 ## Acceptance Criteria
 
@@ -1030,6 +1186,9 @@ Import behavior:
 8. Crash/reload recovery restores in-flight tx/message/WC flows without signature loss.
 9. P0 wallet compatibility matrix passes with deterministic behavior for all required methods.
 10. Preflight simulation results are persisted and visible before execution.
+11. Multi-tab lease model prevents concurrent conflicting writes for the same flow.
+12. Reconciliation detects and resolves local/remote drift with explicit audit trail.
+13. Policy engine enforces configured risk profile and records override events.
 
 ## 9. Testing Strategy
 
@@ -1055,6 +1214,17 @@ Import behavior:
    - duplicate request replay, service timeout budget exhaustion, corrupted local queue envelope.
 5. Differential tests:
    - compare hash/calldata/service payload outputs against pinned fixtures from `safe-hash-rs` and selected `safers-cli` vectors.
+6. Concurrency tests:
+   - multi-tab lease contention, lease expiry, and deterministic handoff.
+   - duplicate event delivery/replay under race conditions.
+7. Fault-injection tests:
+   - worker crash fallback, transient Safe service failures, provider disconnect during side effect.
+8. Reconciliation/reorg tests:
+   - local/remote divergence merge behavior.
+   - chain reorg simulation with stale confirmation data.
+9. Performance/load tests:
+   - 2,000-flow rehydration benchmark.
+   - transition throughput under polling + event burst scenarios.
 
 ### Test Data Requirements
 
@@ -1075,6 +1245,17 @@ Import behavior:
    - malformed import envelope
    - integrity hash mismatch
    - illegal state transition replay
+6. Concurrency fixtures:
+   - competing lease acquisition attempts across tabs
+   - stale heartbeat and lease takeover scenarios
+7. Policy fixtures:
+   - allowlisted target with safe selector
+   - denied selector hard-block
+   - value-limit exceed with override record
+8. Reconcile fixtures:
+   - remote confirmation ahead of local
+   - local phantom confirmation not present remotely
+   - reorg-caused tx status rollback
 
 ### Test File Path Plan
 
@@ -1085,6 +1266,12 @@ Import behavior:
 5. `crates/rusty-safe/tests/signing/integration/walletconnect_deferred.rs`
 6. `crates/rusty-safe/tests/signing/e2e/provider_matrix_smoke.rs`
 7. `crates/rusty-safe/tests/signing/fixtures/*.json`
+8. `crates/rusty-safe/tests/signing/integration/multitab_leases.rs`
+9. `crates/rusty-safe/tests/signing/integration/reconcile_drift.rs`
+10. `crates/rusty-safe/tests/signing/load/rehydration_bench.rs`
+11. `crates/rusty-safe/tests/signing/property/fsm_invariants_proptest.rs`
+12. `crates/rusty-safe/tests/signing/fault/worker_crash_fallback.rs`
+13. `crates/rusty-safe/tests/signing/fault/service_chaos_retry.rs`
 
 ## Execution Specification (Normative)
 
@@ -1132,6 +1319,9 @@ Import behavior:
 3. Same `(flow_id, state_revision, event_id)` replay is idempotent no-op.
 4. Terminal states (`Executed`, `Responded`, `Rejected`, `Expired`) cannot transition except for diagnostics-only metadata updates.
 5. Any side effect must be emitted from transition output, never executed directly inside UI handlers.
+6. Mutating transition is allowed only when caller holds active `FlowLease` for `flow_id`.
+7. Reconciliation updates must record provenance (`source = local|remote|merged`) in transition metadata.
+8. Policy profile used for sign/execute must be immutable for that flow revision.
 
 ## API Contracts (Normative)
 
@@ -1252,6 +1442,65 @@ Contract requirements:
 2. Returned side effects are declarative work items for orchestrators.
 3. Transition outcome includes structured guard failures for diagnostics.
 
+### `signing/multitab.rs`
+
+```rust
+pub trait FlowLeaseStore {
+    async fn acquire_lease(&self, flow_id: &str, tab_id: &str, ttl_ms: u64) -> Result<FlowLease, LeaseError>;
+    async fn heartbeat_lease(&self, flow_id: &str, tab_id: &str) -> Result<FlowLease, LeaseError>;
+    async fn release_lease(&self, flow_id: &str, tab_id: &str) -> Result<(), LeaseError>;
+    async fn get_lease(&self, flow_id: &str) -> Result<Option<FlowLease>, LeaseError>;
+}
+```
+
+Contract requirements:
+
+1. Lease acquisition must be atomic and monotonic under concurrent tabs.
+2. Expired lease takeover must emit deterministic `LEASE_STOLEN` telemetry.
+3. Non-holder tab cannot emit mutating commands for that flow.
+
+### `signing/reconcile.rs`
+
+```rust
+pub trait ReconcileEngine {
+    async fn reconcile_safe(&self, chain_id: u64, safe: Address) -> Result<ReconcileSummary, ReconcileError>;
+}
+
+pub struct ReconcileSummary {
+    pub flows_examined: u32,
+    pub flows_updated: u32,
+    pub conflicts_detected: u32,
+    pub remote_nonce: Option<u64>,
+}
+```
+
+Contract requirements:
+
+1. Reconcile pass must be idempotent for same remote snapshot.
+2. Unsafe auto-merge cases must produce explicit conflict records, not silent overwrite.
+3. Reconcile loop must respect bounded per-tick work budget.
+
+### `signing/policy.rs`
+
+```rust
+pub enum PolicyDecision {
+    Allow,
+    AllowWithWarning(Vec<String>),
+    Block(Vec<String>),
+}
+
+pub trait RiskPolicyEngine {
+    fn evaluate_tx(&self, tx: &PendingSafeTx, profile: &RiskPolicyProfile) -> PolicyDecision;
+    fn evaluate_message(&self, msg: &PendingSafeMessage, profile: &RiskPolicyProfile) -> PolicyDecision;
+}
+```
+
+Contract requirements:
+
+1. Policy evaluation must be pure and deterministic.
+2. Same input + profile must always produce the same decision.
+3. Override path must persist who overrode, when, and why.
+
 ## Wallet Compatibility Matrix Template (P0 Gate)
 
 | Wallet | Discovery Path | Version | `eth_requestAccounts` | `eth_chainId` | `eth_signTypedData_v4` | `personal_sign` | `eth_sendTransaction` | `wallet_switchEthereumChain` | `eth_sign` | Ledger/Trezor Passthrough | Determinism Run (n=20) | Status | Blockers |
@@ -1287,13 +1536,16 @@ Matrix completion rules:
 2. Idempotent/replay-safe architecture adds complexity up front.
 3. Mandatory preflight can add latency before execute.
 4. Local-first persistence improves resilience but increases migration/versioning burden.
+5. Multi-tab lease protocol adds coordination overhead but removes conflicting write classes.
+6. Policy guardrails can block legitimate advanced calls; override workflow is required.
 
 ### Future Considerations
 
 1. Add optional account-abstraction signer adapters after P0 stability.
-2. Add policy engine for configurable risk thresholds per Safe.
-3. Add remote collaboration sync mode with signed state deltas.
-4. Re-evaluate direct hardware adapters once browser compatibility matrix is proven.
+2. Add remote collaboration sync mode with signed state deltas.
+3. Re-evaluate direct hardware adapters once browser compatibility matrix is proven.
+4. Add server-assisted conflict resolution for shared operator teams.
+5. Add anomaly detection on signature/propose patterns for security monitoring.
 
 ## Plan Quality Checklist Status
 
