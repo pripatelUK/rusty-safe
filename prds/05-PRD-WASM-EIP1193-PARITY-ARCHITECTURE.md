@@ -544,6 +544,241 @@ TransitionLogEntry {
 4. `TransitionLogEntry.flow_id` references one of `PendingSafeTx`/`PendingSafeMessage`/`PendingWalletConnectRequest`.
 5. `PreflightReport` belongs to exactly one `PendingSafeTx` revision.
 
+## 4. CLI/API Surface
+
+There is no end-user CLI in P0 scope. The execution surface consists of:
+
+1. Internal orchestrator commands (typed events).
+2. Wallet/provider JSON-RPC calls (`EIP-1193`).
+3. Safe Transaction Service HTTP endpoints.
+4. WalletConnect response API.
+
+### 4.1 Internal Command Surface (Orchestrator)
+
+| Command | Purpose | Input | Output |
+|---|---|---|---|
+| `connect_provider` | Bind active wallet provider/account | `{ "command":"connect_provider", "provider_id":"io.metamask", "request_id":"req-1" }` | `{ "ok":true, "wallet":{"provider_id":"io.metamask","account":"0x...","chain_id":1} }` |
+| `start_preflight` | Run simulation/risk checks | `{ "command":"start_preflight", "safe_tx_hash":"0xabc...", "request_id":"req-2" }` | `{ "ok":true, "preflight":{"simulated":true,"success":true,"gas_estimate":"210000"} }` |
+| `propose_tx` | Submit tx to Safe service | `{ "command":"propose_tx", "safe_tx_hash":"0xabc...", "request_id":"req-3" }` | `{ "ok":true, "service_tx_id":"svc-123", "state":"Proposed" }` |
+| `confirm_tx` | Submit signer confirmation | `{ "command":"confirm_tx", "safe_tx_hash":"0xabc...", "signature":"0x...", "request_id":"req-4" }` | `{ "ok":true, "state":"Confirming" }` |
+| `execute_tx` | Execute threshold-met tx | `{ "command":"execute_tx", "safe_tx_hash":"0xabc...", "request_id":"req-5" }` | `{ "ok":true, "executed_tx_hash":"0xdef...", "state":"Executed" }` |
+| `respond_wc` | Complete WalletConnect request | `{ "command":"respond_wc", "request_id":"wc-7", "mode":"quick" }` | `{ "ok":true, "wc_status":"Responded" }` |
+
+Command error envelope:
+
+```json
+{
+  "ok": false,
+  "error": {
+    "code": "CHAIN_MISMATCH",
+    "message": "Wallet chain does not match Safe chain",
+    "retryable": false,
+    "correlation_id": "corr-93c2"
+  }
+}
+```
+
+### 4.2 `EIP-1193` Request Surface
+
+Required methods:
+
+1. `eth_requestAccounts`
+2. `eth_chainId`
+3. `eth_signTypedData_v4`
+4. `personal_sign`
+5. `eth_sendTransaction`
+6. Optional fallback: `eth_sign`
+
+Example (`eth_signTypedData_v4`):
+
+```json
+{
+  "method": "eth_signTypedData_v4",
+  "params": [
+    "0x1234...abcd",
+    "{\"domain\":{\"chainId\":1,\"verifyingContract\":\"0xSafe...\"},\"types\":{\"SafeTx\":[...]},\"message\":{...}}"
+  ]
+}
+```
+
+Example success response:
+
+```json
+{
+  "result": "0x5d0f...1c"
+}
+```
+
+Example provider error:
+
+```json
+{
+  "error": {
+    "code": 4001,
+    "message": "User rejected the request."
+  }
+}
+```
+
+Mapped internal error:
+
+```json
+{
+  "code": "PROVIDER_REJECTED",
+  "retryable": false
+}
+```
+
+### 4.3 Safe Transaction Service Endpoint Surface
+
+Base URL: `https://safe-transaction-<chain>.safe.global/api/v1`
+
+Endpoints in scope:
+
+1. `GET /safes/{safe_address}/`
+2. `GET /multisig-transactions/{safe_tx_hash}/`
+3. `POST /safes/{safe_address}/multisig-transactions/`
+4. `POST /multisig-transactions/{safe_tx_hash}/confirmations/`
+
+Propose example:
+
+```bash
+curl -X POST "$SAFE_TX_SERVICE/api/v1/safes/0xSafe.../multisig-transactions/" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "safe": "0xSafe...",
+    "to": "0xTarget...",
+    "value": "0",
+    "data": "0x...",
+    "operation": 0,
+    "safeTxGas": "0",
+    "baseGas": "0",
+    "gasPrice": "0",
+    "gasToken": "0x0000000000000000000000000000000000000000",
+    "refundReceiver": "0x0000000000000000000000000000000000000000",
+    "nonce": 42,
+    "contractTransactionHash": "0xabc...",
+    "sender": "0xOwner...",
+    "signature": "0x..."
+  }'
+```
+
+Propose success (example):
+
+```json
+{
+  "safeTxHash": "0xabc...",
+  "nonce": 42
+}
+```
+
+Confirm example:
+
+```bash
+curl -X POST "$SAFE_TX_SERVICE/api/v1/multisig-transactions/0xabc.../confirmations/" \
+  -H "Content-Type: application/json" \
+  -d '{ "signature": "0x..." }'
+```
+
+Service error (example):
+
+```json
+{
+  "code": 409,
+  "message": "Transaction already exists"
+}
+```
+
+Mapped internal error:
+
+```json
+{
+  "code": "DUPLICATE_SIDE_EFFECT",
+  "retryable": false
+}
+```
+
+### 4.4 WalletConnect Response Surface
+
+Supported request methods:
+
+1. `eth_sendTransaction`
+2. `personal_sign`
+3. `eth_sign`
+4. `eth_signTypedData`
+5. `eth_signTypedData_v4`
+
+Quick response payload example:
+
+```json
+{
+  "id": 717,
+  "jsonrpc": "2.0",
+  "result": "0xSAFE_TX_HASH"
+}
+```
+
+Deferred response payload example:
+
+```json
+{
+  "id": 717,
+  "jsonrpc": "2.0",
+  "result": "0xONCHAIN_EXEC_TX_HASH"
+}
+```
+
+Reject response payload example:
+
+```json
+{
+  "id": 717,
+  "jsonrpc": "2.0",
+  "error": {
+    "code": 4001,
+    "message": "User rejected request"
+  }
+}
+```
+
+## 5. Error Handling & Edge Cases
+
+| Failure Mode | Detection | Recovery Strategy | Mitigation |
+|---|---|---|---|
+| Wallet chain changed mid-flow | `chainChanged` event or pre-sign guard failure | Pause flow, require explicit rebind/retry | Hard guard in FSM (`CHAIN_MISMATCH`) |
+| Provider does not support method | `Unsupported method` provider error | Try configured fallback method if policy allows | Capability probing + deterministic fallback map |
+| User rejects signature | Provider error `4001` | Keep flow state; allow retry without state loss | Preserve payload hash and pending action |
+| Duplicate propose/confirm attempt | 409/conflict or matching idempotency replay | Collapse duplicates to single logical action | Stable idempotency keys + dedupe |
+| Safe service timeout/rate limit | HTTP timeout/429/5xx | Retry with bounded exponential backoff | Retry budget + jitter + circuit-breaker window |
+| Nonce stale/conflict | Service returns mismatch or conflicting tx state | Reconcile nonce, surface conflict UI, require re-propose | Stale nonce remediation workflow |
+| Corrupted imported signature bundle | Schema/integrity validation failure | Quarantine import; show actionable error | Versioned envelope + hash integrity checks |
+| WalletConnect request expires during signing | Compare `expires_at` with now | Persist local signing artifacts; mark request `Expired` | Resume/export path for completed signatures |
+| App crash/refresh during deferred response | Missing in-memory context after restart | Rehydrate from persisted queue + transition log; replay pending side effects | Durable `PendingWalletConnectRequest` store |
+| Preflight stale at execute time | Payload/account/chain revision changed since report | Invalidate report and rerun preflight | State revision binding on `PreflightReport` |
+| EIP-1271 owner signature ambiguity | Owner type detection returns `Unknown` | Block threshold progression until owner type is resolved | Explicit `EOA`/`ContractOwner`/`Unknown` policy |
+
+Error response contract:
+
+```json
+{
+  "code": "STRING_ENUM",
+  "message": "Human-readable summary",
+  "retryable": true,
+  "correlation_id": "corr-uuid",
+  "details": {
+    "flow_id": "tx:0xabc...",
+    "state_revision": 14
+  }
+}
+```
+
+Required error enum families:
+
+1. Provider: `PROVIDER_REJECTED`, `UNSUPPORTED_METHOD`, `CHAIN_MISMATCH`, `PROVIDER_DISCONNECTED`
+2. Service: `SAFE_SERVICE_TIMEOUT`, `SAFE_SERVICE_RATE_LIMITED`, `SAFE_SERVICE_CONFLICT`
+3. State: `ILLEGAL_TRANSITION`, `INTEGRITY_FAILURE`, `PRECONDITION_FAILED`
+4. WalletConnect: `WC_EXPIRED`, `WC_UNSUPPORTED_METHOD`, `WC_RESPONSE_FAILED`
+
 ## Localsafe Parity Matrix
 
 Baseline source:
@@ -572,7 +807,47 @@ Parity acceptance rules:
 2. Any capability intentionally deferred must be flagged as `Parity Gap` in release checklist.
 3. `sign-message` route must be full signing-capable (avoid hash-only behavior gap observed in localsafe baseline).
 
-## Integration Requirements: Alloy
+## 6. Integration Points
+
+### External Dependencies
+
+| Dependency | Purpose | Runtime Mode | Constraints |
+|---|---|---|---|
+| Injected wallet provider (`EIP-1193`) | Signing, transaction broadcast, account identity | Browser WASM | Varies by wallet capability |
+| Safe Transaction Service | Proposal/confirmation/sync | HTTPS API | Service lag/conflict must be tolerated |
+| `alloy` | Types + transport abstractions | Rust/WASM | Keep error taxonomy stable |
+| `safe-hash-rs` (`safe-utils`, `safe-hash`) | Hashing + service model parity | Rust/WASM-safe subset | No CLI-only codepaths |
+| `safers-cli` (reference only) | Behavioral parity vectors | Offline/reference | Do not pull native HID/runtime code |
+| WalletConnect runtime | Session/request lifecycle | Browser WASM | Expiration/retry semantics required |
+
+### Secret And Credential Handling
+
+1. No private keys are stored by `rusty-safe`; signing happens in wallet/provider.
+2. Safe service endpoints are public; optional auth headers must be loaded from runtime config only.
+3. Any optional RPC API key used for simulation must be read from config and never persisted in queue exports.
+4. Telemetry payloads must redact addresses/signatures unless explicit debug mode is enabled.
+
+### Configuration Management
+
+Config source order:
+
+1. Compile-time defaults (`crates/rusty-safe/src/signing/config.rs`).
+2. Runtime overrides from browser storage (`rusty_safe.signing.config.v1`).
+3. Optional query-string/dev override in debug builds only.
+
+Config keys:
+
+| Key | Default | Purpose |
+|---|---|---|
+| `safe_service_base_url` | per-chain default | Safe service endpoint root |
+| `preflight_required` | `true` | block execute when preflight unavailable/failed |
+| `retry_max_attempts` | `5` | global retry budget per side effect |
+| `retry_base_delay_ms` | `300` | backoff seed |
+| `retry_max_delay_ms` | `5000` | backoff cap |
+| `wc_deferred_ttl_ms` | `86400000` | deferred WC response retention |
+| `diagnostics_enabled` | `false` | enable verbose flow diagnostics |
+
+### Integration Requirements: Alloy
 
 AR-1
 
@@ -590,7 +865,7 @@ AR-4
 
 Alloy transport boundary must expose a unified error taxonomy (`ProviderRejected`, `UnsupportedMethod`, `ChainMismatch`, `TransportFailure`, `RateLimited`) used across UI and retries.
 
-## Integration Requirements: `safers-cli`
+### Integration Requirements: `safers-cli`
 
 SRC-1
 
@@ -608,7 +883,7 @@ SRC-4
 
 Port or recreate signature normalization fixtures for `eth_sign` and confirmation payload shapes to avoid subtle signature-semantic drift.
 
-## Integration Requirements: `safe-hash-rs`
+### Integration Requirements: `safe-hash-rs`
 
 SHR-1
 
@@ -630,7 +905,83 @@ SHR-5
 
 Safe hash, calldata hash, and `execTransaction` calldata generation must be regression-tested against pinned `safe-hash-rs` commit vectors before each release.
 
-## Rollout Plan
+## 7. Storage & Persistence
+
+### Repository Directory Structure
+
+```text
+crates/rusty-safe/src/signing/
+  domain.rs
+  state_machine.rs
+  orchestrator.rs
+  eip1193.rs
+  providers.rs
+  safe_service.rs
+  queue.rs
+  wc.rs
+  execute.rs
+  preflight.rs
+  telemetry.rs
+  config.rs
+
+crates/rusty-safe/tests/signing/
+  unit/
+  integration/
+  e2e/
+  fixtures/
+```
+
+### Runtime Persistence Layout (Browser)
+
+Primary store: IndexedDB database `rusty_safe_signing_v1`.
+
+Object stores:
+
+1. `pending_safe_txs` keyed by `safe_tx_hash`
+2. `pending_safe_messages` keyed by `message_hash`
+3. `pending_wc_requests` keyed by `request_id`
+4. `transition_log` keyed by `(flow_id, state_revision)`
+5. `flow_metadata` keyed by `flow_id`
+
+Secondary store: `localStorage`.
+
+Keys:
+
+1. `rusty_safe.signing.config.v1`
+2. `rusty_safe.signing.active_provider.v1`
+3. `rusty_safe.signing.ui_prefs.v1`
+
+### File Formats
+
+Export bundle format: JSON, versioned envelope.
+
+```json
+{
+  "schema_version": 1,
+  "exported_at": 1739750400000,
+  "txs": [/* PendingSafeTx */],
+  "messages": [/* PendingSafeMessage */],
+  "wc_requests": [/* PendingWalletConnectRequest */],
+  "integrity_hash": "0x..."
+}
+```
+
+Import behavior:
+
+1. Validate schema version and required fields.
+2. Validate integrity hash.
+3. Quarantine invalid objects (do not auto-merge).
+4. Merge valid objects through deterministic dedupe rules.
+
+### Caching Strategy
+
+1. Safe service tx snapshot cache: TTL 15s, key `(chain_id, safe_tx_hash)`.
+2. Safe nonce cache: TTL 10s, key `(chain_id, safe_address)`, invalidated after propose.
+3. Preflight result cache: TTL 30s, key `(chain_id, safe_tx_hash, state_revision)`.
+4. Provider capability cache: session-lifetime key `(provider_id, wallet_version)`.
+5. Cache misses never bypass required guards (for example preflight-required policy).
+
+## 8. Implementation Roadmap
 
 1. Phase A (P0): Core state machine scaffolding + schema versioning + provider discovery (`EIP-6963` + fallback).
 2. Phase B (P0): Signer abstraction + tx hash/sign/propose/confirm path + idempotent service interactions.
@@ -640,6 +991,19 @@ Safe hash, calldata hash, and `execTransaction` calldata generation must be regr
 6. Phase F (P1): Collaboration hardening (integrity, conflict resolution, recovery UX, diagnostics panel).
 7. Phase G (P2): Experimental direct hardware signers through Alloy, gated by compatibility matrix.
 8. Phase H (P2): Canary rollout instrumentation, kill-switch wiring, and production runbook validation.
+
+### Phase Dependencies, Complexity, and Parallelization
+
+| Phase | Depends On | Key Tasks | Complexity | Parallelization Opportunities |
+|---|---|---|---|---|
+| A | none | `domain.rs`, `state_machine.rs`, `queue.rs` schema versioning, provider registry skeleton | L | state machine + provider discovery can run in parallel |
+| B | A | `signer.rs`, `eip1193.rs`, `safe_service.rs`, tx propose/confirm flow | L | provider adapter + service adapter in parallel |
+| C | B | `preflight.rs`, `execute.rs`, `FullTx::calldata()` parity vectors | M | preflight + execute orchestration split |
+| D | A,B | message pipeline + signature aggregation + EIP-1271 owner handling | M | owner-resolution and message merge test tracks |
+| E | A,B,D | `wc.rs` durable request/response queue + deferred completion | L | WC adapter and persistence replay testing |
+| F | A-E | diagnostics panel + integrity hardening + import quarantine UX | M | diagnostics and quarantine flows parallel |
+| G | B | experimental Alloy hardware signer adapters behind flags | M | ledger/trezor experiments parallel |
+| H | A-F | canary metrics, kill-switch plumbing, runbook validation | S | rollout docs + instrumentation parallel |
 
 ## Risks And Mitigations
 
@@ -667,7 +1031,7 @@ Safe hash, calldata hash, and `execTransaction` calldata generation must be regr
 9. P0 wallet compatibility matrix passes with deterministic behavior for all required methods.
 10. Preflight simulation results are persisted and visible before execution.
 
-## Test Plan Requirements
+## 9. Testing Strategy
 
 1. Unit tests:
    - Safe tx/message hash vectors and signature merge ordering.
@@ -691,6 +1055,36 @@ Safe hash, calldata hash, and `execTransaction` calldata generation must be regr
    - duplicate request replay, service timeout budget exhaustion, corrupted local queue envelope.
 5. Differential tests:
    - compare hash/calldata/service payload outputs against pinned fixtures from `safe-hash-rs` and selected `safers-cli` vectors.
+
+### Test Data Requirements
+
+1. Canonical Safe tx/message fixtures for at least:
+   - 2 chains (`1`, `11155111`)
+   - 2 Safe versions
+   - mixed signature methods (`typedData`, `personal_sign`, optional `eth_sign`)
+2. Wallet capability fixtures per tested provider (`supports_eth_sign`, `supports_switch_chain`, typed-data quirks).
+3. Safe service fixtures:
+   - success propose/confirm
+   - conflict (`409`)
+   - timeout/rate-limit retry scenarios
+4. WalletConnect fixtures:
+   - quick response path
+   - deferred response path
+   - expired request path
+5. Corruption fixtures:
+   - malformed import envelope
+   - integrity hash mismatch
+   - illegal state transition replay
+
+### Test File Path Plan
+
+1. `crates/rusty-safe/tests/signing/unit/state_machine_transitions.rs`
+2. `crates/rusty-safe/tests/signing/unit/hash_parity.rs`
+3. `crates/rusty-safe/tests/signing/unit/idempotency.rs`
+4. `crates/rusty-safe/tests/signing/integration/propose_confirm_execute.rs`
+5. `crates/rusty-safe/tests/signing/integration/walletconnect_deferred.rs`
+6. `crates/rusty-safe/tests/signing/e2e/provider_matrix_smoke.rs`
+7. `crates/rusty-safe/tests/signing/fixtures/*.json`
 
 ## Execution Specification (Normative)
 
@@ -874,6 +1268,41 @@ Matrix completion rules:
 3. `eth_sign` may be unsupported; if unsupported, UX must show deterministic fallback path.
 4. Determinism run must show zero signature/hash mismatches across repeated identical payload tests.
 5. Results must record wallet version, browser version, OS, and test commit SHA.
+
+## 10. Comparison & Trade-offs
+
+### Why This Approach
+
+| Approach | Strengths | Weaknesses | Decision |
+|---|---|---|---|
+| WASM + direct `EIP-1193` (selected) | Works in browser today, good wallet UX, no native bridge | Wallet capability variance | Adopt as P0 |
+| Direct Ledger via `ledger-device-rust-sdk` | Deep hardware control | Not host/browser transport layer, firmware-oriented | Reject for this product path |
+| Native HID via sidecar | Potential hardware coverage | Deployment complexity, trust boundary expansion | Defer, not P0 |
+| Foundry browser-wallet server path reuse | Existing code reference | Localhost server model mismatches pure WASM deployment | Reference only |
+| Full `safers-cli` runtime embed | Rich Safe ops today | Native transport and CLI assumptions incompatible with WASM | Reuse logic only |
+
+### Trade-offs Acknowledged
+
+1. Depending on browser wallets increases variability across providers.
+2. Idempotent/replay-safe architecture adds complexity up front.
+3. Mandatory preflight can add latency before execute.
+4. Local-first persistence improves resilience but increases migration/versioning burden.
+
+### Future Considerations
+
+1. Add optional account-abstraction signer adapters after P0 stability.
+2. Add policy engine for configurable risk thresholds per Safe.
+3. Add remote collaboration sync mode with signed state deltas.
+4. Re-evaluate direct hardware adapters once browser compatibility matrix is proven.
+
+## Plan Quality Checklist Status
+
+- [x] Every required section is present and detailed.
+- [x] File paths and function/module names are specific.
+- [x] Data schemas include concrete field names and types.
+- [x] Commands/endpoints include usage and JSON examples.
+- [x] Edge cases and recovery paths are explicit.
+- [x] Tasks are execution-ready for implementation agents.
 
 ## References
 
