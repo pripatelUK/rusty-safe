@@ -190,6 +190,222 @@ Egui rendering rules:
 3. Any new UI action must translate to a typed bridge command, not direct service calls.
 4. Per-frame work is bounded: shell polls non-blocking result queues and renders snapshots.
 
+### UI Flow Contract (Parity-Critical)
+
+UI parity is mandatory for 05A delivery. Behavior parity is not considered complete unless the egui shell can drive all required flows end-to-end with deterministic state transitions and recovery UX.
+
+#### Navigation And Surface Contract
+
+`Tab::Signing` contains five deterministic surfaces:
+
+1. `SigningSurface::Queue` (`signing_ui/queue.rs`)
+2. `SigningSurface::TxDetails` (`signing_ui/tx_details.rs`)
+3. `SigningSurface::MessageDetails` (`signing_ui/message_details.rs`)
+4. `SigningSurface::WalletConnect` (`signing_ui/wc_requests.rs`)
+5. `SigningSurface::ImportExport` (`signing_ui/import_export.rs`)
+
+Navigation rules:
+
+1. Queue is the default entry surface.
+2. All deep surfaces (`TxDetails`, `MessageDetails`, `WalletConnect`) must preserve selected flow context after refresh/rehydration.
+3. Every surface action dispatches a typed bridge command and receives structured result events.
+4. Switching surfaces must not mutate signing state by itself.
+
+#### Shared Shell Elements
+
+All signing surfaces render the following shared elements:
+
+1. Provider status badge: disconnected/connected, active account, active chain.
+2. Safe context card: safe address, threshold, owner count, nonce summary.
+3. Flow health bar: state, last update time, correlation id, retry state.
+4. Alert banner stack: highest-severity first (`error`, `warning`, `info`).
+
+#### Surface Specifications
+
+##### Queue Surface
+
+Purpose:
+
+1. Show pending tx/message/WalletConnect flows and their state at a glance.
+2. Start new flows and resume existing flows.
+
+Required data columns:
+
+1. Flow type (`tx`, `message`, `wc-tx`, `wc-sign`)
+2. Target hash (`safe_tx_hash` or `message_hash`)
+3. State
+4. Signature progress (`m / threshold`)
+5. Updated timestamp
+6. Origin (`local`, `imported`, `walletconnect`)
+
+Action gating:
+
+| Action | Enabled When | Disabled Reason |
+|---|---|---|
+| Open details | flow exists | flow missing or deleted |
+| Sign | provider connected + chain/account match + writer lock held | provider/chain/account/lock guard failed |
+| Propose | tx has at least one valid signature | missing valid signatures |
+| Execute | threshold reached and preflight succeeded | threshold/preflight guard failed |
+| Respond WC | linked WC request active | request expired or not linked |
+
+##### Tx Details Surface
+
+Purpose:
+
+1. Drive tx flow: sign -> propose -> confirm -> execute.
+2. Expose all deterministic flow state and side-effect outcomes.
+
+Required sections:
+
+1. Tx summary (to, value, operation, nonce, safe tx hash).
+2. Signature table (signer, source, method, recovered signer, added timestamp).
+3. Preflight panel (simulation result, warnings, blocking issues).
+4. Side-effect timeline (propose/confirm/execute attempt history).
+
+Action gating:
+
+| Action | Enabled When | Disabled Reason |
+|---|---|---|
+| Sign tx | signer guard passes | signer/account/chain mismatch |
+| Propose tx | tx status allows propose and idempotency key free | already proposed or in-flight |
+| Confirm tx | tx exists remotely and signature is valid | remote state mismatch or bad signature |
+| Execute tx | threshold reached + preflight pass + chain match | threshold/preflight/chain guard failed |
+
+##### Message Details Surface
+
+Purpose:
+
+1. Drive message signing and threshold aggregation.
+2. Show method-normalized message payload and signature provenance.
+
+Required sections:
+
+1. Method display (`personal_sign`, `eth_signTypedData`, `eth_signTypedData_v4`, guarded `eth_sign`).
+2. Normalized payload/hash panel.
+3. Signature progress and threshold indicator.
+4. Response eligibility panel (for linked WC requests).
+
+Action gating:
+
+| Action | Enabled When | Disabled Reason |
+|---|---|---|
+| Sign message | provider connected + method supported + signer guard passes | method unsupported or signer guard failed |
+| Add signature (manual/import) | signature context validates | chain/safe/hash context mismatch |
+| Respond threshold result | threshold reached and request active | threshold not met or request expired |
+
+##### WalletConnect Surface
+
+Purpose:
+
+1. Present request inbox and deterministic request lifecycle.
+2. Support quick and deferred tx response modes and sign-method responses.
+
+Required request metadata:
+
+1. Request id
+2. Topic
+3. Method
+4. Origin dApp metadata (if provided)
+5. Expiry timestamp
+6. Linked flow reference
+
+Action gating:
+
+| Action | Enabled When | Disabled Reason |
+|---|---|---|
+| Accept and route | request active + method supported | expired or unsupported method |
+| Quick response | flow can produce immediate result | flow not ready |
+| Deferred response | request active and linked tx flow exists | missing linked tx |
+| Reject | request active | already responded/expired |
+
+##### Import/Export Surface
+
+Purpose:
+
+1. Import/export/share tx/message/WC bundles.
+2. Explain authenticity and merge outcomes clearly.
+
+Required sections:
+
+1. Import drop zone/text area.
+2. Validation output panel (schema/mac/signature/context checks).
+3. Merge summary panel (added/updated/skipped/conflicted counts).
+4. Export options panel (selected flows, bundle digest/signature preview).
+
+Action gating:
+
+| Action | Enabled When | Disabled Reason |
+|---|---|---|
+| Import bundle | input present and parseable | empty or malformed input |
+| Apply merge | validation succeeded | validation/auth/context failed |
+| Export bundle | at least one flow selected | no selected flows |
+| Copy/share payload | export artifact generated | no export artifact |
+
+#### Critical User Journeys (Parity Paths)
+
+##### Journey 1: Native Tx Signing
+
+1. User enters `Queue` and opens tx.
+2. `TxDetails` shows tx summary + existing signatures.
+3. User signs; signature table updates.
+4. User proposes/confirms; timeline logs side effects.
+5. When threshold met, execute action is enabled and dispatches `execute_tx`.
+6. Executed hash is persisted and shown in timeline.
+
+##### Journey 2: Transaction Collaboration
+
+1. User opens `ImportExport`.
+2. User imports bundle; validation/match checks run.
+3. Merge result is shown with deterministic counters.
+4. User opens merged flow in `TxDetails` and continues signing/execution.
+
+##### Journey 3: WalletConnect Tx Deferred Response
+
+1. Request appears in `WalletConnect`.
+2. User selects deferred mode and links/creates tx flow.
+3. User completes threshold and execute in `TxDetails`.
+4. `WalletConnect` request becomes response-eligible and sends executed tx hash.
+
+##### Journey 4: WalletConnect Message Signing
+
+1. Sign request appears in `WalletConnect`.
+2. User routes to `MessageDetails`.
+3. Message signatures are collected until threshold.
+4. Encoded signatures are sent as request response.
+
+#### Error And Recovery UX Contract
+
+UI must provide deterministic recovery actions for each blocking class:
+
+| Error Code | UI Behavior | Recovery Action |
+|---|---|---|
+| `CHAIN_MISMATCH` | blocking banner + highlight chain field | `Connect correct chain` CTA |
+| `ACCOUNT_MISMATCH` | blocking banner + signer mismatch detail | `Switch account` CTA |
+| `SIGNER_MISMATCH` | inline signature row error + toast | discard invalid signature, keep flow active |
+| `UNSUPPORTED_METHOD` | request card warning + disabled action | choose supported method path or reject request |
+| `WC_REQUEST_EXPIRED` | request card locked as expired | keep local artifacts; allow export/share |
+| `WRITER_LOCK_CONFLICT` | read-only mode banner | `Reacquire lock` CTA |
+| `IMPORT_AUTH_FAILED` | import result marked quarantined | inspect details; allow copy of rejection report |
+| `INTEGRITY_MAC_INVALID` | object quarantine alert | prevent mutation and offer export of intact flows only |
+
+Recovery UX requirements:
+
+1. Every blocking error displays one primary CTA and one secondary dismiss/details action.
+2. Error banners must include correlation id.
+3. Recovery actions must be idempotent and safe to retry.
+4. Flow state remains visible even when actions are blocked.
+
+#### UI Acceptance Checklist (Parity Gate Input)
+
+A5 parity gate requires all checks to pass:
+
+1. Each required surface renders with no missing mandatory sections.
+2. All action buttons follow documented gating rules.
+3. All four critical user journeys execute successfully.
+4. Blocking errors render deterministic recovery UX.
+5. Refresh/rehydration preserves selected flow context and status.
+6. No signing business logic leaks into egui shell files.
+
 ## 3. Data Models
 
 ### Rust Type Definitions (Parity Scope)
