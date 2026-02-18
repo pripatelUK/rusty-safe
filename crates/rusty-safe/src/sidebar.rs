@@ -65,7 +65,7 @@ pub fn render(
                         // Show modal when open
                         if show_modal {
                             let screen_rect = ctx.screen_rect();
-                            
+
                             // Dimmed background that closes modal on click
                             let bg_response = egui::Area::new(ui.make_persistent_id("build_info_bg"))
                                 .order(egui::Order::Background)
@@ -73,7 +73,7 @@ pub fn render(
                                 .show(ctx, |ui| {
                                     ui.allocate_response(screen_rect.size(), egui::Sense::click())
                                 });
-                            
+
                             if bg_response.inner.clicked() {
                                 show_modal = false;
                             }
@@ -90,7 +90,7 @@ pub fn render(
                                     let short_build_time = if build_time.len() > 19 { &build_time[..19] } else { build_time };
 
                                     ui.label(egui::RichText::new(format!("Build Time: {}", short_build_time)));
-                                    
+
                                     ui.horizontal(|ui| {
                                         ui.label("Commit:");
                                         if ui.link(egui::RichText::new(short_hash).monospace()).clicked() {
@@ -99,7 +99,7 @@ pub fn render(
                                     });
 
                                     ui.add_space(8.0);
-                                    
+
                                     ui.horizontal(|ui| {
                                         if ui.link("View Build Info").clicked() {
                                             ui::open_url_new_tab("/BUILD_INFO.txt");
@@ -116,7 +116,7 @@ pub fn render(
 
                     });
                 });
-            
+
             egui::ScrollArea::vertical().show(ui, |ui| {
                 ui.add_space(12.0);
 
@@ -153,7 +153,7 @@ pub fn render(
                         });
                 });
                 ui.add_space(12.0);
-                
+
                 // Safe Address with recent suggestions
                 ui.label(egui::RichText::new("Safe Address:").strong());
                 ui.add_space(4.0);
@@ -164,33 +164,33 @@ pub fn render(
                         .font(egui::TextStyle::Monospace)
                         .margin(egui::vec2(8.0, 6.0)),
                 );
-                
+
                 // Track popup visibility in memory
                 let popup_id = ui.make_persistent_id("recent_addresses_popup");
                 let mut show_popup = ui.memory(|m| m.data.get_temp::<bool>(popup_id).unwrap_or(false));
-                
+
                 // Show popup when input gains focus
                 if addr_response.gained_focus() {
                     show_popup = true;
                 }
-                
+
                 // Hide popup on Escape or when clicking outside
                 if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
                     show_popup = false;
                 }
-                
+
                 // Add to recent on blur (will be persisted by eframe auto-save)
                 if addr_response.lost_focus() && !addr_response.ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
                     crate::state::add_recent_address(&mut safe_ctx.recent_addresses, &safe_ctx.safe_address);
                 }
-                
+
                 // Show recent addresses popup
                 if show_popup && !safe_ctx.recent_addresses.is_empty() {
                     let below_rect = egui::Rect::from_min_size(
                         addr_response.rect.left_bottom(),
                         egui::vec2(addr_response.rect.width(), 0.0),
                     );
-                    
+
                     let area_response = egui::Area::new(popup_id)
                         .order(egui::Order::Foreground)
                         .fixed_pos(below_rect.left_top())
@@ -218,31 +218,31 @@ pub fn render(
                                     }
                                 });
                         });
-                    
+
                     // Close popup if clicked outside
-                    if ui.input(|i| i.pointer.any_click()) 
+                    if ui.input(|i| i.pointer.any_click())
                         && !area_response.response.rect.contains(ui.input(|i| i.pointer.interact_pos().unwrap_or_default()))
                         && !addr_response.rect.contains(ui.input(|i| i.pointer.interact_pos().unwrap_or_default()))
                     {
                         show_popup = false;
                     }
                 }
-                
+
                 // Store popup state
                 ui.memory_mut(|m| m.data.insert_temp(popup_id, show_popup));
-                
+
                 ui.add_space(12.0);
 
                 // Version display
                 ui.horizontal(|ui| {
                     ui.label(egui::RichText::new("Version:").strong());
-                    
+
                     // If we have safe_info with a valid version, show as read-only
                     let version_from_api = safe_info.as_ref()
                         .filter(|info| SAFE_VERSIONS.contains(&info.version.as_str()));
-                    
+
                     if version_from_api.is_some() {
-                        ui.add_enabled(false, 
+                        ui.add_enabled(false,
                             egui::Button::new(&safe_ctx.safe_version)
                                 .min_size(egui::vec2(80.0, 0.0))
                         );
@@ -285,13 +285,13 @@ pub fn render(
                         ui.spinner();
                     }
                 });
-                
+
                 // Safe info display
                 if let Some(info) = safe_info {
                     ui.add_space(10.0);
                     ui.separator();
                     ui.add_space(5.0);
-                    
+
                     // Threshold with signers
                     egui::CollapsingHeader::new(
                         egui::RichText::new(format!("Threshold ({}/{})", info.threshold, info.owners.len())).strong()
@@ -308,7 +308,7 @@ pub fn render(
                             });
                         }
                     });
-                    
+
                     // Modules
                     if !info.modules.is_empty() {
                         egui::CollapsingHeader::new(
@@ -327,14 +327,14 @@ pub fn render(
                             }
                         });
                     }
-                    
+
                     ui.add_space(5.0);
                     ui.horizontal(|ui| {
                         ui.label(egui::RichText::new("Nonce:").weak());
                         ui.label(format!("{}", info.nonce));
                     });
                 }
-                
+
                 ui.add_space(20.0);
             });
         });
