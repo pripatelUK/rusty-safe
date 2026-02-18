@@ -1,0 +1,32 @@
+name: PRD05A Signing Gates
+
+on:
+  pull_request:
+  push:
+    branches: [main, sign-tx]
+
+jobs:
+  prd05a-gates:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Boundary checks
+        run: ./scripts/check_signing_boundaries.sh
+
+      - name: Traceability checks
+        run: ./scripts/check_prd05a_traceability.sh
+
+      - name: Format check
+        run: cargo fmt --all -- --check
+
+      - name: Clippy (signing crates strict)
+        run: cargo clippy -p rusty-safe-signing-core -p rusty-safe-signing-adapters --all-targets -- -D warnings
+
+      - name: Test suite
+        run: cargo test --workspace
