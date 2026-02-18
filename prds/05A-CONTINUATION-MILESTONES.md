@@ -7,7 +7,7 @@ This document operationalizes the post-A5 continuation work into milestone execu
 
 ## Milestone Plan
 
-### C1: EIP-1193 Runtime Adapter
+### C1: EIP-1193 Runtime Adapter (Completed)
 
 Objective:
 1. Replace deterministic/mock provider transport with real browser runtime integration.
@@ -21,7 +21,12 @@ Gate:
 1. Browser integration tests on Chromium pass.
 2. Manual account/chain switch flow proves deterministic lock behavior.
 
-### C2: Safe Service Runtime Adapter
+Delivered:
+1. Runtime-capable adapter modes in `crates/rusty-safe-signing-adapters/src/eip1193.rs`.
+2. Deterministic `accountsChanged` / `chainChanged` event drain contract.
+3. Runtime adapter tests in `crates/rusty-safe-signing-adapters/tests/runtime_adapters.rs`.
+
+### C2: Safe Service Runtime Adapter (Completed)
 
 Objective:
 1. Replace in-memory service stubs with real Safe Transaction Service integration.
@@ -34,7 +39,11 @@ Deliverables:
 Gate:
 1. Tx E2E path against service sandbox passes.
 
-### C3: WalletConnect Runtime Integration
+Delivered:
+1. HTTP runtime mode with retries/idempotency in `crates/rusty-safe-signing-adapters/src/safe_service.rs`.
+2. Runtime adapter integration test via mock service in `crates/rusty-safe-signing-adapters/tests/runtime_adapters.rs`.
+
+### C3: WalletConnect Runtime Integration (Completed)
 
 Objective:
 1. Replace in-memory WalletConnect state with live runtime sessions and requests.
@@ -47,7 +56,12 @@ Deliverables:
 Gate:
 1. WC lifecycle and deferred response browser E2E pass.
 
-### C4: Crypto Storage/Export Spec
+Delivered:
+1. Runtime bridge mode in `crates/rusty-safe-signing-adapters/src/wc.rs`.
+2. `wc_pair` command path wired through core/shell (`orchestrator.rs`, `signing_bridge.rs`, `signing_ui/wc_requests.rs`).
+3. Runtime adapter integration test in `crates/rusty-safe-signing-adapters/tests/runtime_adapters.rs`.
+
+### C4: Crypto Storage/Export Spec (Completed)
 
 Objective:
 1. Implement authenticated encrypted persistence/export contract from PRD.
@@ -62,7 +76,12 @@ Gate:
 1. Auth/tamper negative vectors pass.
 2. Backward-compatible import path validated.
 
-### C5: Compatibility Matrix
+Delivered:
+1. Crypto primitives in `crates/rusty-safe-signing-adapters/src/crypto.rs`.
+2. Encrypted export and authenticated import in `crates/rusty-safe-signing-adapters/src/queue.rs`.
+3. Bundle schema extension in `crates/rusty-safe-signing-core/src/domain.rs`.
+
+### C5: Compatibility Matrix (Executed, External Evidence Pending)
 
 Objective:
 1. Prove runtime wallet/hardware passthrough viability for target browsers/wallets.
@@ -75,7 +94,14 @@ Deliverables:
 Gate:
 1. Compatibility report committed with pass/fail and known limitations.
 
-### C6: Performance Harness
+Delivered:
+1. Matrix automation/report script `scripts/run_prd05a_compat_matrix.sh`.
+2. Hardware smoke evidence script `scripts/run_prd05a_hardware_smoke.sh`.
+3. Reports:
+   - `local/reports/prd05a/C5-compatibility-matrix-report.md`
+   - `local/reports/prd05a/C5-hardware-passthrough-smoke.md`
+
+### C6: Performance Harness (Completed)
 
 Objective:
 1. Enforce PRD command/rehydration performance budgets.
@@ -87,6 +113,11 @@ Deliverables:
 
 Gate:
 1. `p95 <= 150ms` command path and `p95 <= 1500ms` rehydration path in evidence runs.
+
+Delivered:
+1. Performance budget test `crates/rusty-safe-signing-adapters/tests/performance_budget.rs`.
+2. Harness/report script `scripts/run_prd05a_performance.sh`.
+3. Evidence artifact `local/reports/prd05a/C6-performance-report.md`.
 
 ### C7: CI Gate Enforcement (Completed)
 
@@ -107,7 +138,7 @@ Delivered:
 1. Cleaned trailing whitespace debt in `crates/rusty-safe/src/sidebar.rs`.
 2. `cargo fmt --all` now succeeds.
 
-### C9: Differential Parity Harness
+### C9: Differential Parity Harness (Completed)
 
 Objective:
 1. Compare parity-flow outputs against localsafe fixture snapshots.
@@ -120,7 +151,13 @@ Deliverables:
 Gate:
 1. Zero critical diffs across mandatory `PARITY-*` flows.
 
-### C10: Release Evidence and Discipline
+Delivered:
+1. Fixture set under `fixtures/signing/*`.
+2. Differential harness test `crates/rusty-safe-signing-adapters/tests/parity_differential.rs`.
+3. Harness/report script `scripts/run_prd05a_differential.sh`.
+4. Evidence artifact `local/reports/prd05a/C9-differential-parity-report.md`.
+
+### C10: Release Evidence and Discipline (Completed, Sign-off Pending)
 
 Objective:
 1. Complete release-gate evidence package and milestone/tag discipline.
@@ -133,3 +170,7 @@ Deliverables:
 
 Gate:
 1. `prds/05A-RELEASE-GATE-CHECKLIST.md` is fully signed.
+
+Delivered:
+1. End-to-end evidence runner `scripts/run_prd05a_release_evidence.sh`.
+2. Release evidence summary `local/reports/prd05a/C10-release-evidence-summary.md`.

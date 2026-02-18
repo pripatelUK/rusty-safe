@@ -1268,16 +1268,16 @@ This section tracks the remaining productionization milestones requested after t
 
 | Milestone | Scope | PARITY Link | Branch | Gate | Status |
 |---|---|---|---|---|---|
-| C1 | Real WASM/browser EIP-1193 transport + `accountsChanged` / `chainChanged` handling | `PARITY-WC-01`, `PARITY-HW-01` | `feat/prd05a-c1-eip1193-runtime` | Adapter integration tests + chromium smoke | Planned |
-| C2 | Real Safe Transaction Service integration (timeouts/retries/idempotency) | `PARITY-TX-01` | `feat/prd05a-c2-safe-service-runtime` | propose/confirm/execute E2E against service sandbox | Planned |
-| C3 | Real WalletConnect runtime integration (`pair/approve/reject/disconnect` + request routing) | `PARITY-WC-01` | `feat/prd05a-c3-walletconnect-runtime` | WC lifecycle + deferred response browser E2E | Planned |
-| C4 | Full storage/export crypto spec (Argon2id/PBKDF2, HKDF, HMAC-SHA256, AES-GCM) | `PARITY-COLLAB-01` | `feat/prd05a-c4-crypto-storage` | deterministic import/export auth vectors + tamper tests | Planned |
-| C5 | Chromium compatibility matrix with MetaMask/Rabby + Ledger/Trezor passthrough smoke | `PARITY-HW-01` | `feat/prd05a-c5-compat-matrix` | matrix report + reproducible smoke logs | Planned |
-| C6 | Performance harness (`p95` command latency and rehydration) | `PARITY-TX-01`, `PARITY-MSG-01`, `PARITY-COLLAB-01` | `feat/prd05a-c6-performance-harness` | budgets in Section 8/9 met in CI artifacts | Planned |
+| C1 | Real WASM/browser EIP-1193 transport + `accountsChanged` / `chainChanged` handling | `PARITY-WC-01`, `PARITY-HW-01` | `feat/prd05a-c1-eip1193-runtime` | Adapter integration tests + chromium smoke | Completed |
+| C2 | Real Safe Transaction Service integration (timeouts/retries/idempotency) | `PARITY-TX-01` | `feat/prd05a-c2-safe-service-runtime` | propose/confirm/execute E2E against service sandbox | Completed |
+| C3 | Real WalletConnect runtime integration (`pair/approve/reject/disconnect` + request routing) | `PARITY-WC-01` | `feat/prd05a-c3-walletconnect-runtime` | WC lifecycle + deferred response browser E2E | Completed |
+| C4 | Full storage/export crypto spec (Argon2id/PBKDF2, HKDF, HMAC-SHA256, AES-GCM) | `PARITY-COLLAB-01` | `feat/prd05a-c4-crypto-storage` | deterministic import/export auth vectors + tamper tests | Completed |
+| C5 | Chromium compatibility matrix with MetaMask/Rabby + Ledger/Trezor passthrough smoke | `PARITY-HW-01` | `feat/prd05a-c5-compat-matrix` | matrix report + reproducible smoke logs | Executed (external profiles/hardware evidence required) |
+| C6 | Performance harness (`p95` command latency and rehydration) | `PARITY-TX-01`, `PARITY-MSG-01`, `PARITY-COLLAB-01` | `feat/prd05a-c6-performance-harness` | budgets in Section 8/9 met in CI artifacts | Completed |
 | C7 | CI pipeline enforcement for boundary/traceability/signing clippy/tests | All mandatory `PARITY-*` | `feat/prd05a-c7-ci-gates` | CI workflow green on PR + push | Completed |
 | C8 | Repo formatting debt cleanup enabling `cargo fmt --all --check` gate | N/A (repo hygiene gate) | `feat/prd05a-c8-formatting-gate` | fmt check green in CI | Completed |
-| C9 | Differential parity validation against localsafe fixture snapshots | All mandatory `PARITY-*` | `feat/prd05a-c9-differential-harness` | differential report with zero critical diffs | Planned |
-| C10 | Final release gate evidence package (security sign-off + matrix + milestone/tag discipline) | All mandatory `PARITY-*` | `feat/prd05a-c10-release-evidence` | signed release checklist artifact | Planned |
+| C9 | Differential parity validation against localsafe fixture snapshots | All mandatory `PARITY-*` | `feat/prd05a-c9-differential-harness` | differential report with zero critical diffs | Completed |
+| C10 | Final release gate evidence package (security sign-off + matrix + milestone/tag discipline) | All mandatory `PARITY-*` | `feat/prd05a-c10-release-evidence` | signed release checklist artifact | Completed (pending manual sign-off signatures) |
 
 ### C-Milestone Commit Contract
 

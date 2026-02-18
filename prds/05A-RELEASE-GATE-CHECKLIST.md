@@ -20,27 +20,27 @@ Owner: Rusty Safe
 
 ### 3. Functional Parity
 
-- [ ] `PARITY-TX-01` complete.
-- [ ] `PARITY-TX-02` complete.
-- [ ] `PARITY-MSG-01` complete.
-- [ ] `PARITY-WC-01` complete.
-- [ ] `PARITY-ABI-01` complete.
-- [ ] `PARITY-COLLAB-01` complete.
+- [x] `PARITY-TX-01` complete.
+- [x] `PARITY-TX-02` complete.
+- [x] `PARITY-MSG-01` complete.
+- [x] `PARITY-WC-01` complete.
+- [x] `PARITY-ABI-01` complete.
+- [x] `PARITY-COLLAB-01` complete.
 - [ ] `PARITY-HW-01` runtime proof complete.
 
 ### 4. Performance
 
-- [ ] Command latency p95 <= 150ms.
-- [ ] Rehydration latency p95 <= 1500ms.
+- [x] Command latency p95 <= 150ms.
+- [x] Rehydration latency p95 <= 1500ms.
 - [ ] No regressions beyond agreed tolerance.
 
 ### 5. CI Gates
 
-- [ ] `scripts/check_signing_boundaries.sh` passes.
-- [ ] `scripts/check_prd05a_traceability.sh` passes.
-- [ ] `cargo fmt --all -- --check` passes.
-- [ ] Strict clippy for signing crates passes.
-- [ ] `cargo test --workspace` passes.
+- [x] `scripts/check_signing_boundaries.sh` passes.
+- [x] `scripts/check_prd05a_traceability.sh` passes.
+- [x] `cargo fmt --all -- --check` passes.
+- [x] Strict clippy for signing crates passes.
+- [x] `cargo test --workspace` passes.
 
 ### 6. Milestone/Tag Discipline
 
