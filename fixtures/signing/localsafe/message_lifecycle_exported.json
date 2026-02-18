@@ -1,0 +1,24 @@
+{
+  "name": "localsafe_message_lifecycle_exported",
+  "provenance": {
+    "source_repo": "deps/localsafe.eth",
+    "source_file": "app/safe/[address]/wc-sign/WalletConnectSignClient.tsx",
+    "source_symbol": "personal_sign + threshold collection flow"
+  },
+  "chain_id": 31337,
+  "safe_address": "0xe80f3c2046c04bf94b04ca142f94fbf7480110c7",
+  "method": "personal_sign",
+  "payload": {
+    "message": "localsafe wc sign parity message",
+    "threshold": 1,
+    "safeVersion": "1.4.1"
+  },
+  "manual_signature": {
+    "signer": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+    "signature": "0x333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333331b"
+  },
+  "expect": {
+    "final_status": "ThresholdMet",
+    "signature_count": 1
+  }
+}

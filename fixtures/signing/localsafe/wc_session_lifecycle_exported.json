@@ -1,0 +1,14 @@
+{
+  "name": "localsafe_wc_session_lifecycle_exported",
+  "provenance": {
+    "source_repo": "deps/localsafe.eth",
+    "source_file": "app/components/WalletConnectRequestHandler.tsx",
+    "source_symbol": "request routing + session lifecycle"
+  },
+  "pair_uri": "wc:fixture@2?relay-protocol=irn&symKey=fixturefixturefixturefixturefixturefixturefixturefixture",
+  "expect_status_flow": [
+    "Proposed",
+    "Approved",
+    "Disconnected"
+  ]
+}

@@ -29,7 +29,7 @@ Generated: ${timestamp}
 
 - Command: \`cargo test -p rusty-safe-signing-adapters --test parity_differential -- --nocapture\`
 - Raw marker: \`${DIFF_LINE}\`
-- Fixtures root: \`fixtures/signing/\`
+- Fixtures root: \`fixtures/signing/localsafe/\` (fallback \`fixtures/signing/*\`)
 EOF
 
 echo "wrote local/reports/prd05a/C9-differential-parity-report.md"

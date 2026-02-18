@@ -1,0 +1,13 @@
+{
+  "provenance": {
+    "source_repo": "deps/localsafe.eth",
+    "source_file": "app/safe/[address]/SafeDashboardClient.tsx",
+    "source_symbol": "URL import query keys"
+  },
+  "keys": [
+    "importTx",
+    "importSig",
+    "importMsg",
+    "importMsgSig"
+  ]
+}

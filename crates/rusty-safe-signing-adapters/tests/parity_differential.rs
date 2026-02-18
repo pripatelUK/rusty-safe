@@ -76,13 +76,26 @@ struct UrlFixture {
 #[test]
 fn differential_parity_snapshots_match_required_flows() {
     let fixtures_root = fixtures_root();
-    let tx_fixture: TxFixture = load_fixture(fixtures_root.join("tx/tx_lifecycle_basic.json"));
-    let message_fixture: MessageFixture =
-        load_fixture(fixtures_root.join("message/message_lifecycle_basic.json"));
-    let wc_fixture: WcFixture =
-        load_fixture(fixtures_root.join("wc/wc_session_lifecycle_basic.json"));
-    let abi_fixture: AbiFixture = load_fixture(fixtures_root.join("abi/abi_transfer_fixture.json"));
-    let url_fixture: UrlFixture = load_fixture(fixtures_root.join("url/url_keys_fixture.json"));
+    let tx_fixture: TxFixture = load_fixture_with_fallback(
+        fixtures_root.join("localsafe/tx_lifecycle_exported.json"),
+        fixtures_root.join("tx/tx_lifecycle_basic.json"),
+    );
+    let message_fixture: MessageFixture = load_fixture_with_fallback(
+        fixtures_root.join("localsafe/message_lifecycle_exported.json"),
+        fixtures_root.join("message/message_lifecycle_basic.json"),
+    );
+    let wc_fixture: WcFixture = load_fixture_with_fallback(
+        fixtures_root.join("localsafe/wc_session_lifecycle_exported.json"),
+        fixtures_root.join("wc/wc_session_lifecycle_basic.json"),
+    );
+    let abi_fixture: AbiFixture = load_fixture_with_fallback(
+        fixtures_root.join("localsafe/abi_transfer_exported.json"),
+        fixtures_root.join("abi/abi_transfer_fixture.json"),
+    );
+    let url_fixture: UrlFixture = load_fixture_with_fallback(
+        fixtures_root.join("localsafe/url_keys_exported.json"),
+        fixtures_root.join("url/url_keys_fixture.json"),
+    );
 
     let orch = new_orchestrator();
     acquire_lock(&orch);
@@ -272,6 +285,16 @@ fn fixtures_root() -> PathBuf {
 fn load_fixture<T: for<'de> Deserialize<'de>>(path: PathBuf) -> T {
     let raw = fs::read_to_string(&path).unwrap_or_else(|e| panic!("read fixture {:?}: {e}", path));
     serde_json::from_str(&raw).unwrap_or_else(|e| panic!("parse fixture {:?}: {e}", path))
+}
+
+fn load_fixture_with_fallback<T: for<'de> Deserialize<'de>>(
+    primary: PathBuf,
+    fallback: PathBuf,
+) -> T {
+    if primary.exists() {
+        return load_fixture(primary);
+    }
+    load_fixture(fallback)
 }
 
 fn hex_selector(selector: [u8; 4]) -> String {
