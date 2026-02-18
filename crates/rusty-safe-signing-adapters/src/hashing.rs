@@ -1,5 +1,8 @@
 use alloy::primitives::{keccak256, Address, B256, U256};
+use hkdf::Hkdf;
+use hmac::{Hmac, Mac};
 use serde_json::Value;
+use sha2::Sha256;
 
 use rusty_safe_signing_core::{HashingPort, MessageMethod, PortError};
 use safe_hash::{tx_signing_hashes, TxInput};
@@ -51,11 +54,19 @@ impl HashingPort for HashingAdapter {
     }
 
     fn integrity_mac(&self, payload: &[u8], key_id: &str) -> Result<B256, PortError> {
-        let mut bytes = Vec::with_capacity(payload.len() + key_id.len() + 1);
-        bytes.extend_from_slice(key_id.as_bytes());
-        bytes.push(0xff);
-        bytes.extend_from_slice(payload);
-        Ok(keccak256(bytes))
+        type HmacSha256 = Hmac<Sha256>;
+        let secret = std::env::var("RUSTY_SAFE_MAC_SECRET")
+            .unwrap_or_else(|_| "rusty-safe-mac-dev-secret".to_owned());
+        let hk = Hkdf::<Sha256>::new(None, secret.as_bytes());
+        let mut mac_key = [0u8; 32];
+        hk.expand(key_id.as_bytes(), &mut mac_key).map_err(|_| {
+            PortError::Validation("hkdf expand failed for integrity mac".to_owned())
+        })?;
+        let mut mac = <HmacSha256 as Mac>::new_from_slice(&mac_key)
+            .map_err(|e| PortError::Validation(format!("hmac init failed: {e}")))?;
+        mac.update(payload);
+        let out = mac.finalize().into_bytes();
+        Ok(B256::from_slice(&out))
     }
 }
 

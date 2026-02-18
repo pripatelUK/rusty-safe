@@ -1,6 +1,7 @@
 pub mod abi;
 pub mod clock;
 pub mod config;
+pub mod crypto;
 pub mod eip1193;
 pub mod execute;
 pub mod hashing;

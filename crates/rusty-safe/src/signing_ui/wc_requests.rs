@@ -11,6 +11,21 @@ use crate::signing_ui::state::SigningUiState;
 pub fn render_wc_requests(ui: &mut Ui, state: &mut SigningUiState, bridge: &SigningBridge) {
     ui.heading("WalletConnect Requests");
 
+    ui.horizontal(|ui| {
+        ui.label("Pair URI:");
+        ui.text_edit_singleline(&mut state.wc_state.pair_uri);
+        if ui.button("Pair Session").clicked() {
+            if state.wc_state.pair_uri.trim().is_empty() {
+                state.set_error("pair URI is required");
+            } else {
+                match bridge.wc_pair(state.wc_state.pair_uri.trim().to_owned()) {
+                    Ok(_) => state.set_info("pair request accepted"),
+                    Err(e) => state.set_error(e.to_string()),
+                }
+            }
+        }
+    });
+
     if ui.button("Seed Demo Session + Request").clicked() {
         match seed_demo(state, bridge) {
             Ok(()) => state.set_info("seeded demo WalletConnect request"),

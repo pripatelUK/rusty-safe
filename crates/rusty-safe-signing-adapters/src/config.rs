@@ -13,6 +13,11 @@ pub struct SigningAdapterConfig {
     pub command_latency_budget_ms: u64,
     pub rehydration_budget_ms: u64,
     pub safe_service_base_url: String,
+    pub safe_service_retry_count: u32,
+    pub safe_service_http_enabled: bool,
+    pub eip1193_proxy_url: Option<String>,
+    pub walletconnect_bridge_url: Option<String>,
+    pub export_passphrase_env: String,
 }
 
 impl Default for SigningAdapterConfig {
@@ -31,6 +36,51 @@ impl Default for SigningAdapterConfig {
             command_latency_budget_ms: 150,
             rehydration_budget_ms: 1_500,
             safe_service_base_url: "https://safe-transaction-mainnet.safe.global".to_owned(),
+            safe_service_retry_count: 2,
+            safe_service_http_enabled: false,
+            eip1193_proxy_url: None,
+            walletconnect_bridge_url: None,
+            export_passphrase_env: "RUSTY_SAFE_EXPORT_PASSPHRASE".to_owned(),
         }
+    }
+}
+
+impl SigningAdapterConfig {
+    pub fn from_env() -> Self {
+        let mut cfg = Self::default();
+        if let Ok(v) = std::env::var("RUSTY_SAFE_SAFE_SERVICE_BASE_URL") {
+            if !v.trim().is_empty() {
+                cfg.safe_service_base_url = v;
+            }
+        }
+        if let Ok(v) = std::env::var("RUSTY_SAFE_SAFE_SERVICE_TIMEOUT_MS") {
+            if let Ok(parsed) = v.parse::<u64>() {
+                cfg.safe_service_timeout_ms = parsed;
+            }
+        }
+        if let Ok(v) = std::env::var("RUSTY_SAFE_SAFE_SERVICE_RETRY_COUNT") {
+            if let Ok(parsed) = v.parse::<u32>() {
+                cfg.safe_service_retry_count = parsed;
+            }
+        }
+        if let Ok(v) = std::env::var("RUSTY_SAFE_SAFE_SERVICE_HTTP_ENABLED") {
+            cfg.safe_service_http_enabled = matches!(v.as_str(), "1" | "true" | "TRUE" | "yes");
+        }
+        if let Ok(v) = std::env::var("RUSTY_SAFE_EIP1193_PROXY_URL") {
+            if !v.trim().is_empty() {
+                cfg.eip1193_proxy_url = Some(v);
+            }
+        }
+        if let Ok(v) = std::env::var("RUSTY_SAFE_WALLETCONNECT_BRIDGE_URL") {
+            if !v.trim().is_empty() {
+                cfg.walletconnect_bridge_url = Some(v);
+            }
+        }
+        if let Ok(v) = std::env::var("RUSTY_SAFE_EXPORT_PASSPHRASE_ENV") {
+            if !v.trim().is_empty() {
+                cfg.export_passphrase_env = v;
+            }
+        }
+        cfg
     }
 }

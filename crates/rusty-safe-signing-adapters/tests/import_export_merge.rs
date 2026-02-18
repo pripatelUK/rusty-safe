@@ -1,6 +1,7 @@
 mod common;
 
 use alloy::primitives::{Address, Bytes, B256};
+use rusty_safe_signing_adapters::crypto::{canonical_json_bytes, derive_crypto, hmac_sha256_b256};
 use rusty_safe_signing_core::{
     MacAlgorithm, PendingSafeTx, QueuePort, SigningBundle, TimestampMs, TxBuildSource, TxStatus,
 };
@@ -58,6 +59,18 @@ fn import_bundle_merges_by_state_revision() {
         integrity_mac: B256::ZERO,
     };
 
+    let integrity_mac = {
+        let payload = serde_json::json!({
+            "txs": [imported.clone()],
+            "messages": [],
+            "wc_requests": [],
+        });
+        let canonical = canonical_json_bytes(&payload).expect("canonical payload");
+        let derived =
+            derive_crypto(b"rusty-safe-dev-passphrase", [0u8; 16]).expect("derive fallback key");
+        hmac_sha256_b256(&derived.mac_key, &canonical).expect("hmac")
+    };
+
     let merge = orch
         .queue
         .import_bundle(&SigningBundle {
@@ -69,9 +82,10 @@ fn import_bundle_merges_by_state_revision() {
             txs: vec![imported],
             messages: vec![],
             wc_requests: vec![],
+            crypto_envelope: None,
             mac_algorithm: MacAlgorithm::HmacSha256V1,
             mac_key_id: "mac-key-v1".to_owned(),
-            integrity_mac: B256::ZERO,
+            integrity_mac,
         })
         .expect("import bundle");
 

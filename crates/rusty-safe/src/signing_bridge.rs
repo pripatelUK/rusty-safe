@@ -50,6 +50,10 @@ impl SigningBridge {
         self.orchestrator.handle(SigningCommand::ConnectProvider)
     }
 
+    pub fn wc_pair(&self, uri: String) -> Result<CommandResult, PortError> {
+        self.orchestrator.handle(SigningCommand::WcPair { uri })
+    }
+
     pub fn acquire_writer_lock(
         &self,
         tab_id: String,

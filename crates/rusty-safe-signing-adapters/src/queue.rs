@@ -5,14 +5,21 @@ use alloy::primitives::{keccak256, Address, Bytes, B256};
 use serde_json::Value;
 
 use rusty_safe_signing_core::{
-    AppWriterLock, MergeResult, PendingSafeMessage, PendingSafeTx, PendingWalletConnectRequest,
-    PortError, QueuePort, SigningBundle, TimestampMs, TransitionLogRecord, UrlImportEnvelope,
-    UrlImportKey,
+    AppWriterLock, BundleCryptoEnvelope, MacAlgorithm, MergeResult, PendingSafeMessage,
+    PendingSafeTx, PendingWalletConnectRequest, PortError, QueuePort, SigningBundle, TimestampMs,
+    TransitionLogRecord, UrlImportEnvelope, UrlImportKey,
 };
 
-#[derive(Debug, Clone, Default)]
+use crate::crypto::{
+    canonical_json_bytes, decrypt_aes_gcm, derive_crypto, encrypt_aes_gcm, generate_nonce,
+    generate_salt, hmac_sha256_b256,
+};
+use crate::SigningAdapterConfig;
+
+#[derive(Debug, Clone)]
 pub struct QueueAdapter {
     inner: Arc<Mutex<QueueState>>,
+    config: SigningAdapterConfig,
 }
 
 #[derive(Debug, Default)]
@@ -25,6 +32,13 @@ struct QueueState {
 }
 
 impl QueueAdapter {
+    pub fn with_config(config: SigningAdapterConfig) -> Self {
+        Self {
+            inner: Arc::new(Mutex::new(QueueState::default())),
+            config,
+        }
+    }
+
     pub fn with_seed(seed: QueueSeed) -> Self {
         let mut state = QueueState::default();
         for tx in seed.txs {
@@ -38,7 +52,19 @@ impl QueueAdapter {
         }
         Self {
             inner: Arc::new(Mutex::new(state)),
+            config: SigningAdapterConfig::from_env(),
         }
+    }
+
+    fn export_passphrase(&self) -> String {
+        std::env::var(&self.config.export_passphrase_env)
+            .unwrap_or_else(|_| "rusty-safe-dev-passphrase".to_owned())
+    }
+}
+
+impl Default for QueueAdapter {
+    fn default() -> Self {
+        Self::with_config(SigningAdapterConfig::from_env())
     }
 }
 
@@ -219,15 +245,104 @@ impl QueuePort for QueueAdapter {
                 "unsupported bundle schema_version".to_owned(),
             ));
         }
-        if bundle.txs.is_empty() && bundle.messages.is_empty() && bundle.wc_requests.is_empty() {
-            return Err(PortError::Validation("empty bundle".to_owned()));
-        }
+        let (bundle_txs, bundle_messages, bundle_wc_requests) = if let Some(crypto) =
+            &bundle.crypto_envelope
+        {
+            let passphrase = self.export_passphrase();
+            let salt_bytes = decode_base64(&crypto.kdf_salt_base64)?;
+            if salt_bytes.len() != 16 {
+                return Err(PortError::Validation(
+                    "invalid bundle kdf salt length".to_owned(),
+                ));
+            }
+            let mut salt = [0u8; 16];
+            salt.copy_from_slice(&salt_bytes);
+            let derived = derive_crypto(passphrase.as_bytes(), salt)?;
+            let nonce_bytes = decode_base64(&crypto.enc_nonce_base64)?;
+            if nonce_bytes.len() != 12 {
+                return Err(PortError::Validation(
+                    "invalid bundle encryption nonce length".to_owned(),
+                ));
+            }
+            let mut nonce = [0u8; 12];
+            nonce.copy_from_slice(&nonce_bytes);
+            let ciphertext = decode_base64(&crypto.ciphertext_base64)?;
+            let computed_mac = hmac_sha256_b256(&derived.mac_key, &ciphertext)?;
+            if computed_mac != bundle.integrity_mac {
+                return Err(PortError::Validation(
+                    "bundle integrity mac mismatch".to_owned(),
+                ));
+            }
+            let plaintext = decrypt_aes_gcm(&derived.enc_key, nonce, &ciphertext)?;
+            let payload: Value = serde_json::from_slice(&plaintext).map_err(|e| {
+                PortError::Validation(format!("decrypted bundle payload invalid: {e}"))
+            })?;
+            let txs = payload
+                .get("txs")
+                .cloned()
+                .ok_or_else(|| PortError::Validation("decrypted bundle missing txs".to_owned()))
+                .and_then(|v| {
+                    serde_json::from_value(v).map_err(|e| {
+                        PortError::Validation(format!("decrypted bundle tx decode failed: {e}"))
+                    })
+                })?;
+            let messages = payload
+                .get("messages")
+                .cloned()
+                .ok_or_else(|| {
+                    PortError::Validation("decrypted bundle missing messages".to_owned())
+                })
+                .and_then(|v| {
+                    serde_json::from_value(v).map_err(|e| {
+                        PortError::Validation(format!(
+                            "decrypted bundle message decode failed: {e}"
+                        ))
+                    })
+                })?;
+            let wc_requests = payload
+                .get("wc_requests")
+                .cloned()
+                .ok_or_else(|| {
+                    PortError::Validation("decrypted bundle missing wc_requests".to_owned())
+                })
+                .and_then(|v| {
+                    serde_json::from_value(v).map_err(|e| {
+                        PortError::Validation(format!("decrypted bundle wc decode failed: {e}"))
+                    })
+                })?;
+            (txs, messages, wc_requests)
+        } else {
+            if bundle.txs.is_empty() && bundle.messages.is_empty() && bundle.wc_requests.is_empty()
+            {
+                return Err(PortError::Validation("empty bundle".to_owned()));
+            }
+            let payload = serde_json::json!({
+                "txs": bundle.txs,
+                "messages": bundle.messages,
+                "wc_requests": bundle.wc_requests,
+            });
+            let canonical = canonical_json_bytes(&payload)?;
+            let fallback_salt = [0u8; 16];
+            let derived = derive_crypto(self.export_passphrase().as_bytes(), fallback_salt)?;
+            let computed_mac = hmac_sha256_b256(&derived.mac_key, &canonical)?;
+            if computed_mac != bundle.integrity_mac {
+                return Err(PortError::Validation(
+                    "bundle integrity mac mismatch".to_owned(),
+                ));
+            }
+            (
+                bundle.txs.clone(),
+                bundle.messages.clone(),
+                bundle.wc_requests.clone(),
+            )
+        };
+
         let mut g = self
             .inner
             .lock()
             .map_err(|e| PortError::Transport(format!("queue lock poisoned: {e}")))?;
         let mut merge = MergeResult::empty();
-        for tx in &bundle.txs {
+        for tx in &bundle_txs {
             match g.txs.get(&tx.safe_tx_hash) {
                 None => {
                     g.txs.insert(tx.safe_tx_hash, tx.clone());
@@ -245,7 +360,7 @@ impl QueuePort for QueueAdapter {
                 }
             }
         }
-        for msg in &bundle.messages {
+        for msg in &bundle_messages {
             match g.messages.get(&msg.message_hash) {
                 None => {
                     g.messages.insert(msg.message_hash, msg.clone());
@@ -263,7 +378,7 @@ impl QueuePort for QueueAdapter {
                 }
             }
         }
-        for req in &bundle.wc_requests {
+        for req in &bundle_wc_requests {
             g.wc_requests
                 .entry(req.request_id.clone())
                 .or_insert_with(|| req.clone());
@@ -300,47 +415,51 @@ impl QueuePort for QueueAdapter {
                 }
             }
         }
-        let digest_payload = serde_json::json!({
+        let plaintext_payload = serde_json::json!({
             "schema_version": 1,
             "txs": txs,
             "messages": messages,
             "wc_requests": wc_requests,
         });
-        let digest_bytes = serde_json::to_vec(&digest_payload).map_err(|e| {
-            PortError::Validation(format!("bundle digest serialization failed: {e}"))
-        })?;
-        let digest = keccak256(digest_bytes);
-        let integrity_mac = keccak256([b"bundle-mac-v1".as_slice(), digest.as_slice()].concat());
+        let canonical_plaintext = canonical_json_bytes(&plaintext_payload)?;
+        let digest = keccak256(canonical_plaintext.clone());
+        let salt = generate_salt()?;
+        let nonce = generate_nonce()?;
+        let derived = derive_crypto(self.export_passphrase().as_bytes(), salt)?;
+        let ciphertext = encrypt_aes_gcm(&derived.enc_key, nonce, &canonical_plaintext)?;
+        let integrity_mac = hmac_sha256_b256(&derived.mac_key, &ciphertext)?;
+        let crypto_envelope = BundleCryptoEnvelope {
+            kdf_algorithm: derived.kdf_algorithm,
+            kdf_salt_base64: encode_base64(&salt),
+            enc_nonce_base64: encode_base64(&nonce),
+            ciphertext_base64: encode_base64(&ciphertext),
+        };
 
-        let txs = digest_payload
+        let txs = plaintext_payload
             .get("txs")
-            .and_then(|v| v.as_array())
             .cloned()
-            .ok_or_else(|| PortError::Validation("bundle txs serialization failed".to_owned()))?
-            .into_iter()
-            .map(serde_json::from_value)
-            .collect::<Result<Vec<PendingSafeTx>, _>>()
-            .map_err(|e| PortError::Validation(format!("bundle tx decode failed: {e}")))?;
-        let messages = digest_payload
+            .ok_or_else(|| PortError::Validation("bundle txs serialization failed".to_owned()))
+            .and_then(|v| {
+                serde_json::from_value(v)
+                    .map_err(|e| PortError::Validation(format!("bundle tx decode failed: {e}")))
+            })?;
+        let messages = plaintext_payload
             .get("messages")
-            .and_then(|v| v.as_array())
             .cloned()
-            .ok_or_else(|| {
-                PortError::Validation("bundle messages serialization failed".to_owned())
-            })?
-            .into_iter()
-            .map(serde_json::from_value)
-            .collect::<Result<Vec<PendingSafeMessage>, _>>()
-            .map_err(|e| PortError::Validation(format!("bundle message decode failed: {e}")))?;
-        let wc_requests = digest_payload
+            .ok_or_else(|| PortError::Validation("bundle messages serialization failed".to_owned()))
+            .and_then(|v| {
+                serde_json::from_value(v).map_err(|e| {
+                    PortError::Validation(format!("bundle message decode failed: {e}"))
+                })
+            })?;
+        let wc_requests = plaintext_payload
             .get("wc_requests")
-            .and_then(|v| v.as_array())
             .cloned()
-            .ok_or_else(|| PortError::Validation("bundle wc serialization failed".to_owned()))?
-            .into_iter()
-            .map(serde_json::from_value)
-            .collect::<Result<Vec<PendingWalletConnectRequest>, _>>()
-            .map_err(|e| PortError::Validation(format!("bundle wc decode failed: {e}")))?;
+            .ok_or_else(|| PortError::Validation("bundle wc serialization failed".to_owned()))
+            .and_then(|v| {
+                serde_json::from_value(v)
+                    .map_err(|e| PortError::Validation(format!("bundle wc decode failed: {e}")))
+            })?;
 
         Ok(SigningBundle {
             schema_version: 1,
@@ -351,7 +470,8 @@ impl QueuePort for QueueAdapter {
             txs,
             messages,
             wc_requests,
-            mac_algorithm: rusty_safe_signing_core::MacAlgorithm::HmacSha256V1,
+            crypto_envelope: Some(crypto_envelope),
+            mac_algorithm: MacAlgorithm::HmacSha256V1,
             mac_key_id: "mac-key-v1".to_owned(),
             integrity_mac,
         })
@@ -545,4 +665,16 @@ fn decode_base64_url(input: &str) -> Result<Vec<u8>, PortError> {
     base64::engine::general_purpose::STANDARD
         .decode(s)
         .map_err(|e| PortError::Validation(format!("base64url decode failed: {e}")))
+}
+
+fn decode_base64(input: &str) -> Result<Vec<u8>, PortError> {
+    use base64::Engine as _;
+    base64::engine::general_purpose::STANDARD
+        .decode(input)
+        .map_err(|e| PortError::Validation(format!("base64 decode failed: {e}")))
+}
+
+fn encode_base64(input: &[u8]) -> String {
+    use base64::Engine as _;
+    base64::engine::general_purpose::STANDARD.encode(input)
 }

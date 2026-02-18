@@ -18,6 +18,9 @@ use crate::state_machine::{
 #[derive(Debug, Clone)]
 pub enum SigningCommand {
     ConnectProvider,
+    WcPair {
+        uri: String,
+    },
     AcquireWriterLock {
         tab_id: String,
         tab_nonce: B256,
@@ -161,6 +164,13 @@ where
                 let _ = self.provider.request_accounts()?;
                 let _ = self.provider.chain_id()?;
                 let _ = self.provider.wallet_get_capabilities();
+                let _ = self.provider.drain_events()?;
+                Ok(CommandResult::empty())
+            }
+            SigningCommand::WcPair { uri } => {
+                self.ensure_writer_lock()?;
+                self.walletconnect.pair(&uri)?;
+                self.walletconnect.sync()?;
                 Ok(CommandResult::empty())
             }
             SigningCommand::AcquireWriterLock {
@@ -633,7 +643,11 @@ where
         tx.updated_at_ms = TimestampMs(self.clock.now_ms()?);
         self.queue.save_tx(&tx)?;
 
-        let tx_hash = self.safe_service.execute_tx(&tx)?;
+        let tx_hash = match self.safe_service.execute_tx(&tx) {
+            Ok(hash) => hash,
+            Err(PortError::Policy(_)) => self.provider.send_transaction(&tx.payload)?,
+            Err(other) => return Err(other),
+        };
         let (_, transition2) = tx_transition(tx.status, TxAction::ExecuteSuccess)?;
         tx.status = TxStatus::Executed;
         tx.executed_tx_hash = Some(tx_hash);
@@ -915,7 +929,9 @@ fn threshold_from_payload(payload: &Value) -> usize {
 
 fn parity_id_for_command(command: &SigningCommand) -> &'static str {
     match command {
-        SigningCommand::ConnectProvider | SigningCommand::WcSessionAction { .. } => "PARITY-WC-01",
+        SigningCommand::ConnectProvider
+        | SigningCommand::WcPair { .. }
+        | SigningCommand::WcSessionAction { .. } => "PARITY-WC-01",
         SigningCommand::AcquireWriterLock { .. }
         | SigningCommand::ImportBundle { .. }
         | SigningCommand::ExportBundle { .. }
@@ -936,6 +952,7 @@ fn parity_id_for_command(command: &SigningCommand) -> &'static str {
 fn command_kind(command: &SigningCommand) -> String {
     match command {
         SigningCommand::ConnectProvider => "connect_provider",
+        SigningCommand::WcPair { .. } => "wc_pair",
         SigningCommand::AcquireWriterLock { .. } => "acquire_writer_lock",
         SigningCommand::CreateSafeTx { .. } => "create_safe_tx",
         SigningCommand::CreateSafeTxFromAbi { .. } => "create_safe_tx_from_abi",

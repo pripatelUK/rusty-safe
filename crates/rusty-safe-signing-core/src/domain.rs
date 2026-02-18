@@ -96,6 +96,12 @@ pub enum MacAlgorithm {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum KdfAlgorithm {
+    Argon2idV1,
+    Pbkdf2HmacSha256V1,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TxBuildSource {
     RawCalldata,
     AbiMethodForm,
@@ -291,9 +297,19 @@ pub struct SigningBundle {
     pub txs: Vec<PendingSafeTx>,
     pub messages: Vec<PendingSafeMessage>,
     pub wc_requests: Vec<PendingWalletConnectRequest>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub crypto_envelope: Option<BundleCryptoEnvelope>,
     pub mac_algorithm: MacAlgorithm,
     pub mac_key_id: String,
     pub integrity_mac: B256,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BundleCryptoEnvelope {
+    pub kdf_algorithm: KdfAlgorithm,
+    pub kdf_salt_base64: String,
+    pub enc_nonce_base64: String,
+    pub ciphertext_base64: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

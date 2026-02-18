@@ -34,8 +34,8 @@ pub type TestOrchestrator = Orchestrator<
 pub fn new_orchestrator() -> TestOrchestrator {
     Orchestrator::new(
         Eip1193Adapter::default(),
-        SafeServiceAdapter::default(),
-        WalletConnectAdapter::default(),
+        SafeServiceAdapter::in_memory(),
+        WalletConnectAdapter::in_memory(),
         QueueAdapter::default(),
         AbiAdapter,
         HashingAdapter,

@@ -24,6 +24,19 @@ pub enum PortError {
     Policy(String),
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProviderEventKind {
+    AccountsChanged,
+    ChainChanged,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProviderEvent {
+    pub sequence: u64,
+    pub kind: ProviderEventKind,
+    pub value: String,
+}
+
 pub trait ClockPort {
     fn now_ms(&self) -> Result<u64, PortError>;
 }
@@ -39,6 +52,9 @@ pub trait ProviderPort {
         expected_signer: Address,
     ) -> Result<Bytes, PortError>;
     fn send_transaction(&self, tx_payload: &Value) -> Result<B256, PortError>;
+    fn drain_events(&self) -> Result<Vec<ProviderEvent>, PortError> {
+        Ok(Vec::new())
+    }
 }
 
 pub trait SafeServicePort {
@@ -49,11 +65,17 @@ pub trait SafeServicePort {
 }
 
 pub trait WalletConnectPort {
+    fn pair(&self, _uri: &str) -> Result<(), PortError> {
+        Err(PortError::NotImplemented("walletconnect pair"))
+    }
     fn session_action(&self, topic: &str, action: WcSessionAction) -> Result<(), PortError>;
     fn list_sessions(&self) -> Result<Vec<WcSessionContext>, PortError>;
     fn list_pending_requests(&self) -> Result<Vec<PendingWalletConnectRequest>, PortError>;
     fn respond_success(&self, request_id: &str, result: Value) -> Result<(), PortError>;
     fn respond_error(&self, request_id: &str, code: i64, message: &str) -> Result<(), PortError>;
+    fn sync(&self) -> Result<(), PortError> {
+        Ok(())
+    }
 }
 
 pub trait QueuePort {

@@ -128,6 +128,7 @@ impl Default for MessageFormState {
 
 #[derive(Debug, Clone)]
 pub struct WalletConnectSurfaceState {
+    pub pair_uri: String,
     pub active_topic: String,
     pub request_id: String,
     pub response_json: String,
@@ -138,6 +139,7 @@ pub struct WalletConnectSurfaceState {
 impl Default for WalletConnectSurfaceState {
     fn default() -> Self {
         Self {
+            pair_uri: String::new(),
             active_topic: String::new(),
             request_id: String::new(),
             response_json: "{}".to_owned(),

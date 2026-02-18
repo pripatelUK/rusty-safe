@@ -53,6 +53,7 @@ fn signing_bundle_roundtrip_serialization() {
         txs: vec![],
         messages: vec![],
         wc_requests: vec![],
+        crypto_envelope: None,
         mac_algorithm: MacAlgorithm::HmacSha256V1,
         mac_key_id: "mac-key-v1".to_owned(),
         integrity_mac: B256::ZERO,
