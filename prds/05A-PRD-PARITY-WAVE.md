@@ -1260,6 +1260,35 @@ Milestone artifact rules:
 3. Expand browser and connector ecosystem only after parity success criteria are met.
 4. Evaluate optional parity enhancements not required for 05A (advanced connectors, richer session analytics) in later PRDs.
 
+## 11. Continuation Milestones (Post-A5)
+
+This section tracks the remaining productionization milestones requested after the A0-A5 parity implementation landed.
+
+### C-Milestone Matrix
+
+| Milestone | Scope | PARITY Link | Branch | Gate | Status |
+|---|---|---|---|---|---|
+| C1 | Real WASM/browser EIP-1193 transport + `accountsChanged` / `chainChanged` handling | `PARITY-WC-01`, `PARITY-HW-01` | `feat/prd05a-c1-eip1193-runtime` | Adapter integration tests + chromium smoke | Planned |
+| C2 | Real Safe Transaction Service integration (timeouts/retries/idempotency) | `PARITY-TX-01` | `feat/prd05a-c2-safe-service-runtime` | propose/confirm/execute E2E against service sandbox | Planned |
+| C3 | Real WalletConnect runtime integration (`pair/approve/reject/disconnect` + request routing) | `PARITY-WC-01` | `feat/prd05a-c3-walletconnect-runtime` | WC lifecycle + deferred response browser E2E | Planned |
+| C4 | Full storage/export crypto spec (Argon2id/PBKDF2, HKDF, HMAC-SHA256, AES-GCM) | `PARITY-COLLAB-01` | `feat/prd05a-c4-crypto-storage` | deterministic import/export auth vectors + tamper tests | Planned |
+| C5 | Chromium compatibility matrix with MetaMask/Rabby + Ledger/Trezor passthrough smoke | `PARITY-HW-01` | `feat/prd05a-c5-compat-matrix` | matrix report + reproducible smoke logs | Planned |
+| C6 | Performance harness (`p95` command latency and rehydration) | `PARITY-TX-01`, `PARITY-MSG-01`, `PARITY-COLLAB-01` | `feat/prd05a-c6-performance-harness` | budgets in Section 8/9 met in CI artifacts | Planned |
+| C7 | CI pipeline enforcement for boundary/traceability/signing clippy/tests | All mandatory `PARITY-*` | `feat/prd05a-c7-ci-gates` | CI workflow green on PR + push | Completed |
+| C8 | Repo formatting debt cleanup enabling `cargo fmt --all --check` gate | N/A (repo hygiene gate) | `feat/prd05a-c8-formatting-gate` | fmt check green in CI | Completed |
+| C9 | Differential parity validation against localsafe fixture snapshots | All mandatory `PARITY-*` | `feat/prd05a-c9-differential-harness` | differential report with zero critical diffs | Planned |
+| C10 | Final release gate evidence package (security sign-off + matrix + milestone/tag discipline) | All mandatory `PARITY-*` | `feat/prd05a-c10-release-evidence` | signed release checklist artifact | Planned |
+
+### C-Milestone Commit Contract
+
+Each continuation milestone follows the same contract:
+
+1. `milestone/<c-id>-scaffold` commit: interfaces/harness compile.
+2. `milestone/<c-id>-feature-complete` commit: implementation complete.
+3. `milestone/<c-id>-gate-green` commit: gate evidence committed.
+4. Tag format: `prd05a-<c-id>-gate`.
+5. Commit messages must include relevant `PARITY-*` IDs.
+
 ## Context Preservation Map
 
 This split preserves all legacy context. Context relocation:
