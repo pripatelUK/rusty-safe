@@ -25,6 +25,11 @@ Delivered:
 1. Runtime-capable adapter modes in `crates/rusty-safe-signing-adapters/src/eip1193.rs`.
 2. Deterministic `accountsChanged` / `chainChanged` event drain contract.
 3. Runtime adapter tests in `crates/rusty-safe-signing-adapters/tests/runtime_adapters.rs`.
+4. True async WASM provider path for `eth_sign*` + `eth_sendTransaction` via `window.ethereum.request(...)`.
+5. App-level async action hooks for selected tx/message flows in `crates/rusty-safe/src/app.rs` and `crates/rusty-safe/src/signing_bridge.rs`.
+6. WASM target compile proof:
+   - `cargo check -p rusty-safe-signing-adapters --target wasm32-unknown-unknown`
+   - `cargo check -p rusty-safe --target wasm32-unknown-unknown`
 
 ### C2: Safe Service Runtime Adapter (Completed)
 
@@ -42,6 +47,9 @@ Gate:
 Delivered:
 1. HTTP runtime mode with retries/idempotency in `crates/rusty-safe-signing-adapters/src/safe_service.rs`.
 2. Runtime adapter integration test via mock service in `crates/rusty-safe-signing-adapters/tests/runtime_adapters.rs`.
+3. Live endpoint validation script/report (non-destructive probes):
+   - `scripts/run_prd05a_safe_service_live.sh`
+   - `local/reports/prd05a/C2-safe-service-live-report.md`
 
 ### C3: WalletConnect Runtime Integration (Completed)
 
@@ -60,6 +68,8 @@ Delivered:
 1. Runtime bridge mode in `crates/rusty-safe-signing-adapters/src/wc.rs`.
 2. `wc_pair` command path wired through core/shell (`orchestrator.rs`, `signing_bridge.rs`, `signing_ui/wc_requests.rs`).
 3. Runtime adapter integration test in `crates/rusty-safe-signing-adapters/tests/runtime_adapters.rs`.
+4. Browser runtime contract + async bridge methods (`window.__rustySafeWalletConnect.request(...)`) for pair/session/sync paths.
+5. Runtime sync hook to hydrate queue requests from live walletconnect runtime in `crates/rusty-safe/src/signing_bridge.rs`.
 
 ### C4: Crypto Storage/Export Spec (Completed)
 
@@ -100,6 +110,7 @@ Delivered:
 3. Reports:
    - `local/reports/prd05a/C5-compatibility-matrix-report.md`
    - `local/reports/prd05a/C5-hardware-passthrough-smoke.md`
+4. Current blocker: this environment does not include configured MetaMask/Rabby profile dirs or hardware smoke logs.
 
 ### C6: Performance Harness (Completed)
 

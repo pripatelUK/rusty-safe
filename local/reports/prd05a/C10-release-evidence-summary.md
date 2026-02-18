@@ -1,6 +1,6 @@
 # C10 Release Evidence Summary
 
-Generated: 2026-02-18T18:06:10Z
+Generated: 2026-02-18T19:06:39Z
 
 ## Executed Gates
 
@@ -11,8 +11,9 @@ Generated: 2026-02-18T18:06:10Z
 5. Workspace tests: PASS
 6. Performance report: local/reports/prd05a/C6-performance-report.md
 7. Differential parity report: local/reports/prd05a/C9-differential-parity-report.md
-8. Compatibility matrix report: local/reports/prd05a/C5-compatibility-matrix-report.md
-9. Hardware passthrough smoke report: local/reports/prd05a/C5-hardware-passthrough-smoke.md
+8. Safe service live validation report: local/reports/prd05a/C2-safe-service-live-report.md
+9. Compatibility matrix report: local/reports/prd05a/C5-compatibility-matrix-report.md
+10. Hardware passthrough smoke report: local/reports/prd05a/C5-hardware-passthrough-smoke.md
 
 ## Milestone Discipline
 

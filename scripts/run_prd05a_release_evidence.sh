@@ -11,6 +11,9 @@ scripts/check_prd05a_traceability.sh
 cargo fmt --all -- --check
 cargo clippy -p rusty-safe-signing-core -p rusty-safe-signing-adapters --all-targets -- -D warnings
 cargo test --workspace
+cargo check -p rusty-safe-signing-adapters --target wasm32-unknown-unknown
+cargo check -p rusty-safe --target wasm32-unknown-unknown
+scripts/run_prd05a_safe_service_live.sh
 scripts/run_prd05a_performance.sh
 scripts/run_prd05a_differential.sh
 scripts/run_prd05a_compat_matrix.sh
@@ -31,8 +34,9 @@ Generated: ${timestamp}
 5. Workspace tests: PASS
 6. Performance report: local/reports/prd05a/C6-performance-report.md
 7. Differential parity report: local/reports/prd05a/C9-differential-parity-report.md
-8. Compatibility matrix report: local/reports/prd05a/C5-compatibility-matrix-report.md
-9. Hardware passthrough smoke report: local/reports/prd05a/C5-hardware-passthrough-smoke.md
+8. Safe service live validation report: local/reports/prd05a/C2-safe-service-live-report.md
+9. Compatibility matrix report: local/reports/prd05a/C5-compatibility-matrix-report.md
+10. Hardware passthrough smoke report: local/reports/prd05a/C5-hardware-passthrough-smoke.md
 
 ## Milestone Discipline
 

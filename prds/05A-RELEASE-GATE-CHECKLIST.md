@@ -32,7 +32,13 @@ Owner: Rusty Safe
 
 - [x] Command latency p95 <= 150ms.
 - [x] Rehydration latency p95 <= 1500ms.
-- [ ] No regressions beyond agreed tolerance.
+- [x] No regressions beyond agreed tolerance.
+
+### 4.1 Runtime Validation
+
+- [x] Safe service live endpoint validation completed (`local/reports/prd05a/C2-safe-service-live-report.md`).
+- [x] WASM target checks pass for signing runtime crates.
+- [ ] Browser wallet matrix evidence attached for MetaMask and Rabby runtime profiles.
 
 ### 5. CI Gates
 

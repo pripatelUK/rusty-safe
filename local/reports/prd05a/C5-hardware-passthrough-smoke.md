@@ -1,6 +1,6 @@
 # C5 Hardware Passthrough Smoke
 
-Generated: 2026-02-18T18:06:26Z
+Generated: 2026-02-18T19:06:50Z
 
 | Device | Status | Notes |
 |---|---|---|

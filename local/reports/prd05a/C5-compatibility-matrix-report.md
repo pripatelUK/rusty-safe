@@ -1,11 +1,11 @@
 # C5 Compatibility Matrix Report
 
-Generated: 2026-02-18T18:06:25Z
+Generated: 2026-02-18T19:06:50Z
 
 ## Chromium Runtime
 
-- Binary: `google-chrome`
-- Version: `NOT_AVAILABLE`
+- Binary: `/home/pri/.cache/ms-playwright/chromium-1200/chrome-linux64/chrome`
+- Version: `Google Chrome for Testing 143.0.7499.4 `
 
 ## Matrix
 
