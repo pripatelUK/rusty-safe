@@ -5,7 +5,7 @@ use rusty_safe_signing_core::{QueuePort, SigningCommand, TxStatus};
 use common::{acquire_lock, new_orchestrator, owner_address, safe_address, signature_bytes};
 
 #[test]
-fn manual_tx_signature_adds_signature_and_moves_to_signing() {
+fn tx_lifecycle_create_sign_propose_confirm_execute() {
     let orch = new_orchestrator();
     acquire_lock(&orch);
 
@@ -13,7 +13,7 @@ fn manual_tx_signature_adds_signature_and_moves_to_signing() {
         .handle(SigningCommand::CreateSafeTx {
             chain_id: 1,
             safe_address: safe_address(),
-            nonce: 7,
+            nonce: 42,
             payload: serde_json::json!({
                 "to": "0x000000000000000000000000000000000000CAFE",
                 "value": "0",
@@ -35,76 +35,73 @@ fn manual_tx_signature_adds_signature_and_moves_to_signing() {
         .flow_id
         .trim_start_matches("tx:")
         .parse()
-        .expect("hash parse");
+        .expect("parse tx hash");
 
     orch.handle(SigningCommand::AddTxSignature {
         safe_tx_hash: tx_hash,
         signer: owner_address(),
-        signature: signature_bytes(0x11),
+        signature: signature_bytes(0x31),
     })
-    .expect("add signature");
+    .expect("add tx signature");
 
-    let tx = orch
+    orch.handle(SigningCommand::ProposeTx {
+        safe_tx_hash: tx_hash,
+    })
+    .expect("propose tx");
+
+    orch.handle(SigningCommand::ConfirmTx {
+        safe_tx_hash: tx_hash,
+        signature: signature_bytes(0x32),
+    })
+    .expect("confirm tx");
+
+    let before_exec = orch
         .queue
         .load_tx(tx_hash)
         .expect("load tx")
         .expect("tx present");
-    assert_eq!(tx.status, TxStatus::Signing);
-    assert_eq!(tx.signatures.len(), 1);
+    assert_eq!(before_exec.status, TxStatus::ReadyToExecute);
+
+    orch.handle(SigningCommand::ExecuteTx {
+        safe_tx_hash: tx_hash,
+    })
+    .expect("execute tx");
+
+    let after_exec = orch
+        .queue
+        .load_tx(tx_hash)
+        .expect("load tx")
+        .expect("tx present");
+    assert_eq!(after_exec.status, TxStatus::Executed);
+    assert!(after_exec.executed_tx_hash.is_some());
+
+    let logs = orch
+        .queue
+        .load_transition_log(&format!("tx:{tx_hash}"))
+        .expect("load tx logs");
+    assert!(!logs.is_empty());
+    for (idx, record) in logs.iter().enumerate() {
+        assert_eq!(record.event_seq as usize, idx + 1);
+    }
 }
 
 #[test]
-fn duplicate_manual_signature_is_idempotent() {
+fn mutating_commands_require_writer_lock() {
     let orch = new_orchestrator();
-    acquire_lock(&orch);
-
-    let create = orch
+    let err = orch
         .handle(SigningCommand::CreateSafeTx {
             chain_id: 1,
             safe_address: safe_address(),
-            nonce: 8,
+            nonce: 1,
             payload: serde_json::json!({
                 "to": "0x000000000000000000000000000000000000CAFE",
                 "value": "0",
                 "data": "0x",
                 "operation": 0,
-                "safeTxGas": "0",
-                "baseGas": "0",
-                "gasPrice": "0",
-                "gasToken": "0x0000000000000000000000000000000000000000",
-                "refundReceiver": "0x0000000000000000000000000000000000000000",
-                "threshold": 2,
+                "threshold": 1,
                 "safeVersion": "1.3.0"
             }),
         })
-        .expect("create tx");
-    let tx_hash = create
-        .transition
-        .expect("transition")
-        .flow_id
-        .trim_start_matches("tx:")
-        .parse()
-        .expect("hash parse");
-
-    let sig = signature_bytes(0x22);
-    orch.handle(SigningCommand::AddTxSignature {
-        safe_tx_hash: tx_hash,
-        signer: owner_address(),
-        signature: sig.clone(),
-    })
-    .expect("first signature add");
-
-    orch.handle(SigningCommand::AddTxSignature {
-        safe_tx_hash: tx_hash,
-        signer: owner_address(),
-        signature: sig,
-    })
-    .expect("duplicate signature should be accepted idempotently");
-
-    let tx = orch
-        .queue
-        .load_tx(tx_hash)
-        .expect("load tx")
-        .expect("tx present");
-    assert_eq!(tx.signatures.len(), 1);
+        .expect_err("command should require writer lock");
+    assert!(err.to_string().contains("WRITER_LOCK_CONFLICT"));
 }

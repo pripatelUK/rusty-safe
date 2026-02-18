@@ -8,7 +8,11 @@ license.workspace = true
 [dependencies]
 rusty-safe-signing-core = { path = "../rusty-safe-signing-core" }
 alloy.workspace = true
+safe-utils.workspace = true
+safe-hash.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 reqwest.workspace = true
+base64 = "0.22"
+web-time = "1.1"

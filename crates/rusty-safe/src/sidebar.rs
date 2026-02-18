@@ -346,9 +346,8 @@ pub fn render(
             .exact_width(36.0)
             .show(ctx, |ui| {
                 ui.add_space(10.0);
-                let expand_btn = egui::Button::new(
-                    egui::RichText::new("▶").size(14.0)
-                ).min_size(egui::vec2(28.0, 28.0));
+                let expand_btn = egui::Button::new(egui::RichText::new("▶").size(14.0))
+                    .min_size(egui::vec2(28.0, 28.0));
                 if ui.add(expand_btn).on_hover_text("Expand sidebar").clicked() {
                     sidebar.collapsed = false;
                 }

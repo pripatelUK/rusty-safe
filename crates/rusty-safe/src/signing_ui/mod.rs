@@ -1,5 +1,4 @@
-//! Signing UI surfaces (parity wave scaffolding).
-//! These modules remain unintegrated until Phase A1 wiring.
+//! Signing UI surfaces for PRD 05A parity flows.
 
 pub mod import_export;
 pub mod message_details;

@@ -295,25 +295,33 @@ pub fn copyable_hash(ui: &mut egui::Ui, hash: &str) {
 /// Primary action button - teal/accent colored, prominent
 pub fn primary_button(ui: &mut egui::Ui, text: &str) -> egui::Response {
     let accent = egui::Color32::from_rgb(0, 180, 150);
-    let btn = egui::Button::new(egui::RichText::new(text).size(14.0).color(egui::Color32::WHITE))
-        .min_size(egui::vec2(130.0, 34.0))
-        .fill(accent);
+    let btn = egui::Button::new(
+        egui::RichText::new(text)
+            .size(14.0)
+            .color(egui::Color32::WHITE),
+    )
+    .min_size(egui::vec2(130.0, 34.0))
+    .fill(accent);
     ui.add(btn)
 }
 
 /// Primary button with enabled state
 pub fn primary_button_enabled(ui: &mut egui::Ui, text: &str, enabled: bool) -> egui::Response {
     let accent = egui::Color32::from_rgb(0, 180, 150);
-    let btn = egui::Button::new(egui::RichText::new(text).size(14.0).color(egui::Color32::WHITE))
-        .min_size(egui::vec2(130.0, 34.0))
-        .fill(accent);
+    let btn = egui::Button::new(
+        egui::RichText::new(text)
+            .size(14.0)
+            .color(egui::Color32::WHITE),
+    )
+    .min_size(egui::vec2(130.0, 34.0))
+    .fill(accent);
     ui.add_enabled(enabled, btn)
 }
 
 /// Secondary action button - subdued, outline style
 pub fn secondary_button(ui: &mut egui::Ui, text: &str) -> egui::Response {
-    let btn = egui::Button::new(egui::RichText::new(text).size(14.0))
-        .min_size(egui::vec2(90.0, 34.0));
+    let btn =
+        egui::Button::new(egui::RichText::new(text).size(14.0)).min_size(egui::vec2(90.0, 34.0));
     ui.add(btn)
 }
 

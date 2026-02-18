@@ -1,7 +1,7 @@
 //! Main application state and update loop
 
 use alloy::hex;
-use alloy::primitives::ChainId;
+use alloy::primitives::{ChainId, B256};
 use eframe::egui;
 use safe_hash::SafeWarnings;
 use safe_utils::{
@@ -45,6 +45,9 @@ use crate::hasher::{
     compute_hashes_from_api_tx, fetch_transactions, get_warnings_for_tx, get_warnings_from_api_tx,
 };
 use crate::sidebar;
+use crate::signing_bridge::SigningBridge;
+use crate::signing_ui;
+use crate::signing_ui::state::{SigningSurface, SigningUiState};
 use crate::state::{
     get_chain_name, AddressValidation, Eip712State, MsgVerifyState, OfflineState, SafeContext,
     SidebarState, TxVerifyState, SAFE_VERSIONS,
@@ -124,6 +127,10 @@ pub struct App {
     address_book_add_name: String,
     address_book_add_addr: String,
     address_book_add_chain: String,
+    /// Signing parity-wave bridge
+    signing_bridge: SigningBridge,
+    /// Signing UI shell state
+    signing_ui_state: SigningUiState,
 }
 
 /// Available tabs in the application
@@ -134,6 +141,7 @@ pub enum Tab {
     Message,
     Eip712,
     Offline,
+    Signing,
 }
 
 impl App {
@@ -174,6 +182,8 @@ impl App {
             address_book_add_name: String::new(),
             address_book_add_addr: String::new(),
             address_book_add_chain: "ethereum".to_string(),
+            signing_bridge: SigningBridge::default(),
+            signing_ui_state: SigningUiState::default(),
         }
     }
 }
@@ -221,6 +231,7 @@ impl eframe::App for App {
                 ui.selectable_value(&mut self.active_tab, Tab::Message, "💬 Message");
                 ui.selectable_value(&mut self.active_tab, Tab::Eip712, "🔢 EIP-712");
                 ui.selectable_value(&mut self.active_tab, Tab::Offline, "📴 Offline");
+                ui.selectable_value(&mut self.active_tab, Tab::Signing, "✍️ Signing");
 
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if ui.button("📖 Address Book").clicked() {
@@ -265,6 +276,7 @@ impl eframe::App for App {
                     Tab::Message => self.render_message_tab(ui),
                     Tab::Eip712 => self.render_eip712_tab(ui),
                     Tab::Offline => self.render_offline_tab(ui, ctx),
+                    Tab::Signing => self.render_signing_tab(ui),
                 }
                 ui.add_space(20.0);
             });
@@ -282,7 +294,11 @@ impl App {
         ui.add_space(8.0);
 
         // Select Transaction section
-        ui.label(egui::RichText::new("Select Transaction").strong().size(13.0));
+        ui.label(
+            egui::RichText::new("Select Transaction")
+                .strong()
+                .size(13.0),
+        );
         ui.add_space(6.0);
 
         ui.horizontal(|ui| {
@@ -373,7 +389,10 @@ impl App {
 
         if self.tx_state.fetched_txs.len() > 1 {
             ui.add_space(10.0);
-            ui::section_header(ui, &format!("Select Transaction for Nonce: {}", self.tx_state.nonce));
+            ui::section_header(
+                ui,
+                &format!("Select Transaction for Nonce: {}", self.tx_state.nonce),
+            );
             ui::warning_banner(
                 ui,
                 "Multiple transactions found for this nonce. Safe API keeps all proposals with the same nonce (replacements/cancellations). Select one to verify.",
@@ -397,10 +416,7 @@ impl App {
 
                         // Determine colors based on selection state
                         let (bg_color, text_color) = if selected {
-                            (
-                                egui::Color32::from_rgb(0, 150, 120),
-                                egui::Color32::WHITE,
-                            )
+                            (egui::Color32::from_rgb(0, 150, 120), egui::Color32::WHITE)
                         } else {
                             (
                                 egui::Color32::from_rgb(45, 45, 45),
@@ -453,11 +469,7 @@ impl App {
                 .spacing([10.0, 6.0])
                 .show(ui, |ui| {
                     ui.label("Safe Tx Hash:");
-                    ui.label(
-                        egui::RichText::new(&tx.safe_tx_hash)
-                            .monospace()
-                            .size(11.0),
-                    );
+                    ui.label(egui::RichText::new(&tx.safe_tx_hash).monospace().size(11.0));
                     if ui.small_button("📋").on_hover_text("Copy").clicked() {
                         ui::copy_to_clipboard(&tx.safe_tx_hash);
                     }
@@ -1364,9 +1376,12 @@ impl App {
             TransactionKind::Single(_) if !decode_state.selector.is_empty() => {
                 Some(("single", decode_state.selector.clone(), tx.data.clone(), 0))
             }
-            TransactionKind::MultiSend(multi) => {
-                Some(("multi", String::new(), String::new(), multi.transactions.len()))
-            }
+            TransactionKind::MultiSend(multi) => Some((
+                "multi",
+                String::new(),
+                String::new(),
+                multi.transactions.len(),
+            )),
             _ => None,
         };
 
@@ -1634,11 +1649,7 @@ impl App {
                         }
                     } else {
                         // No pending transaction, set nonce to latest - 1 for manual fetch
-                        let latest_nonce = if info.nonce > 0 {
-                            info.nonce - 1
-                        } else {
-                            0
-                        };
+                        let latest_nonce = if info.nonce > 0 { info.nonce - 1 } else { 0 };
                         self.tx_state.nonce = latest_nonce.to_string();
                     }
 
@@ -2025,10 +2036,7 @@ impl App {
                                 ui.add_space(20.0);
                                 ui.label(egui::RichText::new("📭").size(32.0));
                                 ui.add_space(8.0);
-                                ui.label(
-                                    egui::RichText::new("No addresses saved yet")
-                                        .size(14.0),
-                                );
+                                ui.label(egui::RichText::new("No addresses saved yet").size(14.0));
                                 ui.label(
                                     egui::RichText::new("Add entries below or import from CSV")
                                         .small()
@@ -2044,10 +2052,9 @@ impl App {
                 ui.add_space(12.0);
 
                 // Add Entry Section - Always visible, prominent when empty
-                let add_header = egui::CollapsingHeader::new(
-                    egui::RichText::new("➕ Add New Entry").strong()
-                )
-                .default_open(is_empty); // Auto-expand when address book is empty
+                let add_header =
+                    egui::CollapsingHeader::new(egui::RichText::new("➕ Add New Entry").strong())
+                        .default_open(is_empty); // Auto-expand when address book is empty
 
                 add_header.show(ui, |ui| {
                     ui::card(ui, |ui| {
@@ -2116,8 +2123,7 @@ impl App {
                 egui::CollapsingHeader::new("📥 Import CSV").show(ui, |ui| {
                     ui::card(ui, |ui| {
                         ui.label(
-                            egui::RichText::new("Paste CSV data: address,name,chainId")
-                                .small(),
+                            egui::RichText::new("Paste CSV data: address,name,chainId").small(),
                         );
                         ui.add_space(4.0);
                         ui::multiline_input(
@@ -2142,13 +2148,16 @@ impl App {
                                             count, skipped
                                         ));
                                     } else {
-                                        self.address_book_error =
-                                            Some(format!("✓ Successfully imported {} entries", count));
+                                        self.address_book_error = Some(format!(
+                                            "✓ Successfully imported {} entries",
+                                            count
+                                        ));
                                     }
                                     self.address_book_import_text.clear();
                                 }
                                 Err(e) => {
-                                    self.address_book_error = Some(format!("❌ Import failed: {}", e));
+                                    self.address_book_error =
+                                        Some(format!("❌ Import failed: {}", e));
                                 }
                             }
                         }
@@ -2167,7 +2176,8 @@ impl App {
                         ui.add_space(6.0);
 
                         let can_export = entry_count > 0;
-                        if ui::secondary_button(ui, "📋 Copy CSV to Clipboard").clicked() && can_export
+                        if ui::secondary_button(ui, "📋 Copy CSV to Clipboard").clicked()
+                            && can_export
                         {
                             let csv = self.safe_context.address_book.export_csv();
                             ui::copy_to_clipboard(&csv);
@@ -2285,6 +2295,94 @@ impl App {
                 *guard = Some(OfflineDecodeResult::Success(decode));
                 ctx.request_repaint();
             });
+        }
+    }
+
+    fn render_signing_tab(&mut self, ui: &mut egui::Ui) {
+        ui::styled_heading(ui, "Signing (Parity Wave)");
+        ui.label("WASM + EIP-1193 signing orchestration (PRD 05A).");
+        ui.add_space(8.0);
+
+        ui.horizontal(|ui| {
+            if ui.small_button("Connect Provider").clicked() {
+                match self.signing_bridge.connect_provider() {
+                    Ok(_) => self.signing_ui_state.set_info("provider connected"),
+                    Err(e) => self.signing_ui_state.set_error(e.to_string()),
+                }
+            }
+            if ui.small_button("Acquire Writer Lock").clicked() {
+                match self.signing_bridge.acquire_writer_lock(
+                    "egui-tab".to_owned(),
+                    B256::ZERO,
+                    60_000,
+                ) {
+                    Ok(_) => self.signing_ui_state.set_info("writer lock acquired"),
+                    Err(e) => self.signing_ui_state.set_error(e.to_string()),
+                }
+            }
+        });
+        if let Ok(Some(lock)) = self.signing_bridge.load_writer_lock() {
+            ui.small(format!(
+                "writer lock: holder={} epoch={} expires={}",
+                lock.holder_tab_id, lock.lock_epoch, lock.expires_at_ms.0
+            ));
+        }
+
+        ui.add_space(8.0);
+        ui.horizontal(|ui| {
+            ui.selectable_value(
+                &mut self.signing_ui_state.active_surface,
+                SigningSurface::Queue,
+                "Queue",
+            );
+            ui.selectable_value(
+                &mut self.signing_ui_state.active_surface,
+                SigningSurface::TxDetails,
+                "Tx",
+            );
+            ui.selectable_value(
+                &mut self.signing_ui_state.active_surface,
+                SigningSurface::MessageDetails,
+                "Message",
+            );
+            ui.selectable_value(
+                &mut self.signing_ui_state.active_surface,
+                SigningSurface::WalletConnect,
+                "WalletConnect",
+            );
+            ui.selectable_value(
+                &mut self.signing_ui_state.active_surface,
+                SigningSurface::ImportExport,
+                "Import/Export",
+            );
+        });
+        ui.separator();
+        match self.signing_ui_state.active_surface {
+            SigningSurface::Queue => signing_ui::queue::render_queue(
+                ui,
+                &mut self.signing_ui_state,
+                &self.signing_bridge,
+            ),
+            SigningSurface::TxDetails => signing_ui::tx_details::render_tx_details(
+                ui,
+                &mut self.signing_ui_state,
+                &self.signing_bridge,
+            ),
+            SigningSurface::MessageDetails => signing_ui::message_details::render_message_details(
+                ui,
+                &mut self.signing_ui_state,
+                &self.signing_bridge,
+            ),
+            SigningSurface::WalletConnect => signing_ui::wc_requests::render_wc_requests(
+                ui,
+                &mut self.signing_ui_state,
+                &self.signing_bridge,
+            ),
+            SigningSurface::ImportExport => signing_ui::import_export::render_import_export(
+                ui,
+                &mut self.signing_ui_state,
+                &self.signing_bridge,
+            ),
         }
     }
 }

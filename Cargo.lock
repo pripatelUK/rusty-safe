@@ -4800,11 +4800,15 @@ name = "rusty-safe-signing-adapters"
 version = "0.1.0"
 dependencies = [
  "alloy",
+ "base64 0.22.1",
  "reqwest",
  "rusty-safe-signing-core",
+ "safe-hash",
+ "safe-utils",
  "serde",
  "serde_json",
  "thiserror 2.0.17",
+ "web-time",
 ]
 
 [[package]]

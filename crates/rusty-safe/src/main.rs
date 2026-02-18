@@ -7,9 +7,9 @@ mod app;
 mod decode;
 mod expected;
 mod hasher;
+mod sidebar;
 mod signing_bridge;
 mod signing_ui;
-mod sidebar;
 mod state;
 mod ui;
 
