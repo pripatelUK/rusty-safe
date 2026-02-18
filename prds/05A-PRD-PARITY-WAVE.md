@@ -68,6 +68,33 @@ Change control rule:
 2. Accepted exceptions require explicit owner sign-off and a PRD delta that states why parity is blocked without the exception.
 3. If accepted, the exception must be tagged `parity-critical` in the roadmap and test gates.
 
+### Parity Traceability Matrix (Scope Lock)
+
+All implementation work in 05A must map to at least one parity capability ID below. This is the primary anti-feature-creep control.
+
+| Parity ID | Capability | Localsafe Behavior Anchor | 05A Target Sections |
+|---|---|---|---|
+| `PARITY-TX-01` | Safe tx lifecycle (build/hash/sign/propose/confirm/execute) | `app/hooks/useSafe.ts`, `app/safe/[address]/tx/[txHash]/TxDetailsClient.tsx` | Sections 1, 2, 4, 8 |
+| `PARITY-TX-02` | Manual tx signature entry and merge | `app/safe/[address]/tx/[txHash]/TxDetailsClient.tsx` | Sections 1, 2, 4, 9 |
+| `PARITY-MSG-01` | Safe message signing + threshold behavior | `app/safe/[address]/message/[messageHash]/MessageDetailsClient.tsx` | Sections 1, 2, 4, 9 |
+| `PARITY-WC-01` | WalletConnect session lifecycle + tx/sign request routing + deferred tx response | `app/provider/WalletConnectProvider.tsx`, `app/components/WalletConnectRequestHandler.tsx`, `app/safe/[address]/wc-*` | Sections 1, 2, 4, 8 |
+| `PARITY-ABI-01` | ABI-assisted tx composition with selector-safe behavior | `app/safe/[address]/new-tx/NewSafeTxClient.tsx`, `app/utils/abiEncoder.ts` | Sections 1, 2, 4, 9 |
+| `PARITY-COLLAB-01` | Import/export/share merge + URL key compatibility (`importTx/importSig/importMsg/importMsgSig`) | `app/safe/[address]/SafeDashboardClient.tsx` | Sections 1, 4, 7, 8, 9 |
+| `PARITY-HW-01` | Ledger/Trezor passthrough via wallet software (no direct HID) | Wallet connector behavior via injected provider + WC | Sections 1, 6, 8, 9 |
+
+Scope-lock execution rules:
+
+1. Every roadmap task, PR description, and milestone artifact must reference one or more `PARITY-*` IDs.
+2. Any work item without a `PARITY-*` mapping is out of scope for 05A and must be moved to `05B` or a new PRD.
+3. The release gate requires a signed parity traceability report at `local/reports/prd05a/parity-traceability.md`.
+
+Feature parking lot (explicitly deferred from 05A):
+
+1. Connector ecosystem expansion beyond MetaMask/Rabby + WalletConnect-managed sessions.
+2. Native HID/vendor SDK transport for Ledger/Trezor.
+3. Multi-tab lease arbitration/reconcile engine and background sync.
+4. Non-signing dashboard modules (token portfolio, owner-management UX redesign, Safe creation UX changes).
+
 ## 2. Core Architecture
 
 ### System Diagram
@@ -132,6 +159,23 @@ Why this pattern for this codebase:
 1. The current app already centralizes too much behavior in UI runtime (`crates/rusty-safe/src/app.rs`), so adding signing directly there would bloat the codebase.
 2. Hexagonal workspace boundaries preserve determinism, enable unit testing without browser dependencies, and keep UI and adapter churn out of core signing logic.
 3. It preserves a modular-monolith deployment while avoiding premature microservice complexity.
+
+### Boundary Enforcement (Architecture Fitness)
+
+Hexagonal architecture is not considered satisfied by crate layout alone; boundaries must be continuously enforced.
+
+Boundary rules:
+
+1. `rusty-safe-signing-core` must not depend on UI/runtime/transport crates (`egui`, `eframe`, `reqwest`, `web-sys`, `tokio`).
+2. `rusty-safe-signing-adapters` may depend on transport/runtime crates but must not import shell UI modules.
+3. `crates/rusty-safe` shell may call signing only via `signing_bridge`; no direct adapter calls.
+4. Side effects must originate in adapters; state transition legality must live in core.
+
+Boundary checks required in CI for A1+:
+
+1. dependency checks via `cargo tree` assertions for forbidden deps in core.
+2. import-boundary checks via `rg` assertions preventing cross-layer direct imports.
+3. review check: any boundary exception requires architecture-owner approval and a PRD delta.
 
 ### Crate Skeleton Draft (A0 Baseline)
 
@@ -660,6 +704,40 @@ pub struct AppWriterLock {
 11. `UrlImportEnvelope.key` must be one of `importTx`, `importSig`, `importMsg`, `importMsgSig`.
 12. `AppWriterLock` must enforce at-most-one active writer authority in P0 mode.
 
+### Deterministic Transition Log Contract
+
+Each mutating command must emit a transition log record to guarantee replay and recovery determinism.
+
+```rust
+pub struct CommandEnvelope {
+    pub command_id: String,        // stable UUIDv7
+    pub correlation_id: String,    // cross-surface tracing key
+    pub parity_capability_id: String, // PARITY-* mapping
+    pub idempotency_key: String,
+    pub issued_at_ms: TimestampMs,
+    pub command_kind: String,
+}
+
+pub struct TransitionLogRecord {
+    pub event_seq: u64,            // monotonic per-flow
+    pub command_id: String,
+    pub flow_id: String,
+    pub state_before: String,
+    pub state_after: String,
+    pub side_effect_key: Option<String>,
+    pub side_effect_dispatched: bool,
+    pub side_effect_outcome: Option<String>,
+    pub recorded_at_ms: TimestampMs,
+}
+```
+
+Log invariants:
+
+1. `event_seq` must increment by exactly `1` within a flow.
+2. Side effects must be idempotent by `(flow_id, side_effect_key)`.
+3. Replay from persisted log must produce an identical final state hash.
+4. Recovered state after refresh/restart must preserve flow visibility and actionable status.
+
 ### Serialization And Integrity Contract
 
 1. Canonical payload format is deterministic JSON with sorted keys and UTF-8 bytes.
@@ -840,6 +918,13 @@ Allowed custom implementation scope:
 2. Adapter composition, retries, idempotency, and error taxonomy normalization.
 3. UI rendering and user interaction flows.
 
+No-reimplementation enforcement workflow:
+
+1. Any PR touching guarded capabilities (hashing, ABI encoding, typed-data signing, URL key semantics) must cite the source-of-truth package/file used.
+2. If upstream cannot be reused, PR must include a short exception note explaining why adapter conversion is insufficient.
+3. Differential tests against upstream/reference outputs are mandatory for guarded-capability changes.
+4. Gate reviewers must reject PRs that introduce duplicate implementations of guarded capabilities without approved exception notes.
+
 ### Wallet + Hardware Passthrough Contract (P0)
 
 1. Browser target: Chromium-based (`Chrome`, `Brave`).
@@ -873,6 +958,8 @@ Required runtime config keys:
 8. `abi_max_bytes`
 9. `url_import_max_payload_bytes`
 10. `wc_session_idle_timeout_ms`
+11. `command_latency_budget_ms`
+12. `rehydration_budget_ms`
 
 ## 7. Storage & Persistence
 
@@ -1012,24 +1099,24 @@ Churn guardrails:
 
 | Phase | Required Tasks | Deliverables | Depends On | Complexity | Parallelization Opportunities |
 |---|---|---|---|---|---|
-| A0 | Create signing crates and wire workspace dependencies; add `signing_bridge` in UI shell | `crates/rusty-safe-signing-core`, `crates/rusty-safe-signing-adapters`, `crates/rusty-safe/src/signing_bridge.rs` | none | M | Core/adapters crate scaffolding can run in parallel |
-| A1 | Implement domain structs/enums; implement deterministic FSM skeleton; implement provider discovery + capability probe; add `Tab::Signing` and empty `signing_ui` surfaces | `crates/rusty-safe-signing-core/src/domain.rs`, `crates/rusty-safe-signing-core/src/state_machine.rs`, `crates/rusty-safe-signing-adapters/src/eip1193.rs`, `crates/rusty-safe/src/signing_ui/*` scaffold + passing unit tests | A0 | M | Provider adapter tests can run in parallel with FSM tests and shell scaffold |
-| A2 | Implement tx lifecycle (`create -> sign -> propose -> confirm -> execute`); add idempotency keys/conflict handling; implement ABI-assisted tx composition + selector checks; implement manual tx signature ingestion + validation; wire queue/tx-details egui flows | `crates/rusty-safe-signing-core/src/orchestrator.rs`, `crates/rusty-safe-signing-adapters/src/safe_service.rs`, `crates/rusty-safe-signing-adapters/src/execute.rs`, `crates/rusty-safe-signing-adapters/src/eip1193.rs`, `crates/rusty-safe/src/signing_ui/queue.rs`, `crates/rusty-safe/src/signing_ui/tx_details.rs`; tx integration + ABI tests | A1 | L | Service adapter and execute-path tests can run in parallel with egui wiring |
-| A3 | Implement message lifecycle and threshold progression; add method normalization; wire message egui flow | message transitions in `crates/rusty-safe-signing-core`, `crates/rusty-safe/src/signing_ui/message_details.rs` + message integration tests | A1 | M | Typed-data normalization and threshold tests in parallel with egui wiring |
-| A4 | Implement WalletConnect session lifecycle (`pair/approve/reject/disconnect`) and request ingestion/routing/response; implement deferred tx response workflow; wire WC egui inbox; add `wallet_getCapabilities` graceful probe | `crates/rusty-safe-signing-adapters/src/wc.rs`, `crates/rusty-safe-signing-adapters/src/eip1193.rs`, `crates/rusty-safe/src/signing_ui/wc_requests.rs`, `crates/rusty-safe-signing-adapters/tests/wc_deferred.rs` | A2,A3 | L | tx WC and message WC tests in parallel |
-| A5 | Implement import/export/share + deterministic merge + writer lock protocol; implement localsafe URL key import compatibility; wire import/export egui flow; close capability matrix gaps | `crates/rusty-safe-signing-adapters/src/queue.rs`, `crates/rusty-safe/src/signing_ui/import_export.rs`, `crates/rusty-safe-signing-adapters/tests/url_import_compat.rs` + import/export tests + parity report | A2,A3,A4 | M | Import/export verification and lock contention tests in parallel |
+| A0 | Create signing crates and wire workspace dependencies; add `signing_bridge`; initialize parity traceability file with `PARITY-*` IDs (`PARITY-TX-01`, `PARITY-MSG-01`) | `crates/rusty-safe-signing-core`, `crates/rusty-safe-signing-adapters`, `crates/rusty-safe/src/signing_bridge.rs`, `local/reports/prd05a/parity-traceability.md` (seed) | none | M | Core/adapters crate scaffolding can run in parallel |
+| A1 | Implement domain structs/enums; deterministic FSM skeleton; provider discovery + capability probe; add `Tab::Signing` scaffolds; enable architecture boundary checks in CI (`PARITY-WC-01`) | `crates/rusty-safe-signing-core/src/domain.rs`, `crates/rusty-safe-signing-core/src/state_machine.rs`, `crates/rusty-safe-signing-adapters/src/eip1193.rs`, `crates/rusty-safe/src/signing_ui/*`, boundary-check scripts/config + passing tests | A0 | M | Provider adapter tests can run in parallel with FSM tests and shell scaffold |
+| A2 | Implement tx lifecycle (`create -> sign -> propose -> confirm -> execute`); idempotency/conflict handling; ABI-assisted tx composition + selector checks; manual tx signature ingestion + validation; transition log + deterministic replay for tx flows (`PARITY-TX-01`, `PARITY-TX-02`, `PARITY-ABI-01`) | `crates/rusty-safe-signing-core/src/orchestrator.rs`, `crates/rusty-safe-signing-core/src/state_machine.rs`, `crates/rusty-safe-signing-adapters/src/safe_service.rs`, `crates/rusty-safe-signing-adapters/src/execute.rs`, `crates/rusty-safe/src/signing_ui/queue.rs`, `crates/rusty-safe/src/signing_ui/tx_details.rs`; tx + ABI + replay tests | A1 | L | Service adapter and execute-path tests can run in parallel with egui wiring |
+| A3 | Implement message lifecycle and threshold progression; method normalization; message replay log coverage; wire message egui flow (`PARITY-MSG-01`) | message transitions in `crates/rusty-safe-signing-core`, `crates/rusty-safe/src/signing_ui/message_details.rs` + message integration and replay tests | A1 | M | Typed-data normalization and threshold tests in parallel with egui wiring |
+| A4 | Implement WalletConnect session lifecycle (`pair/approve/reject/disconnect`) and request ingestion/routing/response; deferred tx response workflow; `wallet_getCapabilities` graceful probe; define and test navigation-away request policy (`PARITY-WC-01`, `PARITY-HW-01`) | `crates/rusty-safe-signing-adapters/src/wc.rs`, `crates/rusty-safe-signing-adapters/src/eip1193.rs`, `crates/rusty-safe/src/signing_ui/wc_requests.rs`, `crates/rusty-safe-signing-adapters/tests/wc_deferred.rs` + WC policy tests | A2,A3 | L | tx WC and message WC tests in parallel |
+| A5 | Implement import/export/share + deterministic merge + writer lock protocol; localsafe URL key import compatibility; finalize parity traceability report and close matrix gaps (`PARITY-COLLAB-01`) | `crates/rusty-safe-signing-adapters/src/queue.rs`, `crates/rusty-safe/src/signing_ui/import_export.rs`, `crates/rusty-safe-signing-adapters/tests/url_import_compat.rs`, `local/reports/prd05a/parity-traceability.md` (final) + parity report | A2,A3,A4 | M | Import/export verification and lock contention tests in parallel |
 
 ### Phase Exit Gates
 
 | Gate | Required Evidence | Threshold |
 |---|---|---|
-| A0 Gate | workspace builds with new crate boundaries and no behavior regression in existing verify tabs | `cargo check --workspace` green, existing verification smoke tests green, and `app.rs` churn <= 120 LOC |
-| A1 Gate | FSM determinism tests; provider discovery tests; signing tab shell rendering | `>= 60` unit tests pass, `0` flaky failures over `3` repeated runs, and no signing business logic in shell |
-| A2 Gate | tx end-to-end tests against Safe service mock + one live chain smoke + ABI composition vectors + manual signature vectors | `100%` pass on mandatory tx cases, ABI selector checks, and manual signature validation/recovery checks; `0` duplicate propose/confirm side effects |
-| A3 Gate | message method normalization and threshold tests | `100%` pass on `personal_sign`, `eth_signTypedData`, `eth_signTypedData_v4` vectors |
-| A4 Gate | WalletConnect session lifecycle + quick/deferred flow tests | `100%` pass on session and request lifecycle state transitions; deferred flow resumes after restart |
-| A5 Gate | import/export authenticity + merge + lock conflict tests + URL compatibility tests; parity matrix report | `100%` pass for mandatory localsafe parity capabilities listed in Section 1 including URL keys |
-| Release Gate | Full suite, security review, compatibility matrix run | No open critical findings; Chromium+MetaMask/Rabby matrix green; Ledger/Trezor passthrough smoke green |
+| A0 Gate | workspace builds with new crate boundaries, seeded parity traceability report, and no behavior regression in existing verify tabs | `cargo check --workspace` green, existing verification smoke tests green, `app.rs` churn <= 120 LOC, and initial `PARITY-*` mapping file exists |
+| A1 Gate | FSM determinism tests; provider discovery tests; signing tab shell rendering; architecture boundary checks | `>= 60` unit tests pass, `0` flaky failures over `3` repeated runs, boundary checks green, and no signing business logic in shell |
+| A2 Gate | tx end-to-end tests + ABI/manual signature vectors + tx replay determinism | `100%` pass on mandatory tx cases, ABI selector checks, manual signature validation/recovery checks, `0` duplicate propose/confirm side effects, replay hash stable across `3` replays |
+| A3 Gate | message method normalization, threshold tests, and message replay determinism | `100%` pass on `personal_sign`, `eth_signTypedData`, `eth_signTypedData_v4` vectors and replay hash stable across `3` replays |
+| A4 Gate | WalletConnect session lifecycle + quick/deferred flow tests + request policy tests | `100%` pass on session/request lifecycle transitions; deferred flow resumes after restart; navigation-away policy behavior tested and deterministic |
+| A5 Gate | import/export authenticity + merge + lock conflict tests + URL compatibility tests + final traceability report | `100%` pass for mandatory localsafe parity capabilities listed in Section 1 including URL keys, with no unmapped implementation tasks |
+| Release Gate | Full suite, security review, compatibility matrix run, performance budget run, and signed traceability report | No open critical findings; Chromium+MetaMask/Rabby matrix green; Ledger/Trezor passthrough smoke green; performance budgets meet Section 8/9 thresholds; `PARITY-*` coverage is complete |
 
 ### Branch + Commit Milestones
 
@@ -1048,6 +1135,8 @@ Per-phase commit contract:
 2. Commit `phase/<id>-feature-complete` after implementation is complete.
 3. Commit `phase/<id>-gate-green` after all phase gates pass.
 4. Tag `prd05a-<id>-gate` on merge-ready commit for rollback anchors.
+5. Every phase commit message must include covered `PARITY-*` IDs.
+6. `phase/<id>-gate-green` commit must include/update the milestone artifact for that phase.
 
 Merge rules:
 
@@ -1056,11 +1145,30 @@ Merge rules:
 3. No phase may start on a new branch until previous phase gate is green and tagged.
 4. UI shell rule: no signing business logic in `crates/rusty-safe/src/app.rs`; only `signing_bridge` calls allowed.
 
+### Milestone Artifacts (Required For Measurability)
+
+| Phase | Artifact Path | Required Contents |
+|---|---|---|
+| A0 | `local/reports/prd05a/A0-boundary-bootstrap.md` | crate boundary summary, initial `PARITY-*` ID list, known risks |
+| A1 | `local/reports/prd05a/A1-boundary-checks.md` | CI boundary check outputs, dependency guard results, violations (if any) |
+| A2 | `local/reports/prd05a/A2-tx-parity-report.md` | tx + ABI + manual signature parity checklist, replay determinism evidence |
+| A3 | `local/reports/prd05a/A3-message-parity-report.md` | message-method parity checklist and threshold/replay evidence |
+| A4 | `local/reports/prd05a/A4-wc-parity-report.md` | WC lifecycle matrix, deferred-response tests, request policy outcomes |
+| A5 | `local/reports/prd05a/parity-traceability.md` | final parity matrix with `PARITY-*` coverage, deferred-item list, sign-off |
+
+Milestone artifact rules:
+
+1. Artifacts are mandatory gate evidence, not optional notes.
+2. Each artifact must include test run references and commit hash anchors.
+3. A phase cannot be tagged `gate-green` without its artifact committed.
+
 ### Success Criteria
 
 | Metric | Target | Measurement Method |
 |---|---|---|
 | Localsafe capability parity coverage | `100%` of mandatory parity items | Capability checklist tied to Section 1 matrix |
+| Parity scope-lock compliance | `100%` of implemented tasks mapped to `PARITY-*` IDs | Traceability report audit with zero unmapped tasks |
+| Hexagonal boundary integrity | `0` boundary violations | CI boundary-check outputs and import/dependency guard reports |
 | Deterministic replay consistency | `100%` deterministic outcomes | Replay transition logs in tests and compare final state hash |
 | Idempotent side-effect safety | `0` duplicate external writes in retry tests | Adapter invocation counter assertions |
 | ABI composition correctness | `100%` of parity ABI vectors encode expected calldata | Differential fixtures + selector assertions |
@@ -1069,6 +1177,8 @@ Merge rules:
 | Hardware passthrough viability | Ledger/Trezor-backed account signing succeeds via wallet software | Manual smoke + scripted WC flow checks |
 | WalletConnect lifecycle robustness | `100%` pass for pair/approve/reject/disconnect + request routing | WC lifecycle integration test suite |
 | URL share compatibility | `100%` pass on `importTx/importSig/importMsg/importMsgSig` fixtures | URL import compatibility suite |
+| Local command latency budget | `p95 <= 150ms` for non-network command handling | Bench/integration timing on command-dispatch + reducer path |
+| Rehydration budget | `p95 <= 1500ms` for restoring 100 mixed flows | Browser E2E startup/rehydration timing harness |
 | UI shell bloat control | `>= 85%` of new signing LOC lands outside `crates/rusty-safe/src/app.rs` | Per-phase diffstat gate |
 | Egui parity surface coverage | `100%` of mandatory parity surfaces mapped in this PRD render and dispatch bridge actions | UI checklist over `queue`, `tx_details`, `message_details`, `wc_requests`, `import_export` |
 
@@ -1082,6 +1192,8 @@ Merge rules:
 4. Serialization/MAC determinism tests for persisted objects.
 5. ABI parse/encode/selector consistency vectors.
 6. URL key parser and decode validation tests.
+7. Architecture boundary tests (forbidden imports/dependencies across core, adapters, shell).
+8. Transition log invariant tests (`event_seq`, idempotency key behavior, replay hash stability).
 
 ### Integration And E2E Approach
 
@@ -1094,6 +1206,8 @@ Merge rules:
 7. Localsafe URL key compatibility (`crates/rusty-safe-signing-adapters/tests/url_import_compat.rs`).
 8. egui parity state/render tests for signing surfaces (`crates/rusty-safe/tests/signing_ui/*.rs`).
 9. Chromium E2E runs with MetaMask and Rabby plus hardware-backed accounts.
+10. Differential parity harness: compare 05A outputs against localsafe fixture snapshots for `PARITY-*` capabilities.
+11. Performance budget suite for command latency and rehydration thresholds.
 
 ### Negative/Fault Approach
 
@@ -1104,6 +1218,7 @@ Merge rules:
 5. writer lock conflict and recovery.
 6. WalletConnect unapproved session or expired session handling.
 7. service timeout/retry budget and stale request expiration handling.
+8. restart/crash recovery during deferred response and in-flight signature collection.
 
 ### Test Data Requirements
 
@@ -1114,6 +1229,7 @@ Merge rules:
 5. Manual signature fixtures (`fixtures/signing/signature/*.json`) including invalid-format and wrong-signer cases.
 6. URL payload fixtures for `importTx`, `importSig`, `importMsg`, `importMsgSig` (`fixtures/signing/url/*.txt`).
 7. Golden outputs for hash/signature normalization from `safe-hash-rs` and reference snapshots.
+8. Replay-log fixtures (`fixtures/signing/replay/*.json`) for deterministic recovery checks.
 
 ## 10. Comparison & Trade-offs
 
