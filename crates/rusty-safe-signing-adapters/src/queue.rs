@@ -1,6 +1,9 @@
 use alloy::primitives::B256;
+use serde_json::Value;
 
-use rusty_safe_signing_core::{PendingSafeMessage, PendingSafeTx, PortError, QueuePort};
+use rusty_safe_signing_core::{
+    PendingSafeMessage, PendingSafeTx, PortError, QueuePort, UrlImportEnvelope,
+};
 
 #[derive(Debug, Clone, Default)]
 pub struct QueueAdapter;
@@ -20,5 +23,9 @@ impl QueuePort for QueueAdapter {
 
     fn load_message(&self, _message_hash: B256) -> Result<Option<PendingSafeMessage>, PortError> {
         Err(PortError::NotImplemented("queue.load_message"))
+    }
+
+    fn import_url_payload(&self, _envelope: &UrlImportEnvelope) -> Result<Value, PortError> {
+        Err(PortError::NotImplemented("queue.import_url_payload"))
     }
 }

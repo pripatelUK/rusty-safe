@@ -19,6 +19,7 @@ Source of truth inputs:
 1. Cannot reliably complete tx/message threshold signing in one deterministic flow.
 2. WalletConnect request handling does not yet provide complete tx + message signing parity.
 3. Collaboration paths (import/export/share) require deterministic merge and recovery semantics.
+4. Contract-call authoring lacks a parity-safe ABI-assisted builder path, forcing error-prone raw calldata entry.
 
 ### Solution Overview
 
@@ -27,8 +28,9 @@ Deliver a parity-first signing stack in WASM using injected wallet `EIP-1193` wi
 1. Implement tx pipeline: build/hash/sign/propose/confirm/execute.
 2. Implement message pipeline: sign/collect/threshold output.
 3. Implement WalletConnect tx + message request lifecycle including deferred tx response mode.
-4. Implement collaboration primitives: import/export/share with deterministic signature merge.
-5. Keep security baselines mandatory (signature recovery verification, chain/account binding, authenticated persisted state).
+4. Implement ABI-assisted tx builder (ABI paste/import + method form + calldata preview + manual override warning).
+5. Implement collaboration primitives: import/export/share with deterministic signature merge and localsafe URL key compatibility.
+6. Keep security baselines mandatory (signature recovery verification, chain/account binding, authenticated persisted state).
 
 ### Key Innovations (Parity Wave)
 
@@ -38,6 +40,8 @@ Deliver a parity-first signing stack in WASM using injected wallet `EIP-1193` wi
 | Single-tab writer authority (P0) | Removes early multi-tab complexity while preserving consistency | Faster delivery with safer mutations |
 | Method-normalized signing surface | Unifies `personal_sign`, `eth_signTypedData_v4`, `eth_signTypedData` | Better dApp compatibility in parity wave |
 | Signature context binding + recovery check | Blocks malformed/cross-flow signature injection | Security without native key custody |
+| ABI-assisted tx composition with selector verification | Lowers tx construction errors while retaining expert raw override path | Safer contract-call signing parity |
+| URL share schema compatibility layer | Preserves localsafe collaboration links (`importTx/importSig/importMsg/importMsgSig`) | Easier migration and cross-tool workflow |
 | Compatibility matrix with hardware passthrough checks | Enforces realistic wallet behavior targets | Better real-world parity quality |
 
 ### Parity Delivery Contract (No Feature Creep)
@@ -46,12 +50,17 @@ The parity wave is constrained to localsafe-equivalent signing capabilities. Any
 
 | Capability Area | Must Ship In 05A | Explicitly Out Of Scope In 05A |
 |---|---|---|
-| Safe tx flow | Build/hash/sign/propose/confirm/execute | Batch UX redesign, account abstraction |
+| Safe tx flow | Build/hash/sign/propose/confirm/execute with raw + ABI-assisted authoring + manual signature entry | Batch UX redesign, account abstraction |
 | Safe message flow | `personal_sign`, `eth_signTypedData`, `eth_signTypedData_v4`, guarded `eth_sign` | New proprietary signing methods |
-| WalletConnect flow | tx request flow + message request flow + deferred tx response | Connector marketplace and connector plugins |
-| Collaboration | Import/export/share parity with deterministic merge | Multi-tab lease arbitration and background reconcile |
+| WalletConnect flow | Session lifecycle (`pair/approve/reject/disconnect`) + tx request flow + message request flow + deferred tx response | Connector marketplace and connector plugins |
+| Collaboration | Import/export/share parity with deterministic merge + URL import compatibility keys | Multi-tab lease arbitration and background reconcile |
 | Wallet/browser surface | Chromium + MetaMask/Rabby + WalletConnect sessions (hardware passthrough) | Firefox/Safari/mobile/browser extension ecosystems |
 | Hardware | Ledger/Trezor passthrough via wallet software | Direct HID or vendor SDK transport from WASM |
+
+Connector ecosystem definition in this PRD:
+
+1. Additional wallet connectors beyond MetaMask/Rabby/injected EIP-1193 and WalletConnect-managed sessions.
+2. Provider plugin marketplace abstractions and custom connector SDK integrations.
 
 Change control rule:
 
@@ -237,12 +246,15 @@ Required data columns:
 4. Signature progress (`m / threshold`)
 5. Updated timestamp
 6. Origin (`local`, `imported`, `walletconnect`)
+7. Build source (`raw`, `abi`, `url-import`) for tx flows
 
 Action gating:
 
 | Action | Enabled When | Disabled Reason |
 |---|---|---|
 | Open details | flow exists | flow missing or deleted |
+| Create tx (raw) | provider connected + writer lock held | provider disconnected or lock guard failed |
+| Create tx (ABI) | ABI parsed + method args valid + writer lock held | ABI parse/arg validation/lock guard failed |
 | Sign | provider connected + chain/account match + writer lock held | provider/chain/account/lock guard failed |
 | Propose | tx has at least one valid signature | missing valid signatures |
 | Execute | threshold reached and preflight succeeded | threshold/preflight guard failed |
@@ -258,15 +270,23 @@ Purpose:
 Required sections:
 
 1. Tx summary (to, value, operation, nonce, safe tx hash).
-2. Signature table (signer, source, method, recovered signer, added timestamp).
-3. Preflight panel (simulation result, warnings, blocking issues).
-4. Side-effect timeline (propose/confirm/execute attempt history).
+2. Tx composition panel:
+   - raw calldata editor,
+   - ABI method form (ABI input + method selector + typed args),
+   - decoded calldata preview and mismatch/override warning.
+3. Signature table (signer, source, method, recovered signer, added timestamp).
+4. Manual signature panel (signer address + signature bytes input + validation result).
+5. Preflight panel (simulation result, warnings, blocking issues).
+6. Side-effect timeline (propose/confirm/execute attempt history).
 
 Action gating:
 
 | Action | Enabled When | Disabled Reason |
 |---|---|---|
 | Sign tx | signer guard passes | signer/account/chain mismatch |
+| Apply ABI composition | ABI parses and args encode deterministically | ABI parse failure or selector mismatch |
+| Override with raw calldata | user confirms warning and payload validates | invalid calldata or warning not acknowledged |
+| Add signature (manual/import) | signature context validates and signer recovers to Safe owner | invalid signature format or signer mismatch |
 | Propose tx | tx status allows propose and idempotency key free | already proposed or in-flight |
 | Confirm tx | tx exists remotely and signature is valid | remote state mismatch or bad signature |
 | Execute tx | threshold reached + preflight pass + chain match | threshold/preflight/chain guard failed |
@@ -308,6 +328,8 @@ Required request metadata:
 4. Origin dApp metadata (if provided)
 5. Expiry timestamp
 6. Linked flow reference
+7. Session status (`proposed`, `approved`, `rejected`, `disconnected`)
+8. Provider capability snapshot (including `wallet_getCapabilities` availability)
 
 Action gating:
 
@@ -317,6 +339,8 @@ Action gating:
 | Quick response | flow can produce immediate result | flow not ready |
 | Deferred response | request active and linked tx flow exists | missing linked tx |
 | Reject | request active | already responded/expired |
+| Approve session | session proposed and origin verified | session already finalized or origin check failed |
+| Disconnect session | session approved and topic active | session inactive/disconnected |
 
 ##### Import/Export Surface
 
@@ -328,15 +352,17 @@ Purpose:
 Required sections:
 
 1. Import drop zone/text area.
-2. Validation output panel (schema/mac/signature/context checks).
-3. Merge summary panel (added/updated/skipped/conflicted counts).
-4. Export options panel (selected flows, bundle digest/signature preview).
+2. URL payload paste field for localsafe-compatible keys (`importTx`, `importSig`, `importMsg`, `importMsgSig`).
+3. Validation output panel (schema/mac/signature/context checks).
+4. Merge summary panel (added/updated/skipped/conflicted counts).
+5. Export options panel (selected flows, bundle digest/signature preview + optional URL payload output).
 
 Action gating:
 
 | Action | Enabled When | Disabled Reason |
 |---|---|---|
 | Import bundle | input present and parseable | empty or malformed input |
+| Import URL payload | key present and payload parseable | missing key, malformed payload, or unsupported schema version |
 | Apply merge | validation succeeded | validation/auth/context failed |
 | Export bundle | at least one flow selected | no selected flows |
 | Copy/share payload | export artifact generated | no export artifact |
@@ -346,16 +372,17 @@ Action gating:
 ##### Journey 1: Native Tx Signing
 
 1. User enters `Queue` and opens tx.
-2. `TxDetails` shows tx summary + existing signatures.
-3. User signs; signature table updates.
-4. User proposes/confirms; timeline logs side effects.
-5. When threshold met, execute action is enabled and dispatches `execute_tx`.
-6. Executed hash is persisted and shown in timeline.
+2. `TxDetails` shows tx summary + composition mode (`raw` or `abi`).
+3. User can compose calldata from ABI method form or raw input.
+4. User signs directly or adds a validated external signature; signature table updates.
+5. User proposes/confirms; timeline logs side effects.
+6. When threshold met, execute action is enabled and dispatches `execute_tx`.
+7. Executed hash is persisted and shown in timeline.
 
 ##### Journey 2: Transaction Collaboration
 
 1. User opens `ImportExport`.
-2. User imports bundle; validation/match checks run.
+2. User imports bundle or URL payload; validation/match checks run.
 3. Merge result is shown with deterministic counters.
 4. User opens merged flow in `TxDetails` and continues signing/execution.
 
@@ -373,6 +400,13 @@ Action gating:
 3. Message signatures are collected until threshold.
 4. Encoded signatures are sent as request response.
 
+##### Journey 5: WalletConnect Session Lifecycle
+
+1. Session proposal appears in `WalletConnect` with dApp metadata.
+2. User approves or rejects session.
+3. Approved session can receive tx/sign requests and expose capability snapshot.
+4. User can disconnect session and requests are archived deterministically.
+
 #### Error And Recovery UX Contract
 
 UI must provide deterministic recovery actions for each blocking class:
@@ -382,9 +416,14 @@ UI must provide deterministic recovery actions for each blocking class:
 | `CHAIN_MISMATCH` | blocking banner + highlight chain field | `Connect correct chain` CTA |
 | `ACCOUNT_MISMATCH` | blocking banner + signer mismatch detail | `Switch account` CTA |
 | `SIGNER_MISMATCH` | inline signature row error + toast | discard invalid signature, keep flow active |
+| `INVALID_SIGNATURE_FORMAT` | inline form error in signature panel | correct signer/signature format and retry |
 | `UNSUPPORTED_METHOD` | request card warning + disabled action | choose supported method path or reject request |
+| `ABI_PARSE_FAILED` | inline form field errors in tx composition panel | correct ABI JSON and retry encoding |
+| `ABI_SELECTOR_MISMATCH` | blocking warning on tx composition panel | confirm override or return to ABI-driven encoding |
 | `WC_REQUEST_EXPIRED` | request card locked as expired | keep local artifacts; allow export/share |
+| `WC_SESSION_NOT_APPROVED` | blocking banner in WalletConnect surface | approve/reject session before request action |
 | `WRITER_LOCK_CONFLICT` | read-only mode banner | `Reacquire lock` CTA |
+| `URL_IMPORT_SCHEMA_INVALID` | import compatibility panel warning | use accepted key/version or import bundle path |
 | `IMPORT_AUTH_FAILED` | import result marked quarantined | inspect details; allow copy of rejection report |
 | `INTEGRITY_MAC_INVALID` | object quarantine alert | prevent mutation and offer export of intact flows only |
 
@@ -401,7 +440,7 @@ A5 parity gate requires all checks to pass:
 
 1. Each required surface renders with no missing mandatory sections.
 2. All action buttons follow documented gating rules.
-3. All four critical user journeys execute successfully.
+3. All five critical user journeys execute successfully.
 4. Blocking errors render deterministic recovery UX.
 5. Refresh/rehydration preserves selected flow context and status.
 6. No signing business logic leaks into egui shell files.
@@ -480,12 +519,64 @@ pub enum MacAlgorithm {
     HmacSha256V1,
 }
 
+pub enum TxBuildSource {
+    RawCalldata,
+    AbiMethodForm,
+    UrlImport,
+}
+
+pub struct AbiMethodContext {
+    pub abi_digest: B256,
+    pub method_signature: String, // e.g. transfer(address,uint256)
+    pub method_selector: [u8; 4],
+    pub encoded_args: Bytes,
+    pub raw_calldata_override: bool,
+}
+
+pub enum WcSessionStatus {
+    Proposed,
+    Approved,
+    Rejected,
+    Disconnected,
+}
+
+pub struct ProviderCapabilitySnapshot {
+    pub wallet_get_capabilities_supported: bool,
+    pub capabilities_json: Option<String>,
+    pub collected_at_ms: TimestampMs,
+}
+
+pub struct WcSessionContext {
+    pub topic: String,
+    pub status: WcSessionStatus,
+    pub dapp_name: Option<String>,
+    pub dapp_url: Option<String>,
+    pub dapp_icons: Vec<String>,
+    pub capability_snapshot: Option<ProviderCapabilitySnapshot>,
+    pub updated_at_ms: TimestampMs,
+}
+
+pub enum UrlImportKey {
+    ImportTx,
+    ImportSig,
+    ImportMsg,
+    ImportMsgSig,
+}
+
+pub struct UrlImportEnvelope {
+    pub key: UrlImportKey,
+    pub schema_version: u16,
+    pub payload_base64url: String,
+}
+
 pub struct PendingSafeTx {
     pub schema_version: u16,
     pub chain_id: u64,
     pub safe_address: Address,
     pub nonce: u64,
     pub payload: SafeTxData,
+    pub build_source: TxBuildSource,
+    pub abi_context: Option<AbiMethodContext>,
     pub safe_tx_hash: B256,
     pub signatures: Vec<CollectedSignature>,
     pub status: TxStatus,
@@ -519,6 +610,7 @@ pub struct PendingSafeMessage {
 pub struct PendingWalletConnectRequest {
     pub request_id: String,
     pub topic: String,
+    pub session_status: WcSessionStatus,
     pub chain_id: u64,
     pub method: WcMethod,
     pub status: WcStatus,
@@ -556,13 +648,17 @@ pub struct AppWriterLock {
 ### Validation Rules
 
 1. `PendingSafeTx.safe_tx_hash` must match recomputed payload hash.
-2. `CollectedSignature` must match `(chain_id, safe_address, payload_hash)` of target flow.
-3. `CollectedSignature.recovered_signer` must equal `expected_signer`.
-4. `PendingWalletConnectRequest` must link to exactly one of `linked_safe_tx_hash` or `linked_message_hash`.
-5. `state_revision` must update with CAS semantics on every mutation.
-6. All timestamps are Unix epoch milliseconds (`TimestampMs`) and must be monotonic per object.
-7. `integrity_mac` must verify before object is accepted for mutation.
-8. `AppWriterLock` must enforce at-most-one active writer authority in P0 mode.
+2. `PendingSafeTx.build_source=AbiMethodForm` requires non-empty `abi_context`.
+3. `AbiMethodContext.method_selector` must match the first four bytes of encoded calldata when `raw_calldata_override=false`.
+4. `CollectedSignature` must match `(chain_id, safe_address, payload_hash)` of target flow.
+5. `CollectedSignature.recovered_signer` must equal `expected_signer`.
+6. `PendingWalletConnectRequest` must link to exactly one of `linked_safe_tx_hash` or `linked_message_hash`.
+7. `PendingWalletConnectRequest.session_status` must be `Approved` before request response side effects are dispatched.
+8. `state_revision` must update with CAS semantics on every mutation.
+9. All timestamps are Unix epoch milliseconds (`TimestampMs`) and must be monotonic per object.
+10. `integrity_mac` must verify before object is accepted for mutation.
+11. `UrlImportEnvelope.key` must be one of `importTx`, `importSig`, `importMsg`, `importMsgSig`.
+12. `AppWriterLock` must enforce at-most-one active writer authority in P0 mode.
 
 ### Serialization And Integrity Contract
 
@@ -580,6 +676,7 @@ pub struct AppWriterLock {
    - `bundle_signature = personal_sign("rusty-safe-export-v1:" || hex(bundle_digest))` by `exporter`,
    - importer must recover signer and match `exporter`.
 7. Key rotation is out of scope for 05A and deferred to `05B`.
+8. `UrlImportKey` serializes to exact localsafe-compatible query keys (`importTx`, `importSig`, `importMsg`, `importMsgSig`).
 
 ### Entity Relationships
 
@@ -587,7 +684,8 @@ pub struct AppWriterLock {
 2. `PendingSafeMessage.signatures[*]` belongs to `PendingSafeMessage.message_hash`.
 3. `PendingWalletConnectRequest.linked_safe_tx_hash` references `PendingSafeTx.safe_tx_hash`.
 4. `PendingWalletConnectRequest.linked_message_hash` references `PendingSafeMessage.message_hash`.
-5. `AppWriterLock` governs all mutating flow commands in parity wave.
+5. `PendingWalletConnectRequest.topic` references `WcSessionContext.topic`.
+6. `AppWriterLock` governs all mutating flow commands in parity wave.
 
 ## 4. CLI/API Surface
 
@@ -599,12 +697,16 @@ There is no end-user CLI. Parity wave surfaces are internal commands + provider/
 |---|---|---|---|
 | `connect_provider` | Bind injected provider | `{ "command":"connect_provider", "provider_id":"io.metamask", "request_id":"req-1" }` | `{ "ok":true, "wallet":{"account":"0x...","chain_id":1} }` |
 | `create_safe_tx` | Create tx draft | `{ "command":"create_safe_tx", "payload":{...}, "request_id":"req-2" }` | `{ "ok":true, "safe_tx_hash":"0xabc..." }` |
+| `create_safe_tx_from_abi` | Create tx draft from ABI + method args | `{ "command":"create_safe_tx_from_abi", "to":"0xContract...", "abi_json":"[{...}]", "method":"transfer(address,uint256)", "args":["0xabc...", "100"], "request_id":"req-2b" }` | `{ "ok":true, "safe_tx_hash":"0xabc...", "build_source":"abi" }` |
+| `add_tx_signature` | Add external/manual signature to tx | `{ "command":"add_tx_signature", "safe_tx_hash":"0xabc...", "signer":"0xOwner...", "signature":"0x...", "request_id":"req-2c" }` | `{ "ok":true, "signature_count":2 }` |
 | `start_preflight` | Run decode/sim checks | `{ "command":"start_preflight", "safe_tx_hash":"0xabc...", "request_id":"req-3" }` | `{ "ok":true, "preflight":{"success":true} }` |
 | `confirm_tx` | Confirm tx signature | `{ "command":"confirm_tx", "safe_tx_hash":"0xabc...", "signature":"0x...", "request_id":"req-4" }` | `{ "ok":true, "state":"Confirming" }` |
 | `execute_tx` | Execute threshold tx | `{ "command":"execute_tx", "safe_tx_hash":"0xabc...", "request_id":"req-5" }` | `{ "ok":true, "executed_tx_hash":"0xdef..." }` |
 | `sign_message` | Collect owner message signature | `{ "command":"sign_message", "message_hash":"0xaaa...", "method":"eth_signTypedData_v4", "request_id":"req-6" }` | `{ "ok":true, "status":"AwaitingThreshold" }` |
+| `wc_session_action` | Approve/reject/disconnect WalletConnect session | `{ "command":"wc_session_action", "topic":"wc-topic-1", "action":"approve", "request_id":"req-6b" }` | `{ "ok":true, "session_status":"Approved" }` |
 | `respond_wc` | Respond WalletConnect request | `{ "command":"respond_wc", "request_id":"wc-1", "mode":"deferred" }` | `{ "ok":true, "wc_status":"RespondingDeferred" }` |
 | `import_bundle` | Import tx/message bundle | `{ "command":"import_bundle", "bundle":{...}, "request_id":"req-8" }` | `{ "ok":true, "merged":{"tx":2,"message":1} }` |
+| `import_url_payload` | Import localsafe-compatible URL payload | `{ "command":"import_url_payload", "key":"importSig", "payload":"eyJzY2hlbWEiOi4uLn0", "request_id":"req-8b" }` | `{ "ok":true, "merged":{"tx":1,"message":0} }` |
 | `export_bundle` | Export signing bundle | `{ "command":"export_bundle", "flow_ids":["tx:0xabc..."], "request_id":"req-9" }` | `{ "ok":true, "bundle_digest":"0x..." }` |
 | `acquire_writer_lock` | Acquire parity-wave writer lock | `{ "command":"acquire_writer_lock", "tab_id":"tab-9", "request_id":"req-10" }` | `{ "ok":true, "lock":{"lock_epoch":4} }` |
 
@@ -622,6 +724,7 @@ Required:
 Guarded optional:
 
 1. `eth_sign` (`allow_eth_sign=true` and explicit warning per request)
+2. `wallet_getCapabilities` (if supported by wallet; absence must not block parity flow)
 
 Example request:
 
@@ -632,6 +735,15 @@ Example request:
     "0x1234...",
     "{\"types\":{...},\"domain\":{...},\"message\":{...}}"
   ]
+}
+```
+
+Capabilities probe example:
+
+```json
+{
+  "method": "wallet_getCapabilities",
+  "params": []
 }
 ```
 
@@ -660,6 +772,11 @@ Example request:
 | `IDEMPOTENCY_CONFLICT` | true | Duplicate external action detected |
 | `WRITER_LOCK_CONFLICT` | true | Lock epoch mismatch while mutating state |
 | `WC_REQUEST_EXPIRED` | false | Request expired before threshold completion |
+| `WC_SESSION_NOT_APPROVED` | false | WalletConnect request attempted without approved session |
+| `ABI_PARSE_FAILED` | false | ABI JSON could not be parsed or validated |
+| `ABI_SELECTOR_MISMATCH` | false | Encoded selector does not match chosen method |
+| `INVALID_SIGNATURE_FORMAT` | false | Signature bytes or signer address format is invalid |
+| `URL_IMPORT_SCHEMA_INVALID` | false | URL share payload key or schema is invalid |
 | `IMPORT_AUTH_FAILED` | false | Bundle signature or MAC validation failed |
 | `INTEGRITY_MAC_INVALID` | false | Persisted object failed integrity validation |
 
@@ -670,12 +787,17 @@ Example request:
 | Chain changed mid-flow | provider `chainChanged` / guard fail | Pause flow and require rebind | hard `CHAIN_MISMATCH` guard |
 | Provider account switched | `accountsChanged` + signer mismatch | force re-auth and invalidate pending signature intent | account binding guard |
 | Unsupported provider method | provider error | fallback map per capability profile | deterministic capability probe |
+| ABI parse or encoding failure | ABI parser/selector validation fails | keep draft in editable mode with field-level errors | typed ABI schema + selector consistency check |
+| Manual calldata override mismatch | method selector differs from ABI method | require explicit override acknowledgement | mismatch warning gate before sign/propose |
+| Manual signature format or signer mismatch | signature parser/recovery guard fails | keep tx active and mark signature row rejected | signature format validation + signer recovery gate |
 | Wrong signature returned | recovery mismatch | reject signature, keep flow active | signer recovery gate |
 | Duplicate propose/confirm | idempotency conflict | collapse duplicate action | stable idempotency keys |
 | Nonce conflict against remote state | safe service nonce mismatch | mark tx as conflicted and require explicit user fork | deterministic conflict state |
 | WC request expired | `now >= expires_at_ms` | preserve local signatures, mark expired | resumable local artifacts |
+| WC request on unapproved session | `session_status != Approved` | block response and offer session approval/reject | explicit WC session lifecycle contract |
 | Deferred WC response after tx replaced | executed hash mismatch | require explicit user choice to send replacement hash | deferred-response verification gate |
 | Writer lock lost | lock epoch mismatch | switch tab to read-only + reacquire | CAS writer-lock protocol |
+| URL share payload incompatibility | unknown key/version or decode error | quarantine payload and show compatibility diagnostics | strict URL schema parsing with accepted-key allowlist |
 | Import tampering | MAC or exporter signature fails | quarantine import | authenticated export/import format |
 
 ## 6. Integration Points
@@ -688,15 +810,16 @@ Example request:
 | Safe Transaction Service | propose/confirm/query tx state |
 | WalletConnect runtime | tx and message request lifecycle |
 | `safe-hash-rs` | canonical hash/calldata compatibility |
-| `alloy` | shared types + provider modeling |
+| `alloy` | shared types + provider modeling + ABI encoding/selector utilities |
 | `safers-cli` (reference-only) | parity vectors and service payload reference (not runtime-linked) |
+| `localsafe.eth` reference app | URL share key semantics + WC behavior oracle |
 
 ### Reuse Boundary Contract
 
 1. `safe-hash-rs` is the canonical runtime hash/calldata implementation.
-2. `alloy` is used for types, encoding, and provider abstractions only.
+2. `alloy` is used for types, encoding, provider abstractions, and ABI encode/decode only.
 3. `safers-cli` is used for differential tests and payload reference only.
-4. `localsafe.eth` is used as behavior oracle for parity acceptance tests.
+4. `localsafe.eth` is used as behavior oracle for parity acceptance tests and URL share key compatibility.
 5. No direct reuse of native HID/device code paths in parity wave.
 
 ### No-Reimplementation Policy (Mandatory)
@@ -706,6 +829,8 @@ Example request:
 | Safe tx hash / calldata hash / domain hash | `safe-hash-rs` (`safe-utils`) | Do not reimplement hashing logic in `rusty-safe` |
 | Safe Transaction Service payload and confirmation models | `safe-hash-rs` (`safe-hash`) | Reuse upstream models; only add adapter conversion when unavoidable |
 | Ethereum primitives, signatures, typed data encoding | `alloy` | Do not implement custom primitive/signature stacks |
+| ABI parsing, selector derivation, calldata encoding | `alloy` ABI modules | Do not create custom ABI parser/encoder stack |
+| URL share payload key semantics (`importTx/importSig/importMsg/importMsgSig`) | `localsafe.eth` behavior contract | Preserve key compatibility and parser behavior |
 | Safe behavior parity vectors | `localsafe.eth`, `safers-cli` fixtures | Use differential tests instead of forked logic |
 | Hardware transport | wallet software passthrough | No native HID/vendor transport implementation in 05A |
 
@@ -719,12 +844,14 @@ Allowed custom implementation scope:
 
 1. Browser target: Chromium-based (`Chrome`, `Brave`).
 2. Primary injected wallets: MetaMask and Rabby.
-3. WalletConnect request handling is required for tx + message flows.
-4. Ledger/Trezor passthrough through wallet software is required for:
+3. WalletConnect session lifecycle handling (`pair`, `approve`, `reject`, `disconnect`) is required.
+4. WalletConnect request handling is required for tx + message flows.
+5. Provider capability snapshot should attempt `wallet_getCapabilities`; unsupported providers must degrade gracefully.
+6. Ledger/Trezor passthrough through wallet software is required for:
    - MetaMask hardware-backed accounts,
    - Rabby hardware-backed accounts,
    - WalletConnect-connected wallet sessions that expose hardware-backed accounts.
-5. No direct HID transport in parity wave.
+7. No direct HID transport in parity wave.
 
 ### Secrets/Credentials
 
@@ -743,6 +870,9 @@ Required runtime config keys:
 5. `wc_request_poll_interval_ms`
 6. `import_max_bundle_bytes`
 7. `import_max_object_count`
+8. `abi_max_bytes`
+9. `url_import_max_payload_bytes`
+10. `wc_session_idle_timeout_ms`
 
 ## 7. Storage & Persistence
 
@@ -780,10 +910,14 @@ crates/rusty-safe-signing-adapters/
   src/execute.rs
   src/preflight.rs
   src/config.rs
+  tests/abi_builder.rs
   tests/tx_e2e.rs
+  tests/tx_manual_signature.rs
   tests/message_e2e.rs
   tests/wc_deferred.rs
+  tests/wc_session_lifecycle.rs
   tests/import_export_merge.rs
+  tests/url_import_compat.rs
 ```
 
 ### Runtime Store Model
@@ -819,6 +953,22 @@ Import enforcement:
 3. integrity MAC validation,
 4. exporter authenticity validation,
 5. deterministic merge with signature-context binding.
+
+### URL Share Compatibility Contract
+
+localsafe-compatible query keys must be supported for parity migration:
+
+1. `importTx`
+2. `importSig`
+3. `importMsg`
+4. `importMsgSig`
+
+Decoder rules:
+
+1. Accept base64url payloads and percent-encoded payloads.
+2. Reject unknown keys with `URL_IMPORT_SCHEMA_INVALID`.
+3. Enforce payload byte limits via `url_import_max_payload_bytes`.
+4. Route decoded payload through the same validation/merge pipeline as bundle import.
 
 ### Caching Strategy
 
@@ -864,10 +1014,10 @@ Churn guardrails:
 |---|---|---|---|---|---|
 | A0 | Create signing crates and wire workspace dependencies; add `signing_bridge` in UI shell | `crates/rusty-safe-signing-core`, `crates/rusty-safe-signing-adapters`, `crates/rusty-safe/src/signing_bridge.rs` | none | M | Core/adapters crate scaffolding can run in parallel |
 | A1 | Implement domain structs/enums; implement deterministic FSM skeleton; implement provider discovery + capability probe; add `Tab::Signing` and empty `signing_ui` surfaces | `crates/rusty-safe-signing-core/src/domain.rs`, `crates/rusty-safe-signing-core/src/state_machine.rs`, `crates/rusty-safe-signing-adapters/src/eip1193.rs`, `crates/rusty-safe/src/signing_ui/*` scaffold + passing unit tests | A0 | M | Provider adapter tests can run in parallel with FSM tests and shell scaffold |
-| A2 | Implement tx lifecycle (`create -> sign -> propose -> confirm -> execute`); add idempotency keys and conflict handling; wire queue/tx-details egui flows | `crates/rusty-safe-signing-core/src/orchestrator.rs`, `crates/rusty-safe-signing-adapters/src/safe_service.rs`, `crates/rusty-safe-signing-adapters/src/execute.rs`, `crates/rusty-safe/src/signing_ui/queue.rs`, `crates/rusty-safe/src/signing_ui/tx_details.rs`; tx integration tests | A1 | L | Service adapter and execute-path tests can run in parallel with egui wiring |
+| A2 | Implement tx lifecycle (`create -> sign -> propose -> confirm -> execute`); add idempotency keys/conflict handling; implement ABI-assisted tx composition + selector checks; implement manual tx signature ingestion + validation; wire queue/tx-details egui flows | `crates/rusty-safe-signing-core/src/orchestrator.rs`, `crates/rusty-safe-signing-adapters/src/safe_service.rs`, `crates/rusty-safe-signing-adapters/src/execute.rs`, `crates/rusty-safe-signing-adapters/src/eip1193.rs`, `crates/rusty-safe/src/signing_ui/queue.rs`, `crates/rusty-safe/src/signing_ui/tx_details.rs`; tx integration + ABI tests | A1 | L | Service adapter and execute-path tests can run in parallel with egui wiring |
 | A3 | Implement message lifecycle and threshold progression; add method normalization; wire message egui flow | message transitions in `crates/rusty-safe-signing-core`, `crates/rusty-safe/src/signing_ui/message_details.rs` + message integration tests | A1 | M | Typed-data normalization and threshold tests in parallel with egui wiring |
-| A4 | Implement WalletConnect request ingestion/routing/response; implement deferred tx response workflow; wire WC egui inbox | `crates/rusty-safe-signing-adapters/src/wc.rs`, `crates/rusty-safe/src/signing_ui/wc_requests.rs`, `crates/rusty-safe-signing-adapters/tests/wc_deferred.rs` | A2,A3 | L | tx WC and message WC tests in parallel |
-| A5 | Implement import/export/share + deterministic merge + writer lock protocol; wire import/export egui flow; close capability matrix gaps | `crates/rusty-safe-signing-adapters/src/queue.rs`, `crates/rusty-safe/src/signing_ui/import_export.rs` + import/export tests + parity report | A2,A3,A4 | M | Import/export verification and lock contention tests in parallel |
+| A4 | Implement WalletConnect session lifecycle (`pair/approve/reject/disconnect`) and request ingestion/routing/response; implement deferred tx response workflow; wire WC egui inbox; add `wallet_getCapabilities` graceful probe | `crates/rusty-safe-signing-adapters/src/wc.rs`, `crates/rusty-safe-signing-adapters/src/eip1193.rs`, `crates/rusty-safe/src/signing_ui/wc_requests.rs`, `crates/rusty-safe-signing-adapters/tests/wc_deferred.rs` | A2,A3 | L | tx WC and message WC tests in parallel |
+| A5 | Implement import/export/share + deterministic merge + writer lock protocol; implement localsafe URL key import compatibility; wire import/export egui flow; close capability matrix gaps | `crates/rusty-safe-signing-adapters/src/queue.rs`, `crates/rusty-safe/src/signing_ui/import_export.rs`, `crates/rusty-safe-signing-adapters/tests/url_import_compat.rs` + import/export tests + parity report | A2,A3,A4 | M | Import/export verification and lock contention tests in parallel |
 
 ### Phase Exit Gates
 
@@ -875,10 +1025,10 @@ Churn guardrails:
 |---|---|---|
 | A0 Gate | workspace builds with new crate boundaries and no behavior regression in existing verify tabs | `cargo check --workspace` green, existing verification smoke tests green, and `app.rs` churn <= 120 LOC |
 | A1 Gate | FSM determinism tests; provider discovery tests; signing tab shell rendering | `>= 60` unit tests pass, `0` flaky failures over `3` repeated runs, and no signing business logic in shell |
-| A2 Gate | tx end-to-end tests against Safe service mock + one live chain smoke | `100%` pass on mandatory tx cases; `0` duplicate propose/confirm side effects |
+| A2 Gate | tx end-to-end tests against Safe service mock + one live chain smoke + ABI composition vectors + manual signature vectors | `100%` pass on mandatory tx cases, ABI selector checks, and manual signature validation/recovery checks; `0` duplicate propose/confirm side effects |
 | A3 Gate | message method normalization and threshold tests | `100%` pass on `personal_sign`, `eth_signTypedData`, `eth_signTypedData_v4` vectors |
-| A4 Gate | WalletConnect quick + deferred flow tests | `100%` pass on request lifecycle state transitions; deferred flow resumes after restart |
-| A5 Gate | import/export authenticity + merge + lock conflict tests; parity matrix report | `100%` pass for mandatory localsafe parity capabilities listed in Section 1 |
+| A4 Gate | WalletConnect session lifecycle + quick/deferred flow tests | `100%` pass on session and request lifecycle state transitions; deferred flow resumes after restart |
+| A5 Gate | import/export authenticity + merge + lock conflict tests + URL compatibility tests; parity matrix report | `100%` pass for mandatory localsafe parity capabilities listed in Section 1 including URL keys |
 | Release Gate | Full suite, security review, compatibility matrix run | No open critical findings; Chromium+MetaMask/Rabby matrix green; Ledger/Trezor passthrough smoke green |
 
 ### Branch + Commit Milestones
@@ -913,8 +1063,12 @@ Merge rules:
 | Localsafe capability parity coverage | `100%` of mandatory parity items | Capability checklist tied to Section 1 matrix |
 | Deterministic replay consistency | `100%` deterministic outcomes | Replay transition logs in tests and compare final state hash |
 | Idempotent side-effect safety | `0` duplicate external writes in retry tests | Adapter invocation counter assertions |
+| ABI composition correctness | `100%` of parity ABI vectors encode expected calldata | Differential fixtures + selector assertions |
+| Manual signature parity | `100%` pass for tx/message manual signature add + signer recovery vectors | Integration tests for `add_tx_signature` and message signature ingestion |
 | Wallet compatibility | MetaMask + Rabby pass on Chromium | E2E matrix runs per release candidate |
 | Hardware passthrough viability | Ledger/Trezor-backed account signing succeeds via wallet software | Manual smoke + scripted WC flow checks |
+| WalletConnect lifecycle robustness | `100%` pass for pair/approve/reject/disconnect + request routing | WC lifecycle integration test suite |
+| URL share compatibility | `100%` pass on `importTx/importSig/importMsg/importMsgSig` fixtures | URL import compatibility suite |
 | UI shell bloat control | `>= 85%` of new signing LOC lands outside `crates/rusty-safe/src/app.rs` | Per-phase diffstat gate |
 | Egui parity surface coverage | `100%` of mandatory parity surfaces mapped in this PRD render and dispatch bridge actions | UI checklist over `queue`, `tx_details`, `message_details`, `wc_requests`, `import_export` |
 
@@ -926,29 +1080,40 @@ Merge rules:
 2. Signature recovery and flow-context binding checks.
 3. FSM legal transition and invariant tests.
 4. Serialization/MAC determinism tests for persisted objects.
+5. ABI parse/encode/selector consistency vectors.
+6. URL key parser and decode validation tests.
 
 ### Integration And E2E Approach
 
 1. tx build -> sign -> propose -> confirm -> execute (`crates/rusty-safe-signing-adapters/tests/tx_e2e.rs`).
 2. message sign -> threshold progression (`crates/rusty-safe-signing-adapters/tests/message_e2e.rs`).
-3. WalletConnect quick and deferred response flows (`crates/rusty-safe-signing-adapters/tests/wc_deferred.rs`).
-4. Import/export/share + merge determinism (`crates/rusty-safe-signing-adapters/tests/import_export_merge.rs`).
-5. egui parity state/render tests for signing surfaces (`crates/rusty-safe/tests/signing_ui/*.rs`).
-6. Chromium E2E runs with MetaMask and Rabby plus hardware-backed accounts.
+3. manual tx signature ingestion and signer recovery (`crates/rusty-safe-signing-adapters/tests/tx_manual_signature.rs`).
+4. ABI-assisted tx composition and raw-override warnings (`crates/rusty-safe-signing-adapters/tests/abi_builder.rs`).
+5. WalletConnect session lifecycle + quick/deferred response flows (`crates/rusty-safe-signing-adapters/tests/wc_deferred.rs`, `crates/rusty-safe-signing-adapters/tests/wc_session_lifecycle.rs`).
+6. Import/export/share + merge determinism (`crates/rusty-safe-signing-adapters/tests/import_export_merge.rs`).
+7. Localsafe URL key compatibility (`crates/rusty-safe-signing-adapters/tests/url_import_compat.rs`).
+8. egui parity state/render tests for signing surfaces (`crates/rusty-safe/tests/signing_ui/*.rs`).
+9. Chromium E2E runs with MetaMask and Rabby plus hardware-backed accounts.
 
 ### Negative/Fault Approach
 
 1. malformed import bundle and invalid authenticity proof.
 2. signer mismatch and unsupported method behavior.
-3. writer lock conflict and recovery.
-4. service timeout/retry budget and stale request expiration handling.
+3. ABI parse failure, selector mismatch, and unsafe raw override attempts.
+4. malformed manual signature bytes/address and non-owner recovered signer.
+5. writer lock conflict and recovery.
+6. WalletConnect unapproved session or expired session handling.
+7. service timeout/retry budget and stale request expiration handling.
 
 ### Test Data Requirements
 
 1. Transaction fixtures exported from localsafe-equivalent payloads (`fixtures/signing/tx/*.json`).
 2. Message fixtures per method (`fixtures/signing/message/*.json`).
 3. WalletConnect request fixtures for tx + message variants (`fixtures/signing/wc/*.json`).
-4. Golden outputs for hash/signature normalization from `safe-hash-rs` and reference snapshots.
+4. ABI fixtures (`fixtures/signing/abi/*.json`) including selector mismatch cases.
+5. Manual signature fixtures (`fixtures/signing/signature/*.json`) including invalid-format and wrong-signer cases.
+6. URL payload fixtures for `importTx`, `importSig`, `importMsg`, `importMsgSig` (`fixtures/signing/url/*.txt`).
+7. Golden outputs for hash/signature normalization from `safe-hash-rs` and reference snapshots.
 
 ## 10. Comparison & Trade-offs
 
@@ -977,6 +1142,7 @@ Merge rules:
 1. Move multi-tab lease protocol and reconcile engine into hardening wave.
 2. Add richer policy guardrails and risk overrides in hardening wave.
 3. Expand browser and connector ecosystem only after parity success criteria are met.
+4. Evaluate optional parity enhancements not required for 05A (advanced connectors, richer session analytics) in later PRDs.
 
 ## Context Preservation Map
 

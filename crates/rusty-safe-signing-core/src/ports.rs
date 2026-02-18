@@ -2,7 +2,9 @@ use alloy::primitives::{Address, B256};
 use serde_json::Value;
 use thiserror::Error;
 
-use crate::domain::{PendingSafeMessage, PendingSafeTx, SignatureMethod};
+use crate::domain::{
+    PendingSafeMessage, PendingSafeTx, SignatureMethod, UrlImportEnvelope, WcSessionAction,
+};
 
 #[derive(Debug, Error)]
 pub enum PortError {
@@ -17,6 +19,7 @@ pub enum PortError {
 pub trait ProviderPort {
     fn request_accounts(&self) -> Result<Vec<Address>, PortError>;
     fn chain_id(&self) -> Result<u64, PortError>;
+    fn wallet_get_capabilities(&self) -> Result<Option<Value>, PortError>;
     fn sign_payload(
         &self,
         method: SignatureMethod,
@@ -33,6 +36,7 @@ pub trait SafeServicePort {
 }
 
 pub trait WalletConnectPort {
+    fn session_action(&self, topic: &str, action: WcSessionAction) -> Result<(), PortError>;
     fn respond_success(&self, request_id: &str, result: Value) -> Result<(), PortError>;
     fn respond_error(
         &self,
@@ -47,4 +51,5 @@ pub trait QueuePort {
     fn save_message(&self, message: &PendingSafeMessage) -> Result<(), PortError>;
     fn load_tx(&self, safe_tx_hash: B256) -> Result<Option<PendingSafeTx>, PortError>;
     fn load_message(&self, message_hash: B256) -> Result<Option<PendingSafeMessage>, PortError>;
+    fn import_url_payload(&self, envelope: &UrlImportEnvelope) -> Result<Value, PortError>;
 }

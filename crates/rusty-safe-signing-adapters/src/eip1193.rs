@@ -15,6 +15,10 @@ impl ProviderPort for Eip1193Adapter {
         Err(PortError::NotImplemented("eip1193.chain_id"))
     }
 
+    fn wallet_get_capabilities(&self) -> Result<Option<Value>, PortError> {
+        Err(PortError::NotImplemented("eip1193.wallet_get_capabilities"))
+    }
+
     fn sign_payload(
         &self,
         _method: SignatureMethod,
