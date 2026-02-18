@@ -51,7 +51,8 @@ Owner: Rusty Safe
 ### 6. Milestone/Tag Discipline
 
 - [ ] All continuation milestones have `-gate-green` commits.
-- [ ] Required tags (`prd05a-<milestone>-gate`) created.
+- [x] Required tags (`prd05a-<milestone>-gate`) created.
+  Tags present: `prd05a-c1-c4-gate`, `prd05a-c2-c9-gate`, `prd05a-c5-c10-gate`.
 - [ ] Branch closure report completed.
 
 ## Sign-off
