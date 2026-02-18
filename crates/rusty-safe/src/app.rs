@@ -87,6 +87,13 @@ pub enum OfflineDecodeResult {
     Error(String),
 }
 
+/// Result from async signing-runtime action
+#[derive(Clone)]
+pub enum SigningAsyncResult {
+    Success(String),
+    Error(String),
+}
+
 /// The main application state
 pub struct App {
     /// Current active tab
@@ -131,6 +138,8 @@ pub struct App {
     signing_bridge: SigningBridge,
     /// Signing UI shell state
     signing_ui_state: SigningUiState,
+    /// Async signing-runtime result receiver
+    signing_async_result: Arc<Mutex<Option<SigningAsyncResult>>>,
 }
 
 /// Available tabs in the application
@@ -184,6 +193,7 @@ impl App {
             address_book_add_chain: "ethereum".to_string(),
             signing_bridge: SigningBridge::default(),
             signing_ui_state: SigningUiState::default(),
+            signing_async_result: Arc::new(Mutex::new(None)),
         }
     }
 }
@@ -209,6 +219,9 @@ impl eframe::App for App {
 
         // Check for async offline decode results
         self.check_offline_decode_result();
+
+        // Check for async signing-runtime results
+        self.check_signing_async_result();
 
         // Header with tabs
         egui::TopBottomPanel::top("header").show(ctx, |ui| {
@@ -276,7 +289,7 @@ impl eframe::App for App {
                     Tab::Message => self.render_message_tab(ui),
                     Tab::Eip712 => self.render_eip712_tab(ui),
                     Tab::Offline => self.render_offline_tab(ui, ctx),
-                    Tab::Signing => self.render_signing_tab(ui),
+                    Tab::Signing => self.render_signing_tab(ui, ctx),
                 }
                 ui.add_space(20.0);
             });
@@ -2217,6 +2230,19 @@ impl App {
         }
     }
 
+    fn check_signing_async_result(&mut self) {
+        let result = {
+            let mut guard = lock_or_recover!(self.signing_async_result);
+            guard.take()
+        };
+        if let Some(result) = result {
+            match result {
+                SigningAsyncResult::Success(msg) => self.signing_ui_state.set_info(msg),
+                SigningAsyncResult::Error(msg) => self.signing_ui_state.set_error(msg),
+            }
+        }
+    }
+
     fn trigger_offline_compute(&mut self, ctx: egui::Context) {
         self.offline_state.is_loading = true;
         self.offline_state.error = None;
@@ -2298,7 +2324,10 @@ impl App {
         }
     }
 
-    fn render_signing_tab(&mut self, ui: &mut egui::Ui) {
+    fn render_signing_tab(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
+        #[cfg(not(target_arch = "wasm32"))]
+        let _ = ctx;
+
         ui::styled_heading(ui, "Signing (Parity Wave)");
         ui.label("WASM + EIP-1193 signing orchestration (PRD 05A).");
         ui.add_space(8.0);
@@ -2307,6 +2336,31 @@ impl App {
             if ui.small_button("Connect Provider").clicked() {
                 match self.signing_bridge.connect_provider() {
                     Ok(_) => self.signing_ui_state.set_info("provider connected"),
+                    Err(e) => self.signing_ui_state.set_error(e.to_string()),
+                }
+            }
+            if ui.small_button("Recover Provider Events").clicked() {
+                match self
+                    .signing_bridge
+                    .recover_provider_events(self.signing_ui_state.active_chain_id)
+                {
+                    Ok(result) => {
+                        if let Some(summary) = result.provider_recovery {
+                            if let Some(chain_id) = summary.latest_chain_id {
+                                self.signing_ui_state.active_chain_id = chain_id;
+                            }
+                            self.signing_ui_state.set_info(format!(
+                                "provider recovery drained={} accounts_changed={} chain_changed={} tx_marked={} msg_marked={}",
+                                summary.drained_events,
+                                summary.accounts_changed,
+                                summary.chain_changed,
+                                summary.tx_flows_marked,
+                                summary.message_flows_marked
+                            ));
+                        } else {
+                            self.signing_ui_state.set_info("provider recovery completed");
+                        }
+                    }
                     Err(e) => self.signing_ui_state.set_error(e.to_string()),
                 }
             }
@@ -2319,6 +2373,34 @@ impl App {
                     Ok(_) => self.signing_ui_state.set_info("writer lock acquired"),
                     Err(e) => self.signing_ui_state.set_error(e.to_string()),
                 }
+            }
+
+            #[cfg(target_arch = "wasm32")]
+            if ui.small_button("Connect Provider (Async)").clicked() {
+                self.trigger_signing_async_connect_provider(ctx.clone());
+            }
+            #[cfg(target_arch = "wasm32")]
+            if ui.small_button("Sign Selected (Async)").clicked() {
+                self.trigger_signing_async_sign_selected(ctx.clone());
+            }
+            #[cfg(target_arch = "wasm32")]
+            if ui.small_button("Execute Selected Tx (Async)").clicked() {
+                self.trigger_signing_async_send_selected_tx(ctx.clone());
+            }
+            #[cfg(target_arch = "wasm32")]
+            if ui.small_button("WC Pair (Async)").clicked() {
+                self.trigger_signing_async_wc_pair(ctx.clone());
+            }
+            #[cfg(target_arch = "wasm32")]
+            if ui.small_button("WC Sync (Async)").clicked() {
+                self.trigger_signing_async_wc_sync(ctx.clone());
+            }
+            #[cfg(target_arch = "wasm32")]
+            if ui.small_button("WC Approve Topic (Async)").clicked() {
+                self.trigger_signing_async_wc_session_action(
+                    ctx.clone(),
+                    rusty_safe_signing_core::WcSessionAction::Approve,
+                );
             }
         });
         if let Ok(Some(lock)) = self.signing_bridge.load_writer_lock() {
@@ -2384,5 +2466,162 @@ impl App {
                 &self.signing_bridge,
             ),
         }
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    fn trigger_signing_async_connect_provider(&mut self, ctx: egui::Context) {
+        let bridge = self.signing_bridge.clone();
+        let result_slot = Arc::clone(&self.signing_async_result);
+        wasm_bindgen_futures::spawn_local(async move {
+            let result = bridge
+                .connect_provider_runtime_async()
+                .await
+                .map(|_| SigningAsyncResult::Success("provider connected via runtime".to_owned()))
+                .unwrap_or_else(|e| SigningAsyncResult::Error(e.to_string()));
+            let mut guard = lock_or_recover!(result_slot);
+            *guard = Some(result);
+            ctx.request_repaint();
+        });
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    fn trigger_signing_async_sign_selected(&mut self, ctx: egui::Context) {
+        let Some(flow_id) = self.signing_ui_state.selected_flow_id.clone() else {
+            self.signing_ui_state
+                .set_error("select a tx/message flow before async signing");
+            return;
+        };
+        let bridge = self.signing_bridge.clone();
+        let result_slot = Arc::clone(&self.signing_async_result);
+        wasm_bindgen_futures::spawn_local(async move {
+            let outcome = if let Some(hash_str) = flow_id.strip_prefix("msg:") {
+                match hash_str.parse::<B256>() {
+                    Ok(hash) => bridge
+                        .sign_message_with_provider_async(hash)
+                        .await
+                        .map(|_| SigningAsyncResult::Success(format!("message signed: {hash}")))
+                        .unwrap_or_else(|e| SigningAsyncResult::Error(e.to_string())),
+                    Err(e) => SigningAsyncResult::Error(format!("invalid message hash: {e}")),
+                }
+            } else if let Some(hash_str) = flow_id.strip_prefix("tx:") {
+                match hash_str.parse::<B256>() {
+                    Ok(hash) => bridge
+                        .sign_tx_with_provider_async(hash)
+                        .await
+                        .map(|_| SigningAsyncResult::Success(format!("tx signed: {hash}")))
+                        .unwrap_or_else(|e| SigningAsyncResult::Error(e.to_string())),
+                    Err(e) => SigningAsyncResult::Error(format!("invalid tx hash: {e}")),
+                }
+            } else {
+                SigningAsyncResult::Error("async signing supports tx/message flows only".to_owned())
+            };
+            let mut guard = lock_or_recover!(result_slot);
+            *guard = Some(outcome);
+            ctx.request_repaint();
+        });
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    fn trigger_signing_async_send_selected_tx(&mut self, ctx: egui::Context) {
+        let Some(flow_id) = self.signing_ui_state.selected_flow_id.clone() else {
+            self.signing_ui_state
+                .set_error("select a tx flow before async execute");
+            return;
+        };
+        let Some(hash_str) = flow_id.strip_prefix("tx:") else {
+            self.signing_ui_state
+                .set_error("async execute requires a tx flow selection");
+            return;
+        };
+        let hash: B256 = match hash_str.parse() {
+            Ok(v) => v,
+            Err(e) => {
+                self.signing_ui_state
+                    .set_error(format!("invalid tx hash: {e}"));
+                return;
+            }
+        };
+        let bridge = self.signing_bridge.clone();
+        let result_slot = Arc::clone(&self.signing_async_result);
+        wasm_bindgen_futures::spawn_local(async move {
+            let outcome = bridge
+                .send_tx_with_provider_async(hash)
+                .await
+                .map(|_| SigningAsyncResult::Success(format!("tx sent: {hash}")))
+                .unwrap_or_else(|e| SigningAsyncResult::Error(e.to_string()));
+            let mut guard = lock_or_recover!(result_slot);
+            *guard = Some(outcome);
+            ctx.request_repaint();
+        });
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    fn trigger_signing_async_wc_pair(&mut self, ctx: egui::Context) {
+        let uri = self.signing_ui_state.wc_state.pair_uri.trim().to_owned();
+        if uri.is_empty() {
+            self.signing_ui_state.set_error("pair URI is required");
+            return;
+        }
+        let bridge = self.signing_bridge.clone();
+        let result_slot = Arc::clone(&self.signing_async_result);
+        wasm_bindgen_futures::spawn_local(async move {
+            let outcome = bridge
+                .wc_pair_runtime_async(uri)
+                .await
+                .map(|_| SigningAsyncResult::Success("walletconnect pair requested".to_owned()))
+                .unwrap_or_else(|e| SigningAsyncResult::Error(e.to_string()));
+            let mut guard = lock_or_recover!(result_slot);
+            *guard = Some(outcome);
+            ctx.request_repaint();
+        });
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    fn trigger_signing_async_wc_sync(&mut self, ctx: egui::Context) {
+        let bridge = self.signing_bridge.clone();
+        let result_slot = Arc::clone(&self.signing_async_result);
+        wasm_bindgen_futures::spawn_local(async move {
+            let outcome = bridge
+                .wc_runtime_sync_async()
+                .await
+                .map(|_| SigningAsyncResult::Success("walletconnect runtime synced".to_owned()))
+                .unwrap_or_else(|e| SigningAsyncResult::Error(e.to_string()));
+            let mut guard = lock_or_recover!(result_slot);
+            *guard = Some(outcome);
+            ctx.request_repaint();
+        });
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    fn trigger_signing_async_wc_session_action(
+        &mut self,
+        ctx: egui::Context,
+        action: rusty_safe_signing_core::WcSessionAction,
+    ) {
+        let topic = self
+            .signing_ui_state
+            .wc_state
+            .active_topic
+            .trim()
+            .to_owned();
+        if topic.is_empty() {
+            self.signing_ui_state
+                .set_error("walletconnect active topic is required");
+            return;
+        }
+        let bridge = self.signing_bridge.clone();
+        let result_slot = Arc::clone(&self.signing_async_result);
+        wasm_bindgen_futures::spawn_local(async move {
+            let outcome = bridge
+                .wc_session_action_runtime_async(topic, action)
+                .await
+                .map(|_| {
+                    SigningAsyncResult::Success("walletconnect session action sent".to_owned())
+                })
+                .unwrap_or_else(|e| SigningAsyncResult::Error(e.to_string()));
+            let mut guard = lock_or_recover!(result_slot);
+            *guard = Some(outcome);
+            ctx.request_repaint();
+        });
     }
 }

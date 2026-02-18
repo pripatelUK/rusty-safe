@@ -8,8 +8,8 @@ use crate::domain::{
     WcSessionStatus, WcStatus,
 };
 use crate::ports::{
-    AbiPort, ClockPort, HashingPort, PortError, ProviderPort, QueuePort, SafeServicePort,
-    WalletConnectPort,
+    AbiPort, ClockPort, HashingPort, PortError, ProviderEvent, ProviderEventKind, ProviderPort,
+    QueuePort, SafeServicePort, WalletConnectPort,
 };
 use crate::state_machine::{
     message_transition, tx_transition, wc_transition, MessageAction, TxAction, WcAction,
@@ -18,6 +18,9 @@ use crate::state_machine::{
 #[derive(Debug, Clone)]
 pub enum SigningCommand {
     ConnectProvider,
+    RecoverProviderEvents {
+        expected_chain_id: u64,
+    },
     WcPair {
         uri: String,
     },
@@ -88,11 +91,25 @@ pub enum SigningCommand {
     },
 }
 
+#[derive(Debug, Clone, Default)]
+pub struct ProviderRecoverySummary {
+    pub drained_events: usize,
+    pub accounts_changed: bool,
+    pub chain_changed: bool,
+    pub latest_chain_id: Option<u64>,
+    pub latest_account_count: usize,
+    pub expected_chain_id: u64,
+    pub expected_chain_mismatch: bool,
+    pub tx_flows_marked: usize,
+    pub message_flows_marked: usize,
+}
+
 #[derive(Debug, Clone)]
 pub struct CommandResult {
     pub transition: Option<TransitionLogRecord>,
     pub merge: Option<MergeResult>,
     pub exported_bundle: Option<crate::domain::SigningBundle>,
+    pub provider_recovery: Option<ProviderRecoverySummary>,
 }
 
 impl CommandResult {
@@ -101,6 +118,7 @@ impl CommandResult {
             transition: None,
             merge: None,
             exported_bundle: None,
+            provider_recovery: None,
         }
     }
 }
@@ -166,6 +184,17 @@ where
                 let _ = self.provider.wallet_get_capabilities();
                 let _ = self.provider.drain_events()?;
                 Ok(CommandResult::empty())
+            }
+            SigningCommand::RecoverProviderEvents { expected_chain_id } => {
+                self.ensure_writer_lock()?;
+                let summary =
+                    self.recover_provider_events_internal(&envelope, expected_chain_id)?;
+                Ok(CommandResult {
+                    transition: None,
+                    merge: None,
+                    exported_bundle: None,
+                    provider_recovery: Some(summary),
+                })
             }
             SigningCommand::WcPair { uri } => {
                 self.ensure_writer_lock()?;
@@ -313,6 +342,7 @@ where
                     transition: None,
                     merge: Some(merge),
                     exported_bundle: None,
+                    provider_recovery: None,
                 })
             }
             SigningCommand::ExportBundle { flow_ids } => {
@@ -321,6 +351,7 @@ where
                     transition: None,
                     merge: None,
                     exported_bundle: Some(bundle),
+                    provider_recovery: None,
                 })
             }
             SigningCommand::ImportUrlPayload { envelope } => {
@@ -330,6 +361,7 @@ where
                     transition: None,
                     merge: Some(merge),
                     exported_bundle: None,
+                    provider_recovery: None,
                 })
             }
         }
@@ -428,6 +460,7 @@ where
             transition: Some(rec),
             merge: None,
             exported_bundle: None,
+            provider_recovery: None,
         })
     }
 
@@ -464,6 +497,7 @@ where
                 transition: Some(rec),
                 merge: None,
                 exported_bundle: None,
+                provider_recovery: None,
             });
         }
 
@@ -508,6 +542,7 @@ where
             transition: Some(rec),
             merge: None,
             exported_bundle: None,
+            provider_recovery: None,
         })
     }
 
@@ -550,6 +585,7 @@ where
             transition: Some(rec),
             merge: None,
             exported_bundle: None,
+            provider_recovery: None,
         })
     }
 
@@ -610,6 +646,7 @@ where
             transition: Some(rec),
             merge: None,
             exported_bundle: None,
+            provider_recovery: None,
         })
     }
 
@@ -668,6 +705,7 @@ where
             transition: Some(rec),
             merge: None,
             exported_bundle: None,
+            provider_recovery: None,
         })
     }
 
@@ -718,6 +756,7 @@ where
             transition: Some(rec),
             merge: None,
             exported_bundle: None,
+            provider_recovery: None,
         })
     }
 
@@ -754,6 +793,7 @@ where
                 transition: Some(rec),
                 merge: None,
                 exported_bundle: None,
+                provider_recovery: None,
             });
         }
 
@@ -813,6 +853,7 @@ where
             transition: Some(rec),
             merge: None,
             exported_bundle: None,
+            provider_recovery: None,
         })
     }
 
@@ -881,7 +922,111 @@ where
             transition: Some(rec),
             merge: None,
             exported_bundle: None,
+            provider_recovery: None,
         })
+    }
+
+    fn recover_provider_events_internal(
+        &self,
+        envelope: &CommandEnvelope,
+        expected_chain_id: u64,
+    ) -> Result<ProviderRecoverySummary, PortError> {
+        let events = self.provider.drain_events()?;
+        let mut summary = ProviderRecoverySummary {
+            drained_events: events.len(),
+            expected_chain_id,
+            ..ProviderRecoverySummary::default()
+        };
+
+        for event in &events {
+            match event.kind {
+                ProviderEventKind::AccountsChanged => {
+                    summary.accounts_changed = true;
+                    summary.latest_account_count = parse_accounts_changed_event(event);
+                }
+                ProviderEventKind::ChainChanged => {
+                    summary.chain_changed = true;
+                    summary.latest_chain_id = parse_chain_changed_event(event.value.as_str());
+                }
+            }
+        }
+
+        if summary.latest_chain_id.is_none() {
+            summary.latest_chain_id = self.provider.chain_id().ok();
+        }
+        if let Some(chain_id) = summary.latest_chain_id {
+            summary.expected_chain_mismatch = chain_id != expected_chain_id;
+        }
+
+        let now = TimestampMs(self.clock.now_ms()?);
+
+        for mut tx in self.queue.list_txs()? {
+            if matches!(
+                tx.status,
+                TxStatus::Executed | TxStatus::Failed | TxStatus::Cancelled
+            ) {
+                continue;
+            }
+            let reasons = provider_recovery_reasons(
+                summary.accounts_changed,
+                summary.latest_chain_id,
+                expected_chain_id,
+                tx.chain_id,
+            );
+            if reasons.is_empty() {
+                continue;
+            }
+            let state_before = format!("{:?}", tx.status);
+            tx.state_revision = tx.state_revision.saturating_add(1);
+            tx.updated_at_ms = now;
+            self.queue.save_tx(&tx)?;
+            let rec = self.transition_record(
+                envelope,
+                format!("tx:{}", tx.safe_tx_hash),
+                state_before.clone(),
+                state_before,
+                Some(tx.idempotency_key.clone()),
+                false,
+                Some(format!("provider_recovery:{}", reasons.join("+"))),
+            )?;
+            self.queue.append_transition_log(rec)?;
+            summary.tx_flows_marked = summary.tx_flows_marked.saturating_add(1);
+        }
+
+        for mut msg in self.queue.list_messages()? {
+            if matches!(
+                msg.status,
+                MessageStatus::Responded | MessageStatus::Failed | MessageStatus::Cancelled
+            ) {
+                continue;
+            }
+            let reasons = provider_recovery_reasons(
+                summary.accounts_changed,
+                summary.latest_chain_id,
+                expected_chain_id,
+                msg.chain_id,
+            );
+            if reasons.is_empty() {
+                continue;
+            }
+            let state_before = format!("{:?}", msg.status);
+            msg.state_revision = msg.state_revision.saturating_add(1);
+            msg.updated_at_ms = now;
+            self.queue.save_message(&msg)?;
+            let rec = self.transition_record(
+                envelope,
+                format!("msg:{}", msg.message_hash),
+                state_before.clone(),
+                state_before,
+                Some(msg.idempotency_key.clone()),
+                false,
+                Some(format!("provider_recovery:{}", reasons.join("+"))),
+            )?;
+            self.queue.append_transition_log(rec)?;
+            summary.message_flows_marked = summary.message_flows_marked.saturating_add(1);
+        }
+
+        Ok(summary)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -930,6 +1075,7 @@ fn threshold_from_payload(payload: &Value) -> usize {
 fn parity_id_for_command(command: &SigningCommand) -> &'static str {
     match command {
         SigningCommand::ConnectProvider
+        | SigningCommand::RecoverProviderEvents { .. }
         | SigningCommand::WcPair { .. }
         | SigningCommand::WcSessionAction { .. } => "PARITY-WC-01",
         SigningCommand::AcquireWriterLock { .. }
@@ -952,6 +1098,7 @@ fn parity_id_for_command(command: &SigningCommand) -> &'static str {
 fn command_kind(command: &SigningCommand) -> String {
     match command {
         SigningCommand::ConnectProvider => "connect_provider",
+        SigningCommand::RecoverProviderEvents { .. } => "recover_provider_events",
         SigningCommand::WcPair { .. } => "wc_pair",
         SigningCommand::AcquireWriterLock { .. } => "acquire_writer_lock",
         SigningCommand::CreateSafeTx { .. } => "create_safe_tx",
@@ -969,4 +1116,39 @@ fn command_kind(command: &SigningCommand) -> String {
         SigningCommand::ImportUrlPayload { .. } => "import_url_payload",
     }
     .to_owned()
+}
+
+fn parse_accounts_changed_event(event: &ProviderEvent) -> usize {
+    serde_json::from_str::<Vec<String>>(event.value.as_str())
+        .map(|accounts| accounts.len())
+        .unwrap_or(0)
+}
+
+fn parse_chain_changed_event(raw: &str) -> Option<u64> {
+    if raw.starts_with("0x") || raw.starts_with("0X") {
+        u64::from_str_radix(raw.trim_start_matches("0x").trim_start_matches("0X"), 16).ok()
+    } else {
+        raw.parse::<u64>().ok()
+    }
+}
+
+fn provider_recovery_reasons(
+    accounts_changed: bool,
+    latest_chain_id: Option<u64>,
+    expected_chain_id: u64,
+    flow_chain_id: u64,
+) -> Vec<&'static str> {
+    let mut reasons = Vec::new();
+    if accounts_changed {
+        reasons.push("ACCOUNT_SWITCH");
+    }
+    if let Some(chain) = latest_chain_id {
+        if flow_chain_id != chain {
+            reasons.push("CHAIN_CHANGED");
+        }
+        if chain != expected_chain_id {
+            reasons.push("EXPECTED_CHAIN_MISMATCH");
+        }
+    }
+    reasons
 }

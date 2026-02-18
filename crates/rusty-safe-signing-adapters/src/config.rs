@@ -1,3 +1,9 @@
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RuntimeProfile {
+    Development,
+    Production,
+}
+
 #[derive(Debug, Clone)]
 pub struct SigningAdapterConfig {
     pub allow_eth_sign: bool,
@@ -18,6 +24,7 @@ pub struct SigningAdapterConfig {
     pub eip1193_proxy_url: Option<String>,
     pub walletconnect_bridge_url: Option<String>,
     pub export_passphrase_env: String,
+    pub runtime_profile: RuntimeProfile,
 }
 
 impl Default for SigningAdapterConfig {
@@ -41,6 +48,11 @@ impl Default for SigningAdapterConfig {
             eip1193_proxy_url: None,
             walletconnect_bridge_url: None,
             export_passphrase_env: "RUSTY_SAFE_EXPORT_PASSPHRASE".to_owned(),
+            runtime_profile: if cfg!(debug_assertions) {
+                RuntimeProfile::Development
+            } else {
+                RuntimeProfile::Production
+            },
         }
     }
 }
@@ -81,6 +93,16 @@ impl SigningAdapterConfig {
                 cfg.export_passphrase_env = v;
             }
         }
+        if let Ok(v) = std::env::var("RUSTY_SAFE_RUNTIME_PROFILE") {
+            cfg.runtime_profile = match v.trim().to_ascii_lowercase().as_str() {
+                "prod" | "production" => RuntimeProfile::Production,
+                _ => RuntimeProfile::Development,
+            };
+        }
         cfg
+    }
+
+    pub fn strict_runtime_required(&self) -> bool {
+        matches!(self.runtime_profile, RuntimeProfile::Production)
     }
 }

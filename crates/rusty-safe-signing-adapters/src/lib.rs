@@ -12,7 +12,7 @@ pub mod wc;
 
 pub use abi::AbiAdapter;
 pub use clock::SystemClockAdapter;
-pub use config::SigningAdapterConfig;
+pub use config::{RuntimeProfile, SigningAdapterConfig};
 pub use eip1193::Eip1193Adapter;
 pub use execute::ExecuteAdapter;
 pub use hashing::HashingAdapter;

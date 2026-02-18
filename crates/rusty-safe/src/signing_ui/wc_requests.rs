@@ -25,6 +25,10 @@ pub fn render_wc_requests(ui: &mut Ui, state: &mut SigningUiState, bridge: &Sign
             }
         }
     });
+    ui.horizontal(|ui| {
+        ui.label("Active Topic:");
+        ui.text_edit_singleline(&mut state.wc_state.active_topic);
+    });
 
     if ui.button("Seed Demo Session + Request").clicked() {
         match seed_demo(state, bridge) {
@@ -55,6 +59,7 @@ pub fn render_wc_requests(ui: &mut Ui, state: &mut SigningUiState, bridge: &Sign
                     }
                     ui.horizontal(|ui| {
                         if ui.small_button("Approve").clicked() {
+                            state.wc_state.active_topic = session.topic.clone();
                             match bridge
                                 .wc_session_action(session.topic.clone(), WcSessionAction::Approve)
                             {
@@ -63,6 +68,7 @@ pub fn render_wc_requests(ui: &mut Ui, state: &mut SigningUiState, bridge: &Sign
                             }
                         }
                         if ui.small_button("Reject").clicked() {
+                            state.wc_state.active_topic = session.topic.clone();
                             match bridge
                                 .wc_session_action(session.topic.clone(), WcSessionAction::Reject)
                             {
@@ -71,6 +77,7 @@ pub fn render_wc_requests(ui: &mut Ui, state: &mut SigningUiState, bridge: &Sign
                             }
                         }
                         if ui.small_button("Disconnect").clicked() {
+                            state.wc_state.active_topic = session.topic.clone();
                             match bridge.wc_session_action(
                                 session.topic.clone(),
                                 WcSessionAction::Disconnect,
@@ -110,6 +117,7 @@ pub fn render_wc_requests(ui: &mut Ui, state: &mut SigningUiState, bridge: &Sign
                         ui.label(format!("Linked Message: {hash}"));
                     }
                     if ui.small_button("Select").clicked() {
+                        state.wc_state.active_topic = req.topic.clone();
                         state.wc_state.request_id = req.request_id.clone();
                     }
                 });

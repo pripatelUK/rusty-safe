@@ -6,7 +6,7 @@ use serde_json::json;
 use tiny_http::{Method, Response, Server, StatusCode};
 
 use rusty_safe_signing_adapters::{
-    Eip1193Adapter, SafeServiceAdapter, SigningAdapterConfig, WalletConnectAdapter,
+    Eip1193Adapter, RuntimeProfile, SafeServiceAdapter, SigningAdapterConfig, WalletConnectAdapter,
 };
 use rusty_safe_signing_core::{
     PendingSafeTx, PortError, ProviderEventKind, ProviderPort, SafeServicePort, WalletConnectPort,
@@ -115,6 +115,52 @@ fn walletconnect_http_runtime_pair_and_session_action() {
         .iter()
         .any(|p| p.contains("/session/wc-topic-fixture/action")));
     assert!(calls.iter().any(|p| p.contains("/sync")));
+}
+
+#[test]
+fn production_profile_requires_eip1193_runtime() {
+    let cfg = SigningAdapterConfig {
+        runtime_profile: RuntimeProfile::Production,
+        eip1193_proxy_url: None,
+        ..SigningAdapterConfig::default()
+    };
+    let adapter = Eip1193Adapter::with_config(cfg);
+    let err = adapter
+        .request_accounts()
+        .expect_err("runtime should be required");
+    assert!(matches!(err, PortError::Policy(_)));
+}
+
+#[test]
+fn production_profile_requires_safe_service_runtime() {
+    let cfg = SigningAdapterConfig {
+        runtime_profile: RuntimeProfile::Production,
+        safe_service_http_enabled: false,
+        ..SigningAdapterConfig::default()
+    };
+    let adapter = SafeServiceAdapter::with_config(cfg);
+    let err = adapter
+        .fetch_status(
+            "0x0101010101010101010101010101010101010101010101010101010101010101"
+                .parse()
+                .expect("hash"),
+        )
+        .expect_err("runtime should be required");
+    assert!(matches!(err, PortError::Policy(_)));
+}
+
+#[test]
+fn production_profile_requires_walletconnect_runtime() {
+    let cfg = SigningAdapterConfig {
+        runtime_profile: RuntimeProfile::Production,
+        walletconnect_bridge_url: None,
+        ..SigningAdapterConfig::default()
+    };
+    let adapter = WalletConnectAdapter::with_config(cfg);
+    let err = adapter
+        .pair("wc:fixture@2?relay-protocol=irn&symKey=abc")
+        .expect_err("runtime should be required");
+    assert!(matches!(err, PortError::Policy(_)));
 }
 
 fn sample_tx() -> PendingSafeTx {

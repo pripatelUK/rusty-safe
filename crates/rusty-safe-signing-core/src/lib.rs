@@ -11,7 +11,7 @@ pub use domain::{
     UrlImportEnvelope, UrlImportKey, WcMethod, WcSessionAction, WcSessionContext, WcSessionStatus,
     WcStatus,
 };
-pub use orchestrator::{CommandResult, Orchestrator, SigningCommand};
+pub use orchestrator::{CommandResult, Orchestrator, ProviderRecoverySummary, SigningCommand};
 pub use ports::{
     AbiPort, ClockPort, HashingPort, PortError, ProviderEvent, ProviderEventKind, ProviderPort,
     QueuePort, SafeServicePort, WalletConnectPort,

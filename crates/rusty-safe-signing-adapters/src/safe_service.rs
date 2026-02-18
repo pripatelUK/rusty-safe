@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use alloy::primitives::{keccak256, Address, Bytes, B256};
+#[cfg(not(target_arch = "wasm32"))]
 use serde::Serialize;
 use serde_json::{json, Value};
 
@@ -16,6 +17,7 @@ pub struct SafeServiceAdapter {
 
 #[derive(Debug, Clone)]
 enum SafeServiceMode {
+    Disabled(String),
     InMemory(Arc<Mutex<SafeServiceState>>),
     #[cfg(not(target_arch = "wasm32"))]
     Http(HttpSafeServiceRuntime),
@@ -44,6 +46,7 @@ struct HttpSafeServiceRuntime {
 }
 
 #[derive(Debug, Serialize)]
+#[cfg(not(target_arch = "wasm32"))]
 struct SafeTxServiceRequest {
     to: String,
     value: String,
@@ -100,16 +103,50 @@ impl SafeServiceAdapter {
                         }),
                     };
                 }
+                if config.strict_runtime_required() {
+                    return Self {
+                        mode: SafeServiceMode::Disabled(
+                            "failed to initialize Safe service HTTP runtime in production profile"
+                                .to_owned(),
+                        ),
+                    };
+                }
+            } else if config.strict_runtime_required() {
+                return Self {
+                    mode: SafeServiceMode::Disabled(
+                        "Safe service HTTP runtime is required in production profile".to_owned(),
+                    ),
+                };
             }
         }
+
+        #[cfg(target_arch = "wasm32")]
+        if config.strict_runtime_required() {
+            return Self {
+                mode: SafeServiceMode::Disabled(
+                    "Safe service runtime is unavailable in wasm without explicit runtime bridge"
+                        .to_owned(),
+                ),
+            };
+        }
+
         Self::in_memory()
+    }
+
+    fn check_mode(&self) -> Result<(), PortError> {
+        if let SafeServiceMode::Disabled(reason) = &self.mode {
+            return Err(PortError::Policy(reason.clone()));
+        }
+        Ok(())
     }
 
     fn with_state<T>(
         &self,
         f: impl FnOnce(&mut SafeServiceState) -> Result<T, PortError>,
     ) -> Result<T, PortError> {
+        self.check_mode()?;
         let mode = match &self.mode {
+            SafeServiceMode::Disabled(reason) => return Err(PortError::Policy(reason.clone())),
             SafeServiceMode::InMemory(state) => state,
             #[cfg(not(target_arch = "wasm32"))]
             SafeServiceMode::Http(_) => {
@@ -248,6 +285,8 @@ impl SafeServiceAdapter {
 
 impl SafeServicePort for SafeServiceAdapter {
     fn propose_tx(&self, tx: &PendingSafeTx) -> Result<(), PortError> {
+        self.check_mode()?;
+
         #[cfg(not(target_arch = "wasm32"))]
         if let SafeServiceMode::Http(runtime) = &self.mode {
             let request = Self::to_service_request(tx)?;
@@ -281,6 +320,7 @@ impl SafeServicePort for SafeServiceAdapter {
     }
 
     fn confirm_tx(&self, safe_tx_hash: B256, signature: &Bytes) -> Result<(), PortError> {
+        self.check_mode()?;
         if signature.len() < 65 {
             return Err(PortError::Validation("INVALID_SIGNATURE_FORMAT".to_owned()));
         }
@@ -316,6 +356,7 @@ impl SafeServicePort for SafeServiceAdapter {
     }
 
     fn execute_tx(&self, tx: &PendingSafeTx) -> Result<B256, PortError> {
+        self.check_mode()?;
         #[cfg(not(target_arch = "wasm32"))]
         if let SafeServiceMode::Http(runtime) = &self.mode {
             let path = format!("/api/v1/multisig-transactions/{}/", tx.safe_tx_hash);
@@ -356,6 +397,7 @@ impl SafeServicePort for SafeServiceAdapter {
     }
 
     fn fetch_status(&self, safe_tx_hash: B256) -> Result<Value, PortError> {
+        self.check_mode()?;
         #[cfg(not(target_arch = "wasm32"))]
         if let SafeServiceMode::Http(runtime) = &self.mode {
             let path = format!("/api/v1/multisig-transactions/{safe_tx_hash}/");
