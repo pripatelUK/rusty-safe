@@ -30,3 +30,9 @@ jobs:
 
       - name: Test suite
         run: cargo test --workspace
+
+      - name: Performance harness
+        run: ./scripts/run_prd05a_performance.sh
+
+      - name: Differential parity harness
+        run: ./scripts/run_prd05a_differential.sh

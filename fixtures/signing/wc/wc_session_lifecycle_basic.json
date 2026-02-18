@@ -1,0 +1,10 @@
+{
+  "name": "wc_session_lifecycle_basic",
+  "topic": "wc-topic-fixture",
+  "pair_uri": "wc:fixture@2?relay-protocol=irn&symKey=fixturefixturefixturefixturefixturefixturefixturefixture",
+  "expect_status_flow": [
+    "Proposed",
+    "Approved",
+    "Disconnected"
+  ]
+}

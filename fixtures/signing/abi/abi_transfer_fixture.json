@@ -1,0 +1,15 @@
+{
+  "name": "abi_transfer_fixture",
+  "chain_id": 1,
+  "safe_address": "0x000000000000000000000000000000000000BEEF",
+  "nonce": 88,
+  "to": "0x000000000000000000000000000000000000CAFE",
+  "abi_json": "[{\"type\":\"function\",\"name\":\"transfer\",\"stateMutability\":\"nonpayable\",\"inputs\":[{\"name\":\"to\",\"type\":\"address\"},{\"name\":\"amount\",\"type\":\"uint256\"}],\"outputs\":[{\"name\":\"\",\"type\":\"bool\"}]}]",
+  "method_signature": "transfer(address,uint256)",
+  "args": [
+    "0x000000000000000000000000000000000000dEaD",
+    "100"
+  ],
+  "value": "0",
+  "expect_selector": "a9059cbb"
+}

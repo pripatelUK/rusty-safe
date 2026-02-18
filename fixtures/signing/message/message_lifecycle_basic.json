@@ -1,0 +1,19 @@
+{
+  "name": "message_lifecycle_basic",
+  "chain_id": 1,
+  "safe_address": "0x000000000000000000000000000000000000BEEF",
+  "method": "personal_sign",
+  "payload": {
+    "message": "hello from localsafe parity fixture",
+    "threshold": 1,
+    "safeVersion": "1.3.0"
+  },
+  "manual_signature": {
+    "signer": "0x1000000000000000000000000000000000000002",
+    "signature": "0x333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333331b"
+  },
+  "expect": {
+    "final_status": "ThresholdMet",
+    "signature_count": 1
+  }
+}
