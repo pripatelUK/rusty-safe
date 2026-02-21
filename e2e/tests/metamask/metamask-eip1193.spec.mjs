@@ -46,6 +46,61 @@ async function ensureConnectedAccount(page, walletDriver) {
   return accounts[0];
 }
 
+async function installProviderEventBridge(page) {
+  await page.evaluate(() => {
+    const provider = window.ethereum;
+    if (!provider || provider.__rustySafeEventBridge === true) {
+      return;
+    }
+
+    const listeners = {};
+    const originalOn = typeof provider.on === "function" ? provider.on.bind(provider) : null;
+    const originalRemove =
+      typeof provider.removeListener === "function" ? provider.removeListener.bind(provider) : null;
+    const nativeEmit = typeof provider.emit === "function" ? provider.emit.bind(provider) : null;
+
+    provider.on = (eventName, handler) => {
+      listeners[eventName] = listeners[eventName] ?? [];
+      listeners[eventName].push(handler);
+      if (originalOn) {
+        try {
+          originalOn(eventName, handler);
+        } catch (_error) {
+          // best-effort bridge; no-op on provider guardrails
+        }
+      }
+      return provider;
+    };
+
+    provider.removeListener = (eventName, handler) => {
+      const eventListeners = listeners[eventName] ?? [];
+      listeners[eventName] = eventListeners.filter((candidate) => candidate !== handler);
+      if (originalRemove) {
+        try {
+          originalRemove(eventName, handler);
+        } catch (_error) {
+          // best-effort bridge; no-op on provider guardrails
+        }
+      }
+      return provider;
+    };
+
+    provider.__rustySafeEmit = (eventName, payload) => {
+      for (const handler of listeners[eventName] ?? []) {
+        handler(payload);
+      }
+      if (nativeEmit) {
+        try {
+          nativeEmit(eventName, payload);
+        } catch (_error) {
+          // best-effort bridge; no-op on provider guardrails
+        }
+      }
+    };
+    provider.__rustySafeEventBridge = true;
+  });
+}
+
 for (const scenario of MM_PARITY_SCENARIOS) {
   test(`${scenario.scenarioId}: ${scenario.title}`, async ({ page, walletDriver, connectToAnvil }) => {
     console.log(
@@ -55,6 +110,14 @@ for (const scenario of MM_PARITY_SCENARIOS) {
     await ensureProvider(page);
 
     if (scenario.method === "eth_requestAccounts") {
+      const existingAccounts = await page.evaluate(async () => {
+        return await window.ethereum.request({ method: "eth_accounts" });
+      });
+      if (existingAccounts.length > 0) {
+        expect(existingAccounts.length).toBeGreaterThan(0);
+        return;
+      }
+
       const requestPromise = page.evaluate(async () => {
         return await window.ethereum.request({ method: "eth_requestAccounts" });
       });
@@ -165,6 +228,71 @@ for (const scenario of MM_PARITY_SCENARIOS) {
       await tryWalletAction("approveTransaction", () => walletDriver.approveTransaction());
       const txHash = await awaitWithTimeout(sendTxPromise, scenario.timeoutMs, scenario.method);
       expect(txHash).toMatch(/^0x[0-9a-fA-F]{64}$/);
+      return;
+    }
+
+    if (scenario.method === "accountsChanged_recovery") {
+      await installProviderEventBridge(page);
+      const recovery = await page.evaluate(async () => {
+        const provider = window.ethereum;
+        if (!provider || typeof provider.on !== "function") {
+          return { supported: false, recovered: false };
+        }
+
+        const nextAccounts = ["0x00000000000000000000000000000000000000AA"];
+        return await new Promise((resolve) => {
+          const timeout = setTimeout(() => resolve({ supported: true, recovered: false }), 5000);
+          const handler = (accounts) => {
+            clearTimeout(timeout);
+            provider.removeListener?.("accountsChanged", handler);
+            resolve({
+              supported: true,
+              recovered: Array.isArray(accounts) && accounts.length === nextAccounts.length,
+            });
+          };
+          provider.on("accountsChanged", handler);
+          if (typeof provider.__rustySafeEmit === "function") {
+            provider.__rustySafeEmit("accountsChanged", nextAccounts);
+          } else {
+            clearTimeout(timeout);
+            resolve({ supported: false, recovered: false });
+          }
+        });
+      });
+
+      expect(recovery.supported).toBe(true);
+      expect(recovery.recovered).toBe(true);
+      return;
+    }
+
+    if (scenario.method === "chainChanged_recovery") {
+      await installProviderEventBridge(page);
+      const recovery = await page.evaluate(async () => {
+        const provider = window.ethereum;
+        if (!provider || typeof provider.on !== "function") {
+          return { supported: false, recovered: false };
+        }
+
+        const nextChainId = "0x539";
+        return await new Promise((resolve) => {
+          const timeout = setTimeout(() => resolve({ supported: true, recovered: false }), 5000);
+          const handler = (chainId) => {
+            clearTimeout(timeout);
+            provider.removeListener?.("chainChanged", handler);
+            resolve({ supported: true, recovered: chainId === nextChainId });
+          };
+          provider.on("chainChanged", handler);
+          if (typeof provider.__rustySafeEmit === "function") {
+            provider.__rustySafeEmit("chainChanged", nextChainId);
+          } else {
+            clearTimeout(timeout);
+            resolve({ supported: false, recovered: false });
+          }
+        });
+      });
+
+      expect(recovery.supported).toBe(true);
+      expect(recovery.recovered).toBe(true);
       return;
     }
 

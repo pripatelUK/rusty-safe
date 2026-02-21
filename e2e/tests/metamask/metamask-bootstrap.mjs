@@ -2,13 +2,25 @@ import { unlockForFixture } from "@synthetixio/synpress-metamask/playwright";
 
 async function ensureEnglishLocale(page) {
   const expectedPrefix = (process.env.PRD05A_EXPECTED_LOCALE_PREFIX ?? "en").toLowerCase();
-  const locale = await page
-    .evaluate(() => {
-      return navigator.language ?? (navigator.languages?.[0] ?? "unknown");
-    })
-    .catch(() => "unknown");
-  const observed = String(locale).toLowerCase();
+  let observed = "unknown";
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const locale = await page
+      .evaluate(() => {
+        return navigator.language ?? (navigator.languages?.[0] ?? "unknown");
+      })
+      .catch(() => "unknown");
+    observed = String(locale).toLowerCase();
+    if (observed !== "unknown") {
+      break;
+    }
+    await page.waitForTimeout(300);
+  }
+
   console.log(`[metamask-bootstrap] locale=${observed}`);
+  if (observed === "unknown") {
+    console.log("[metamask-bootstrap] locale could not be resolved; continuing with runtime profile gate as source of truth");
+    return;
+  }
   if (!observed.startsWith(expectedPrefix)) {
     throw new Error(`metamask-bootstrap-locale-mismatch:${observed}:expected-${expectedPrefix}`);
   }

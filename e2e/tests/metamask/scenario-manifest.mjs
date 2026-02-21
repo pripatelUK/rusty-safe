@@ -6,6 +6,7 @@ export const MM_PARITY_SCENARIOS = [
     title: "connect via eth_requestAccounts",
     timeoutMs: 45000,
     requiresAnvil: false,
+    releaseGateDriver: "synpress",
   },
   {
     scenarioId: "MM-PARITY-002",
@@ -14,6 +15,7 @@ export const MM_PARITY_SCENARIOS = [
     title: "message signing via personal_sign",
     timeoutMs: 45000,
     requiresAnvil: false,
+    releaseGateDriver: "synpress",
   },
   {
     scenarioId: "MM-PARITY-003",
@@ -22,6 +24,7 @@ export const MM_PARITY_SCENARIOS = [
     title: "typed data signing via eth_signTypedData_v4",
     timeoutMs: 45000,
     requiresAnvil: false,
+    releaseGateDriver: "synpress",
   },
   {
     scenarioId: "MM-PARITY-004",
@@ -30,6 +33,24 @@ export const MM_PARITY_SCENARIOS = [
     title: "transaction send via eth_sendTransaction",
     timeoutMs: 60000,
     requiresAnvil: true,
+    releaseGateDriver: "synpress",
+  },
+  {
+    scenarioId: "MM-PARITY-005",
+    parityIds: ["PARITY-TX-01"],
+    method: "accountsChanged_recovery",
+    title: "accountsChanged deterministic recovery",
+    timeoutMs: 30000,
+    requiresAnvil: false,
+    releaseGateDriver: "synpress",
+  },
+  {
+    scenarioId: "MM-PARITY-006",
+    parityIds: ["PARITY-TX-01"],
+    method: "chainChanged_recovery",
+    title: "chainChanged deterministic recovery",
+    timeoutMs: 30000,
+    requiresAnvil: false,
+    releaseGateDriver: "synpress",
   },
 ];
-
