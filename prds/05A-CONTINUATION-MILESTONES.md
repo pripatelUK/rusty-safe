@@ -94,19 +94,21 @@ Delivered:
 ### C5: Compatibility Matrix (In Progress)
 
 Objective:
-1. Prove runtime wallet/hardware passthrough viability for target browsers/wallets.
+1. Prove runtime hot-wallet viability for target browsers/wallets (MetaMask + Rabby).
 2. Execute against the complete E2E program in `prds/05A-E2E-WALLET-RUNTIME-PLAN.md` (MetaMask-first, parity-scoped, milestone-gated).
+3. Prioritize hot-wallet acceptance first (MetaMask + Rabby); hardware passthrough acceptance is deferred and non-blocking for current C5 release.
 
 Deliverables:
 1. Chromium + MetaMask cache preflight run (post-unlock state validation).
 2. Chromium + MetaMask Playwright/Synpress E2E run (EOA path).
 3. Chromium + Rabby matrix run.
-4. Ledger/Trezor passthrough smoke logs for wallet-backed accounts.
+4. Deferred hardware acceptance backlog entry with owner/date (post-`E5`).
 
 Gate:
 1. MetaMask preflight gate must pass (`e2e/tests/metamask/metamask-cache-preflight.mjs`) with non-onboarding state after bootstrap recovery.
 2. MetaMask E2E gate must pass for `eth_requestAccounts`, `personal_sign`, `eth_signTypedData_v4`, and `eth_sendTransaction`.
 3. Compatibility report committed with pass/fail and known limitations.
+4. Hardware passthrough acceptance is explicitly deferred and non-blocking for current C5 hot-wallet gate.
 
 Delivered:
 1. Matrix automation/report script `scripts/run_prd05a_compat_matrix.sh`.
@@ -124,7 +126,7 @@ Delivered:
 6. Current blockers:
    - MetaMask runtime E2E still fails in notification-popup routing (`connectToDapp`/network approval flows) under current extension/runtime behavior.
    - Rabby still relies on external profile evidence.
-   - Ledger/Trezor passthrough still requires hardware smoke logs.
+   - Deferred hardware passthrough acceptance backlog still needs owner/date assignment.
 
 ### C6: Performance Harness (Completed)
 

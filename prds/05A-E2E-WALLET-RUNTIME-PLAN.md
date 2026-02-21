@@ -32,7 +32,7 @@ Key innovations:
 In scope:
 1. Chromium E2E for MetaMask parity flows (`eth_requestAccounts`, `personal_sign`, `eth_signTypedData_v4`, `eth_sendTransaction`).
 2. Event recovery coverage for `accountsChanged` and `chainChanged`.
-3. Compatibility evidence for Rabby and hardware passthrough (Ledger/Trezor via wallet software path).
+3. Compatibility evidence for hot-wallet flows (MetaMask + Rabby) on Chromium.
 4. CI-hard gating for `C5` release-readiness.
 
 Out of scope:
@@ -45,6 +45,10 @@ Anti-feature-creep policy:
 2. Any non-parity addition requires an explicit PRD delta marked `parity-critical`.
 3. Non-parity work is deferred to `prds/05B-PRD-HARDENING-WAVE.md` or later PRDs.
 
+Deferred track policy:
+1. Hardware passthrough acceptance (Ledger/Trezor) is explicitly deferred until hot-wallet objectives (`E0-E5`) are complete.
+2. Hardware evidence is non-blocking for the current C5 hot-wallet release gate.
+
 ## 3. Target End State (Definition of Done for C5)
 
 `C5` is complete only when all conditions are true:
@@ -54,9 +58,10 @@ Anti-feature-creep policy:
 4. Reliability SLO is met:
    - Local: >= 90% pass over 10 consecutive runs.
    - CI: >= 95% pass over 20 scheduled runs.
-5. Compatibility evidence exists for Rabby, Ledger passthrough, and Trezor passthrough.
+5. Compatibility evidence exists for MetaMask + Rabby hot-wallet flows.
 6. All failures are classified (`ENV_BLOCKER|HARNESS_FAIL|APP_FAIL|WALLET_FAIL`) with reproducible artifacts.
 7. `prds/05A-RELEASE-GATE-CHECKLIST.md` C5-related checks are fully green.
+8. Deferred hardware track (`H1`) is documented with ownership and does not block C5 hot-wallet release.
 
 ## 4. Core Architecture
 
@@ -138,16 +143,18 @@ Scenario manifest contract:
 4. `steps`
 5. `assertions`
 6. `timeouts_ms`
+7. `release_gate_driver` (`synpress` for C5 release jobs)
 
 Evidence record contract:
-1. `status` (`PASS|FAIL|BLOCKED`)
-2. `taxonomy` (`ENV_BLOCKER|HARNESS_FAIL|APP_FAIL|WALLET_FAIL`)
-3. `driver`
-4. `wallet_version`
-5. `browser_version`
-6. `run_id`
-7. `artifacts` (`log`, `trace`, `screenshots`, `report`)
-8. `reproducer_cmd`
+1. `schema_version` (`c5e2e-v1`)
+2. `status` (`PASS|FAIL|BLOCKED`)
+3. `taxonomy` (`ENV_BLOCKER|HARNESS_FAIL|APP_FAIL|WALLET_FAIL`)
+4. `driver`
+5. `wallet_version`
+6. `browser_version`
+7. `run_id`
+8. `artifacts` (`log`, `trace`, `screenshots`, `report`)
+9. `reproducer_cmd`
 
 ## 7. Test Inventory (Parity-Aligned)
 
@@ -168,8 +175,10 @@ Harness determinism scenarios:
 Compatibility evidence scenarios:
 1. `MATRIX-001`: Chromium + MetaMask parity smoke.
 2. `MATRIX-002`: Chromium + Rabby parity smoke.
-3. `MATRIX-003`: Ledger passthrough smoke via wallet software route.
-4. `MATRIX-004`: Trezor passthrough smoke via wallet software route.
+
+Deferred hardware scenarios (post `E0-E5`):
+1. `MATRIX-HW-001`: Ledger passthrough smoke via wallet software route.
+2. `MATRIX-HW-002`: Trezor passthrough smoke via wallet software route.
 
 ## 8. Environment and Configuration Contract
 
@@ -200,9 +209,11 @@ Artifact locations:
 1. `local/reports/prd05a/C5-metamask-e2e-report.md`
 2. `local/reports/prd05a/C5-metamask-e2e.log`
 3. `local/reports/prd05a/C5-compatibility-matrix-report.md`
-4. `local/reports/prd05a/C5-hardware-passthrough-smoke.md`
-5. `local/reports/prd05a/C5-dappwright-investigation.md`
-6. `local/reports/prd05a/C5-metamask-soak-report.md` (new)
+4. `local/reports/prd05a/C5-dappwright-investigation.md`
+5. `local/reports/prd05a/C5-metamask-soak-report.md` (new)
+
+Deferred hardware artifact:
+1. `local/reports/prd05a/C5-hardware-passthrough-smoke.md` (post-`E5`, non-blocking for current C5 hot-wallet release)
 
 Reporting requirements:
 1. Every gate run writes both markdown summary and machine-readable JSON.
@@ -217,7 +228,7 @@ Reporting requirements:
 | E1 | Driver contract and adapter boundary | M | `feat/prd05a-e2e-e1-driver-interface` |
 | E2 | dappwright integration and driver arbitration | M | `feat/prd05a-e2e-e2-dappwright-adapter` |
 | E3 | Full parity scenario hardening | L | `feat/prd05a-e2e-e3-parity-scenarios` |
-| E4 | Compatibility matrix and hardware evidence | M | `feat/prd05a-e2e-e4-matrix-hardware` |
+| E4 | Hot-wallet compatibility matrix evidence (MetaMask + Rabby) | M | `feat/prd05a-e2e-e4-hot-wallet-matrix` |
 | E5 | CI hard gates and release readiness | M | `feat/prd05a-e2e-e5-ci-release-gate` |
 
 Dependency order:
@@ -251,6 +262,7 @@ E1 Gate:
 2. `E2-T2` add arbitration mode (`synpress|dappwright|mixed`) in runner.
 3. `E2-T3` add comparative reliability report for bootstrap/connect/network.
 4. `E2-T4` define release-driver promotion criteria and fallback policy.
+5. `E2-T5` enforce release-gate driver policy: `synpress` is mandatory until `dappwright` proves SLO in soak reports.
 
 E2 Gate:
 1. dappwright path is green for bootstrap/connect/network.
@@ -263,24 +275,26 @@ E2 Gate:
 4. `E3-T4` add flake triage labels from failure taxonomy.
 
 E3 Gate:
-1. `MM-PARITY-001..006` all green in candidate driver mode.
+1. `MM-PARITY-001..006` all green in release-gate driver mode (`synpress`).
 2. Negative-path tests produce expected taxonomy labels.
 
 ### E4 Tasks
 1. `E4-T1` run Rabby parity matrix and capture evidence.
-2. `E4-T2` run Ledger passthrough smoke and capture reproducible logs.
-3. `E4-T3` run Trezor passthrough smoke and capture reproducible logs.
-4. `E4-T4` publish matrix summary with known limitations.
+2. `E4-T2` publish MetaMask + Rabby matrix summary with known limitations and reproducer commands.
+3. `E4-T3` document deferred hardware acceptance track (`H1`) with owner and target date.
 
 E4 Gate:
-1. Matrix report includes PASS/FAIL with reproduction details for each row.
-2. Hardware evidence files exist and are reviewable.
+1. Hot-wallet matrix report includes PASS/FAIL with reproduction details for each row.
+2. Deferred hardware track is documented and marked non-blocking for current release.
 
 ### E5 Tasks
-1. `E5-T1` add soak script and scheduled CI runs for SLO measurement.
+1. `E5-T1` add soak script and CI cadence for SLO measurement:
+   - per-PR 5-run smoke;
+   - daily scheduled 20-run soak.
 2. `E5-T2` enforce hard gate on reliability SLO thresholds.
 3. `E5-T3` aggregate release evidence and checklist links.
 4. `E5-T4` close phase with branch/tag discipline artifacts.
+5. `E5-T5` enforce phase branch naming and `E*-T*` commit traceability in CI.
 
 E5 Gate:
 1. Local and CI SLO thresholds are met.
@@ -296,6 +310,10 @@ Reliability criteria:
 1. Local >= 90% pass over 10 consecutive runs.
 2. CI >= 95% pass over 20 scheduled runs.
 3. Zero unclassified failures in release candidate window.
+
+Scope criteria:
+1. C5 release is hot-wallet only (MetaMask + Rabby).
+2. Hardware passthrough acceptance is deferred and non-blocking for this release.
 
 Performance criteria:
 1. Per-scenario p95 runtime <= 120s for MetaMask parity scenarios.
@@ -315,9 +333,9 @@ Taxonomy:
 
 Recovery actions:
 1. `ENV_BLOCKER`: fail fast, mark run blocked, include remediation hint.
-2. `HARNESS_FAIL`: retry once with diagnostics mode, then hard fail.
+2. `HARNESS_FAIL`: exactly one retry in release jobs with diagnostics mode, then hard fail.
 3. `APP_FAIL`: no automatic retry in release gate path.
-4. `WALLET_FAIL`: capture traces, screenshots, wallet diagnostics; open upstream/internal issue link.
+4. `WALLET_FAIL`: no automatic retry in release gate path; capture traces, screenshots, wallet diagnostics; open upstream/internal issue link.
 
 ## 14. CI/API Surface
 
@@ -330,7 +348,11 @@ Required commands:
 Command output contract:
 1. Exit code `0` only on gate success.
 2. Non-zero exits must still emit markdown and JSON artifacts.
-3. Output includes `driver_mode`, `taxonomy_summary`, and artifact index.
+3. Output includes `schema_version=c5e2e-v1`, `driver_mode`, `taxonomy_summary`, and artifact index.
+
+CI cadence contract:
+1. Pull request path runs 5-run smoke soak.
+2. Daily scheduled path runs 20-run soak and updates SLO evidence.
 
 ## 15. Risks, Trade-offs, and Mitigations
 
@@ -352,10 +374,12 @@ Trade-off:
 Branch policy:
 1. One branch per phase (`E0-E5`).
 2. Merge strictly by dependency order.
+3. Branch names must match `feat/prd05a-e2e-e<phase>-<slug>`.
 
 Commit policy:
 1. Commit at least once per completed task (`E*-T*`).
 2. Add one explicit `-gate-green` commit per phase with linked evidence.
+3. Every phase commit message must reference one or more `E*-T*` task IDs.
 
 Tag policy:
 1. Tag each green phase: `prd05a-e2e-e<phase>-gate`.
@@ -366,4 +390,5 @@ Tag policy:
 1. Approve this revised plan as authoritative for C5 execution.
 2. Start `E0` and produce first deterministic-profile evidence set.
 3. Add `scripts/run_prd05a_metamask_soak.sh` and wire scheduled CI.
-4. Update `prds/05A-RELEASE-GATE-CHECKLIST.md` when each phase gate turns green.
+4. Enforce `synpress` as release-gate driver for C5 until dappwright meets SLO promotion criteria.
+5. Update `prds/05A-RELEASE-GATE-CHECKLIST.md` when each phase gate turns green.
