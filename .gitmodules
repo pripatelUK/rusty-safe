@@ -10,3 +10,6 @@
 [submodule "deps/safe-hash-rs"]
 	path = deps/safe-hash-rs
 	url = git@github.com:pripatelUK/safe-hash-rs.git
+[submodule "deps/dappwright"]
+	path = deps/dappwright
+	url = git@github.com:TenKeyLabs/dappwright.git
