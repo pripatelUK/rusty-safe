@@ -123,11 +123,12 @@ Delivered:
    - `e2e/playwright.metamask.config.ts`
 5. Reports:
    - `local/reports/prd05a/C5-metamask-e2e-report.md`
+   - `local/reports/prd05a/C5-e0-determinism-report.md`
    - `local/reports/prd05a/C5-compatibility-matrix-report.md`
    - `local/reports/prd05a/C5-hardware-passthrough-smoke.md`
 6. Current blockers:
-   - MetaMask runtime E2E still fails in notification-popup routing (`connectToDapp`/network approval flows) under current extension/runtime behavior.
-   - Rabby still relies on external profile evidence.
+   - `E0` gate is now green (10/10 deterministic profile self-check runs); remaining execution blockers are `E1-E5` completion.
+   - Rabby matrix is still profile-based and requires runtime scenario execution in `E4`.
    - Deferred hardware passthrough acceptance backlog remains pending until `E5` is green; owner/target are pre-assigned (Security lead, `E5` + 14 days).
 
 ### C6: Performance Harness (Completed)
