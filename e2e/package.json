@@ -9,6 +9,7 @@
     "test:metamask:headed": "npx playwright test -c playwright.metamask.config.ts",
     "test:metamask:profile": "node tests/metamask/runtime-profile-check.mjs",
     "test:metamask:contract": "node --test tests/metamask/wallet-driver.contract.test.mjs",
+    "test:metamask:taxonomy": "node --test tests/metamask/failure-taxonomy.contract.test.mjs",
     "test:metamask:preflight": "node tests/metamask/metamask-cache-preflight.mjs",
     "cache:metamask": "npx synpress wallet-setup",
     "cache:metamask:force": "npx synpress wallet-setup --force",
@@ -18,6 +19,7 @@
     "report": "npx playwright show-report"
   },
   "devDependencies": {
+    "@tenkeylabs/dappwright": "^2.13.3",
     "@playwright/test": "^1.57.0",
     "@synthetixio/synpress": "4.1.2",
     "typescript": "^5.9.3"

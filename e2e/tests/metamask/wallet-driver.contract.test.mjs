@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import { DappwrightDriver } from "./drivers/dappwright-driver.mjs";
+import { MixedDriver } from "./drivers/mixed-driver.mjs";
 import { SynpressDriver } from "./drivers/synpress-driver.mjs";
 import { WALLET_DRIVER_METHODS, assertWalletDriverContract } from "./drivers/wallet-driver.mjs";
 
@@ -54,3 +56,37 @@ test("SynpressDriver delegates approval primitives", async () => {
   assert.equal(diagnostics.driver, "synpress");
 });
 
+test("DappwrightDriver satisfies WalletDriver contract", async () => {
+  const fallback = createMetaMaskStub();
+  const walletStub = {
+    approve: async () => {},
+    sign: async () => {},
+    confirmTransaction: async () => {},
+    confirmNetworkSwitch: async () => {},
+  };
+  const driver = new DappwrightDriver({
+    walletLoader: async () => walletStub,
+    metamaskFallback: fallback,
+  });
+
+  assertWalletDriverContract(driver, "dappwright-driver");
+  for (const method of WALLET_DRIVER_METHODS) {
+    assert.equal(typeof driver[method], "function", `method ${method} must exist`);
+  }
+});
+
+test("MixedDriver satisfies WalletDriver contract", async () => {
+  const primary = new DappwrightDriver({
+    walletLoader: async () => ({
+      approve: async () => {},
+      sign: async () => {},
+      confirmTransaction: async () => {},
+      confirmNetworkSwitch: async () => {},
+    }),
+    metamaskFallback: createMetaMaskStub(),
+  });
+  const fallback = new SynpressDriver(createMetaMaskStub());
+  const driver = new MixedDriver(primary, fallback);
+
+  assertWalletDriverContract(driver, "mixed-driver");
+});

@@ -105,7 +105,8 @@ prd05a_write_json() {
   local chromium_version="${11}"
   local locale="${12}"
   local artifacts_json="${13}"
-  local reason="${14}"
+  local triage_label="${14}"
+  local reason="${15}"
 
   cat >"$path" <<EOF
 {
@@ -116,6 +117,7 @@ prd05a_write_json() {
   "taxonomy": "$(prd05a_json_escape "$taxonomy")",
   "driver_mode": "$(prd05a_json_escape "$driver_mode")",
   "release_gate_driver": "$(prd05a_json_escape "$release_gate_driver")",
+  "triage_label": "$(prd05a_json_escape "$triage_label")",
   "node_version": "$(prd05a_json_escape "$node_version")",
   "chromium_bin": "$(prd05a_json_escape "$chromium_bin")",
   "chromium_version": "$(prd05a_json_escape "$chromium_version")",

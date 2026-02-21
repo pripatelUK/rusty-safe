@@ -13,7 +13,11 @@ json_path="local/reports/prd05a/C5-metamask-e2e.json"
 log_path="local/reports/prd05a/C5-metamask-e2e.log"
 driver_mode="${PRD05A_DRIVER_MODE:-synpress}"
 release_gate_driver="synpress"
+release_gate_enforce="${PRD05A_RELEASE_GATE_ENFORCE:-1}"
+allow_dappwright_release="${PRD05A_ALLOW_DAPPWRIGHT_RELEASE:-0}"
 expected_locale_prefix="${PRD05A_EXPECTED_LOCALE_PREFIX:-en}"
+scenario_grep="${PRD05A_SCENARIO_GREP:-}"
+skip_preflight="${PRD05A_SKIP_PREFLIGHT:-0}"
 profile_check_only="0"
 
 if [[ "${1:-}" == "--profile-check" ]]; then
@@ -27,6 +31,7 @@ chromium_bin="${chromium_info%%|*}"
 chromium_version="${chromium_info#*|}"
 taxonomy="ENV_BLOCKER"
 status="BLOCKED"
+triage_label="triage/env"
 reason=""
 locale_value="en_US.UTF-8"
 
@@ -47,6 +52,7 @@ Schema: ${PRD05A_SCHEMA_VERSION}
 
 Status: ${status}
 Taxonomy: ${taxonomy}
+Triage Label: ${triage_label}
 
 Reason:
 - ${reason}
@@ -55,12 +61,16 @@ Reason:
 
 - Driver mode: \`${driver_mode}\`
 - Release-gate driver: \`${release_gate_driver}\`
+- Release-gate policy enforced: \`${release_gate_enforce}\`
+- Release-gate override: \`${allow_dappwright_release}\`
 - Node: \`${node_version}\`
 - Chromium binary: \`${chromium_bin}\`
 - Chromium version: \`${chromium_version}\`
 - Locale: \`${locale_value}\` (expected prefix: \`${expected_locale_prefix}\`)
 - Headed enforcement: \`enabled\`
 - xvfb wrapper: \`forced on Linux by default (disable with PRD05A_FORCE_XVFB=0)\`
+- Scenario filter: \`${scenario_grep:-all}\`
+- Skip preflight: \`${skip_preflight}\`
 
 ## Scope
 
@@ -93,6 +103,7 @@ EOF
     "$chromium_version" \
     "$locale_value" \
     "$artifacts_json" \
+    "$triage_label" \
     "$reason"
 }
 
@@ -112,6 +123,18 @@ if [[ "$node_major" != "20" ]]; then
   exit 2
 fi
 
+if [[ ! "$driver_mode" =~ ^(synpress|dappwright|mixed)$ ]]; then
+  reason="Unsupported PRD05A_DRIVER_MODE=${driver_mode}. Expected synpress|dappwright|mixed."
+  write_reports
+  exit 2
+fi
+
+if [[ "$release_gate_enforce" == "1" && "$allow_dappwright_release" != "1" && "$driver_mode" != "$release_gate_driver" ]]; then
+  reason="Release-gate driver policy violation: driver_mode=${driver_mode}; required=${release_gate_driver} until dappwright promotion criteria is met."
+  write_reports
+  exit 2
+fi
+
 if [[ "${HEADLESS:-}" == "true" || "${HEADLESS:-}" == "1" ]]; then
   reason="HEADLESS mode is disallowed for extension E2E. Run headed with xvfb when DISPLAY is unavailable."
   write_reports
@@ -124,13 +147,20 @@ if prd05a_should_use_xvfb && ! command -v xvfb-run >/dev/null 2>&1; then
   exit 2
 fi
 
-if [[ "$profile_check_only" != "1" ]]; then
+requires_anvil="1"
+if [[ -n "$scenario_grep" && "$scenario_grep" != *"MM-PARITY-004"* ]]; then
+  requires_anvil="0"
+fi
+
+if [[ "$profile_check_only" != "1" && "$requires_anvil" == "1" ]]; then
   if ! command -v anvil >/dev/null 2>&1; then
     reason="anvil is not available in PATH."
     write_reports
     exit 2
   fi
+fi
 
+if [[ "$profile_check_only" != "1" ]]; then
   if ! command -v trunk >/dev/null 2>&1; then
     reason="trunk is not available in PATH."
     write_reports
@@ -148,11 +178,15 @@ set +e
   echo "[header] run_id=${run_id}"
   echo "[header] driver_mode=${driver_mode}"
   echo "[header] release_gate_driver=${release_gate_driver}"
+  echo "[header] release_gate_policy_enforced=${release_gate_enforce}"
+  echo "[header] release_gate_override=${allow_dappwright_release}"
   echo "[header] node_version=${node_version}"
   echo "[header] chromium_bin=${chromium_bin}"
   echo "[header] chromium_version=${chromium_version}"
   echo "[header] lang=${LANG}"
   echo "[header] lc_all=${LC_ALL}"
+  echo "[header] scenario_grep=${scenario_grep:-all}"
+  echo "[header] skip_preflight=${skip_preflight}"
 
   pushd e2e >/dev/null
 
@@ -164,11 +198,22 @@ set +e
       exit 20
     fi
   fi
+  if [[ ! -d node_modules/@tenkeylabs/dappwright ]]; then
+    if command -v npm >/dev/null 2>&1; then
+      npm install --silent >/dev/null
+    else
+      echo "[setup] npm unavailable for dappwright install"
+      exit 20
+    fi
+  fi
 
   "$node_bin" ./node_modules/playwright/cli.js install chromium >/dev/null
 
   echo "[contract] running wallet driver contract checks"
   "$node_bin" --test ./tests/metamask/wallet-driver.contract.test.mjs || exit 22
+
+  echo "[contract] running failure taxonomy checks"
+  "$node_bin" --test ./tests/metamask/failure-taxonomy.contract.test.mjs || exit 23
 
   echo "[profile] running runtime profile check"
   PRD05A_EXPECTED_LOCALE_PREFIX="${expected_locale_prefix}" \
@@ -188,12 +233,25 @@ set +e
   echo "[cache] building synpress metamask cache (headed)"
   prd05a_with_display "${setup_cmd[@]}" || exit 31
 
-  echo "[preflight] validating cached metamask state"
-  PRD05A_EXPECTED_LOCALE_PREFIX="${expected_locale_prefix}" \
-    prd05a_with_display "$node_bin" ./tests/metamask/metamask-cache-preflight.mjs || exit 32
+  if [[ "$skip_preflight" == "1" ]]; then
+    echo "[preflight] skipped by PRD05A_SKIP_PREFLIGHT=1"
+  else
+    echo "[preflight] validating cached metamask state"
+    PRD05A_EXPECTED_LOCALE_PREFIX="${expected_locale_prefix}" \
+      prd05a_with_display "$node_bin" ./tests/metamask/metamask-cache-preflight.mjs || exit 32
+  fi
 
   echo "[test] running metamask playwright suite"
-  prd05a_with_display "$node_bin" ./node_modules/playwright/cli.js test -c playwright.metamask.config.ts tests/metamask/metamask-eip1193.spec.mjs --project=chromium || exit 33
+  playwright_cmd=(
+    "$node_bin" ./node_modules/playwright/cli.js test
+    -c playwright.metamask.config.ts
+    tests/metamask/metamask-eip1193.spec.mjs
+    --project=chromium
+  )
+  if [[ -n "$scenario_grep" ]]; then
+    playwright_cmd+=(--grep "$scenario_grep")
+  fi
+  prd05a_with_display "${playwright_cmd[@]}" || exit 33
 
   popd >/dev/null
 ) >"$log_path" 2>&1
@@ -203,6 +261,7 @@ set -e
 if [[ $rc -eq 0 ]]; then
   status="PASS"
   taxonomy="NONE"
+  triage_label="triage/pass"
   if [[ "$profile_check_only" == "1" ]]; then
     reason="Runtime profile check passed."
   else
@@ -214,33 +273,45 @@ fi
 
 status="FAIL"
 taxonomy="APP_FAIL"
+triage_label="triage/app"
 reason="MetaMask runtime gate failed. See ${log_path}."
 
 case "$rc" in
   20|21)
     status="BLOCKED"
     taxonomy="ENV_BLOCKER"
+    triage_label="triage/env"
     reason="Runtime profile prerequisites failed before wallet execution."
     ;;
   22)
     taxonomy="HARNESS_FAIL"
+    triage_label="triage/harness"
     reason="Wallet driver contract tests failed."
+    ;;
+  23)
+    taxonomy="HARNESS_FAIL"
+    triage_label="triage/harness"
+    reason="Failure taxonomy contract tests failed."
     ;;
   31|32)
     taxonomy="HARNESS_FAIL"
+    triage_label="triage/harness"
     reason="Wallet bootstrap or preflight convergence failed."
     ;;
   33)
     taxonomy="APP_FAIL"
+    triage_label="triage/app"
     reason="Parity smoke assertions failed in runtime suite."
     ;;
   *)
     taxonomy="APP_FAIL"
+    triage_label="triage/app"
     ;;
 esac
 
 if rg -qi "metamask had trouble starting|background connection unresponsive" "$log_path"; then
   taxonomy="WALLET_FAIL"
+  triage_label="triage/wallet"
   reason="MetaMask extension runtime became unresponsive."
 fi
 

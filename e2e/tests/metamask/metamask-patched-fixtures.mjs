@@ -8,18 +8,10 @@ import { MetaMask, getExtensionId } from "@synthetixio/synpress-metamask/playwri
 
 import metamaskSetup from "../../wallet-setup/metamask.anvil.setup.mjs";
 import { bootstrapMetaMaskRuntime } from "./metamask-bootstrap.mjs";
-import { createSynpressDriver } from "./drivers/synpress-driver.mjs";
+import { createWalletDriver, resolveDriverMode } from "./drivers/driver-factory.mjs";
 
 let sharedMetaMaskPage;
 let sharedExtensionId;
-
-function resolveDriverMode() {
-  const mode = String(process.env.PRD05A_DRIVER_MODE ?? "synpress").toLowerCase();
-  if (mode !== "synpress") {
-    throw new Error(`unsupported-driver-mode-for-e1:${mode}:expected-synpress`);
-  }
-  return mode;
-}
 
 export const test = base.extend({
   _contextPath: async ({ browserName }, use, testInfo) => {
@@ -93,10 +85,11 @@ export const test = base.extend({
   },
 
   walletDriver: async ({ metamask, driverMode }, use) => {
-    if (driverMode !== "synpress") {
-      throw new Error(`wallet-driver-mode-not-supported:${driverMode}`);
-    }
-    const driver = createSynpressDriver(metamask);
+    const driver = await createWalletDriver({
+      context: sharedMetaMaskPage.context(),
+      metamask,
+      driverMode,
+    });
     await driver.bootstrapWallet();
     await use(driver);
   },
