@@ -3,14 +3,21 @@
   "version": "1.0.0",
   "description": "Visual regression tests for RustySafe",
   "scripts": {
-    "capture": "bunx playwright test tests/capture.spec.ts --reporter=list",
-    "test": "bunx playwright test tests/visual.spec.ts",
-    "test:update": "bunx playwright test --update-snapshots",
-    "test:ui": "bunx playwright test --ui",
-    "test:headed": "bunx playwright test --headed",
-    "report": "bunx playwright show-report"
+    "capture": "npx playwright test tests/capture.spec.ts --reporter=list",
+    "test": "npx playwright test tests/visual.spec.ts",
+    "test:metamask": "HEADLESS=true npx playwright test -c playwright.metamask.config.ts",
+    "test:metamask:headed": "npx playwright test -c playwright.metamask.config.ts",
+    "test:metamask:preflight": "HEADLESS=true node tests/metamask/metamask-cache-preflight.mjs",
+    "cache:metamask": "HEADLESS=true npx synpress wallet-setup --headless",
+    "cache:metamask:force": "HEADLESS=true npx synpress wallet-setup --headless --force",
+    "test:update": "npx playwright test --update-snapshots",
+    "test:ui": "npx playwright test --ui",
+    "test:headed": "npx playwright test --headed",
+    "report": "npx playwright show-report"
   },
   "devDependencies": {
-    "@playwright/test": "^1.40.0"
+    "@playwright/test": "^1.57.0",
+    "@synthetixio/synpress": "4.1.2",
+    "typescript": "^5.9.3"
   }
 }

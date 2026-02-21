@@ -35,8 +35,9 @@ Generated: ${timestamp}
 6. Performance report: local/reports/prd05a/C6-performance-report.md
 7. Differential parity report: local/reports/prd05a/C9-differential-parity-report.md
 8. Safe service live validation report: local/reports/prd05a/C2-safe-service-live-report.md
-9. Compatibility matrix report: local/reports/prd05a/C5-compatibility-matrix-report.md
-10. Hardware passthrough smoke report: local/reports/prd05a/C5-hardware-passthrough-smoke.md
+9. MetaMask preflight + Playwright E2E report: local/reports/prd05a/C5-metamask-e2e-report.md (details in local/reports/prd05a/C5-metamask-e2e.log)
+10. Compatibility matrix report: local/reports/prd05a/C5-compatibility-matrix-report.md
+11. Hardware passthrough smoke report: local/reports/prd05a/C5-hardware-passthrough-smoke.md
 
 ## Milestone Discipline
 

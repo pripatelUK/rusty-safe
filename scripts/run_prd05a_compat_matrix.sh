@@ -11,7 +11,6 @@ if ! command -v "$chromium_bin" >/dev/null 2>&1; then
   chromium_bin="${PRD05A_CHROMIUM_BIN_FALLBACK:-google-chrome}"
 fi
 
-metamask_dir="${PRD05A_METAMASK_PROFILE_DIR:-}"
 rabby_dir="${PRD05A_RABBY_PROFILE_DIR:-}"
 
 chromium_version="$("$chromium_bin" --version 2>/dev/null || true)"
@@ -19,11 +18,21 @@ if [[ -z "$chromium_version" ]]; then
   chromium_version="NOT_AVAILABLE"
 fi
 
-metamask_status="BLOCKED"
-metamask_note="missing PRD05A_METAMASK_PROFILE_DIR"
-if [[ -n "$metamask_dir" && -d "$metamask_dir" ]]; then
+metamask_status="FAIL"
+metamask_note="playwright/synpress gate failed (see C5-metamask-e2e-report.md)"
+set +e
+scripts/run_prd05a_metamask_e2e.sh >/dev/null
+metamask_gate_rc=$?
+set -e
+if [[ $metamask_gate_rc -eq 0 ]]; then
   metamask_status="PASS"
-  metamask_note="profile directory detected (${metamask_dir})"
+  metamask_note="playwright/synpress metamask e2e passed"
+elif [[ $metamask_gate_rc -eq 2 ]]; then
+  metamask_status="BLOCKED"
+  metamask_note="metamask e2e prerequisites unavailable (see C5-metamask-e2e-report.md)"
+elif rg -q "onboarding-state-after-unlock" local/reports/prd05a/C5-metamask-e2e.log 2>/dev/null; then
+  metamask_status="FAIL"
+  metamask_note="metamask cache preflight failed (post-unlock onboarding state); see C5-metamask-e2e.log"
 fi
 
 rabby_status="BLOCKED"
@@ -53,7 +62,9 @@ Generated: ${timestamp}
 
 ## Repro
 
-- Set \`PRD05A_METAMASK_PROFILE_DIR\` and \`PRD05A_RABBY_PROFILE_DIR\` to browser profile paths before rerun.
+- MetaMask gate command: \`scripts/run_prd05a_metamask_e2e.sh\`
+- MetaMask report: \`local/reports/prd05a/C5-metamask-e2e-report.md\`
+- Rabby currently remains profile-based; set \`PRD05A_RABBY_PROFILE_DIR\` for manual matrix evidence.
 - Command: \`scripts/run_prd05a_compat_matrix.sh\`
 EOF
 
