@@ -8,6 +8,7 @@
     "test:metamask": "npx playwright test -c playwright.metamask.config.ts",
     "test:metamask:headed": "npx playwright test -c playwright.metamask.config.ts",
     "test:metamask:profile": "node tests/metamask/runtime-profile-check.mjs",
+    "test:metamask:contract": "node --test tests/metamask/wallet-driver.contract.test.mjs",
     "test:metamask:preflight": "node tests/metamask/metamask-cache-preflight.mjs",
     "cache:metamask": "npx synpress wallet-setup",
     "cache:metamask:force": "npx synpress wallet-setup --force",

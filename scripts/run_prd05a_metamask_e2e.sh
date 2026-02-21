@@ -167,6 +167,9 @@ set +e
 
   "$node_bin" ./node_modules/playwright/cli.js install chromium >/dev/null
 
+  echo "[contract] running wallet driver contract checks"
+  "$node_bin" --test ./tests/metamask/wallet-driver.contract.test.mjs || exit 22
+
   echo "[profile] running runtime profile check"
   PRD05A_EXPECTED_LOCALE_PREFIX="${expected_locale_prefix}" \
     prd05a_with_display "$node_bin" ./tests/metamask/runtime-profile-check.mjs || exit 21
@@ -218,6 +221,10 @@ case "$rc" in
     status="BLOCKED"
     taxonomy="ENV_BLOCKER"
     reason="Runtime profile prerequisites failed before wallet execution."
+    ;;
+  22)
+    taxonomy="HARNESS_FAIL"
+    reason="Wallet driver contract tests failed."
     ;;
   31|32)
     taxonomy="HARNESS_FAIL"

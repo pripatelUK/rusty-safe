@@ -8,9 +8,18 @@ import { MetaMask, getExtensionId } from "@synthetixio/synpress-metamask/playwri
 
 import metamaskSetup from "../../wallet-setup/metamask.anvil.setup.mjs";
 import { bootstrapMetaMaskRuntime } from "./metamask-bootstrap.mjs";
+import { createSynpressDriver } from "./drivers/synpress-driver.mjs";
 
 let sharedMetaMaskPage;
 let sharedExtensionId;
+
+function resolveDriverMode() {
+  const mode = String(process.env.PRD05A_DRIVER_MODE ?? "synpress").toLowerCase();
+  if (mode !== "synpress") {
+    throw new Error(`unsupported-driver-mode-for-e1:${mode}:expected-synpress`);
+  }
+  return mode;
+}
 
 export const test = base.extend({
   _contextPath: async ({ browserName }, use, testInfo) => {
@@ -79,6 +88,19 @@ export const test = base.extend({
     await use(metamask);
   },
 
+  driverMode: async ({ context: _unused }, use) => {
+    await use(resolveDriverMode());
+  },
+
+  walletDriver: async ({ metamask, driverMode }, use) => {
+    if (driverMode !== "synpress") {
+      throw new Error(`wallet-driver-mode-not-supported:${driverMode}`);
+    }
+    const driver = createSynpressDriver(metamask);
+    await driver.bootstrapWallet();
+    await use(driver);
+  },
+
   page: async ({ page }, use) => {
     await page.goto("/");
     await use(page);
@@ -96,7 +118,7 @@ export const test = base.extend({
     await pool.empty();
   },
 
-  connectToAnvil: async ({ metamask, createAnvilNode, page }, use) => {
+  connectToAnvil: async ({ walletDriver, createAnvilNode, page }, use) => {
     await use(async () => {
       const { rpcUrl, chainId } = await createAnvilNode({ chainId: 1338 });
       const chainIdHex = `0x${chainId.toString(16)}`;
@@ -130,23 +152,7 @@ export const test = base.extend({
         .then(() => ({ ok: true, error: null }))
         .catch((error) => ({ ok: false, error: String(error?.message ?? error) }));
 
-      let approvedAddNetwork = false;
-      try {
-        await metamask.approveNewNetwork();
-        approvedAddNetwork = true;
-      } catch (error) {
-        console.log(
-          `[metamask-connectToAnvil] approveNewNetwork unavailable: ${String(error?.message ?? error)}`,
-        );
-      }
-
-      if (approvedAddNetwork) {
-        await metamask.approveSwitchNetwork().catch((error) => {
-          console.log(
-            `[metamask-connectToAnvil] approveSwitchNetwork unavailable: ${String(error?.message ?? error)}`,
-          );
-        });
-      }
+      await walletDriver.approveNetworkChange();
 
       const addNetworkOutcome = await Promise.race([
         addNetworkOutcomePromise,
