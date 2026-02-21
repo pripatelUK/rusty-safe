@@ -1173,7 +1173,8 @@ Milestone artifact rules:
 | Idempotent side-effect safety | `0` duplicate external writes in retry tests | Adapter invocation counter assertions |
 | ABI composition correctness | `100%` of parity ABI vectors encode expected calldata | Differential fixtures + selector assertions |
 | Manual signature parity | `100%` pass for tx/message manual signature add + signer recovery vectors | Integration tests for `add_tx_signature` and message signature ingestion |
-| Wallet compatibility | MetaMask + Rabby pass on Chromium | E2E matrix runs per release candidate |
+| Wallet compatibility | MetaMask automated pass on Chromium + Rabby evidence tracked | Driver-agnostic E2E gate (`MM-PARITY-001..004`) + Rabby matrix report |
+| MetaMask gate determinism | `100%` pass on cache bootstrap preflight before runtime smoke | `e2e/tests/metamask/metamask-cache-preflight.mjs` (bootstrap must end in non-onboarding state) |
 | Hardware passthrough viability | Ledger/Trezor-backed account signing succeeds via wallet software | Manual smoke + scripted WC flow checks |
 | WalletConnect lifecycle robustness | `100%` pass for pair/approve/reject/disconnect + request routing | WC lifecycle integration test suite |
 | URL share compatibility | `100%` pass on `importTx/importSig/importMsg/importMsgSig` fixtures | URL import compatibility suite |
@@ -1181,6 +1182,37 @@ Milestone artifact rules:
 | Rehydration budget | `p95 <= 1500ms` for restoring 100 mixed flows | Browser E2E startup/rehydration timing harness |
 | UI shell bloat control | `>= 85%` of new signing LOC lands outside `crates/rusty-safe/src/app.rs` | Per-phase diffstat gate |
 | Egui parity surface coverage | `100%` of mandatory parity surfaces mapped in this PRD render and dispatch bridge actions | UI checklist over `queue`, `tx_details`, `message_details`, `wc_requests`, `import_export` |
+
+### MetaMask-First Phase Gate (C5)
+
+The C5 gate is MetaMask-first by design. Rabby and hardware passthrough remain required artifacts, but they do not replace the MetaMask runtime gate.
+Execution follows `prds/05A-E2E-WALLET-RUNTIME-PLAN.md` (`E0-E5`) and is parity-scoped only.
+
+Gate sequence:
+
+1. `G-M1` cache bootstrap preflight: `e2e/tests/metamask/metamask-cache-preflight.mjs` must pass (including deterministic bootstrap recovery when cache opens on onboarding route).
+2. `G-M2` runtime parity: `MM-PARITY-001` pass (`eth_requestAccounts`).
+3. `G-M2` runtime parity: `MM-PARITY-002` pass (`personal_sign`).
+4. `G-M2` runtime parity: `MM-PARITY-003` pass (`eth_signTypedData_v4`).
+5. `G-M2` runtime parity: `MM-PARITY-004` pass (`eth_sendTransaction`).
+6. `G-M2` runtime recovery: `MM-PARITY-005..006` pass (`accountsChanged` / `chainChanged` deterministic recovery).
+7. Reliability SLO pass:
+   - local >= 90% pass over 10 consecutive runs;
+   - CI >= 95% pass over 20 scheduled runs.
+
+Failure taxonomy for C5 reporting:
+
+1. `ENV_BLOCKER`: Node/Chromium/anvil/trunk/runtime profile prerequisites missing.
+2. `HARNESS_FAIL`: preflight convergence, popup routing, or driver startup cannot establish deterministic wallet context.
+3. `APP_FAIL`: runtime reaches dapp flow and fails on Rusty Safe/provider semantics.
+4. `WALLET_FAIL`: extension crash/unresponsive behavior independent of app logic.
+
+Execution policy:
+
+1. C5 cannot be tagged `gate-green` without a passing `G-M1` and `G-M2`.
+2. `HARNESS_FAIL` is release-blocking for MetaMask parity, not a soft warning.
+3. Rabby/hardware evidence stays in C5 but is tracked after MetaMask gate is green.
+4. C5 is not release-ready until all `E0-E5` phase gates are green.
 
 ## 9. Testing Strategy
 
@@ -1203,11 +1235,13 @@ Milestone artifact rules:
 4. ABI-assisted tx composition and raw-override warnings (`crates/rusty-safe-signing-adapters/tests/abi_builder.rs`).
 5. WalletConnect session lifecycle + quick/deferred response flows (`crates/rusty-safe-signing-adapters/tests/wc_deferred.rs`, `crates/rusty-safe-signing-adapters/tests/wc_session_lifecycle.rs`).
 6. Import/export/share + merge determinism (`crates/rusty-safe-signing-adapters/tests/import_export_merge.rs`).
-7. Localsafe URL key compatibility (`crates/rusty-safe-signing-adapters/tests/url_import_compat.rs`).
-8. egui parity state/render tests for signing surfaces (`crates/rusty-safe/tests/signing_ui/*.rs`).
-9. Chromium E2E runs with MetaMask and Rabby plus hardware-backed accounts.
-10. Differential parity harness: compare 05A outputs against localsafe fixture snapshots for `PARITY-*` capabilities.
-11. Performance budget suite for command latency and rehydration thresholds.
+7. MetaMask cache preflight (`e2e/tests/metamask/metamask-cache-preflight.mjs`) validating post-unlock non-onboarding state.
+8. Chromium + MetaMask extension E2E parity smoke (`e2e/tests/metamask/metamask-eip1193.spec.mjs`).
+9. Localsafe URL key compatibility (`crates/rusty-safe-signing-adapters/tests/url_import_compat.rs`).
+10. egui parity state/render tests for signing surfaces (`crates/rusty-safe/tests/signing_ui/*.rs`).
+11. Chromium E2E runs with MetaMask and Rabby plus hardware-backed accounts.
+12. Differential parity harness: compare 05A outputs against localsafe fixture snapshots for `PARITY-*` capabilities.
+13. Performance budget suite for command latency and rehydration thresholds.
 
 ### Negative/Fault Approach
 
@@ -1272,12 +1306,54 @@ This section tracks the remaining productionization milestones requested after t
 | C2 | Real Safe Transaction Service integration (timeouts/retries/idempotency) | `PARITY-TX-01` | `feat/prd05a-c2-safe-service-runtime` | propose/confirm/execute E2E against service sandbox | Completed |
 | C3 | Real WalletConnect runtime integration (`pair/approve/reject/disconnect` + request routing) | `PARITY-WC-01` | `feat/prd05a-c3-walletconnect-runtime` | WC lifecycle + deferred response browser E2E | Completed |
 | C4 | Full storage/export crypto spec (Argon2id/PBKDF2, HKDF, HMAC-SHA256, AES-GCM) | `PARITY-COLLAB-01` | `feat/prd05a-c4-crypto-storage` | deterministic import/export auth vectors + tamper tests | Completed |
-| C5 | Chromium compatibility matrix with MetaMask/Rabby + Ledger/Trezor passthrough smoke | `PARITY-HW-01` | `feat/prd05a-c5-compat-matrix` | matrix report + reproducible smoke logs | Executed (external profiles/hardware evidence required) |
+| C5 | Chromium compatibility matrix with MetaMask/Rabby + Ledger/Trezor passthrough smoke | `PARITY-HW-01` | `feat/prd05a-c5-compat-matrix` | `E0-E5` gate sequence defined in `prds/05A-E2E-WALLET-RUNTIME-PLAN.md` | In Progress (MetaMask runtime + SLO + Rabby/hardware evidence pending) |
 | C6 | Performance harness (`p95` command latency and rehydration) | `PARITY-TX-01`, `PARITY-MSG-01`, `PARITY-COLLAB-01` | `feat/prd05a-c6-performance-harness` | budgets in Section 8/9 met in CI artifacts | Completed |
 | C7 | CI pipeline enforcement for boundary/traceability/signing clippy/tests | All mandatory `PARITY-*` | `feat/prd05a-c7-ci-gates` | CI workflow green on PR + push | Completed |
 | C8 | Repo formatting debt cleanup enabling `cargo fmt --all --check` gate | N/A (repo hygiene gate) | `feat/prd05a-c8-formatting-gate` | fmt check green in CI | Completed |
 | C9 | Differential parity validation against localsafe fixture snapshots | All mandatory `PARITY-*` | `feat/prd05a-c9-differential-harness` | differential report with zero critical diffs | Completed |
 | C10 | Final release gate evidence package (security sign-off + matrix + milestone/tag discipline) | All mandatory `PARITY-*` | `feat/prd05a-c10-release-evidence` | signed release checklist artifact | Completed (pending manual sign-off signatures) |
+
+### C5 E2E Execution Phases (E0-E5)
+
+C5 is executed through the dedicated E2E phase model in `prds/05A-E2E-WALLET-RUNTIME-PLAN.md`.
+
+| Phase | Objective | Branch | Gate | Status |
+|---|---|---|---|---|
+| E0 | Deterministic runtime baseline (`headed+xvfb`, Node pin, locale/profile checks) | `feat/prd05a-e2e-e0-determinism` | runtime-profile self-checks green + metadata contract present | Planned |
+| E1 | `WalletDriver` contract + Synpress adapter boundary | `feat/prd05a-e2e-e1-driver-interface` | driver contract tests green + no parity coverage regression | Planned |
+| E2 | dappwright adapter + driver arbitration (`synpress|dappwright|mixed`) | `feat/prd05a-e2e-e2-dappwright-adapter` | bootstrap/connect/network reliability report attached | Planned |
+| E3 | full MetaMask parity scenarios (`MM-PARITY-001..006`) + negative-path taxonomy | `feat/prd05a-e2e-e3-parity-scenarios` | mandatory parity scenarios green + taxonomy labels validated | Planned |
+| E4 | Rabby matrix + Ledger/Trezor passthrough evidence | `feat/prd05a-e2e-e4-matrix-hardware` | matrix evidence published with reproducible artifacts | Planned |
+| E5 | reliability SLO enforcement + release checklist closure | `feat/prd05a-e2e-e5-ci-release-gate` | local/CI SLO thresholds met + C5 checklist fully green | Planned |
+
+### C5 Task List (Structured)
+
+1. `E0-T1` enforce headed + `xvfb` runtime profile in scripts/CI.
+2. `E0-T2` enforce Node `v20` pin and startup self-check.
+3. `E0-T3` enforce locale self-check for extension selector stability.
+4. `E1-T1` define `WalletDriver` interface and fixture wiring.
+5. `E1-T2` implement `SynpressDriver` and adapter contract tests.
+6. `E2-T1` implement `DappwrightDriver` and arbitration mode.
+7. `E2-T2` publish comparative reliability report (bootstrap/connect/network).
+8. `E3-T1` implement `MM-PARITY-001..004` runtime scenarios.
+9. `E3-T2` implement `MM-PARITY-005..006` event-recovery scenarios.
+10. `E3-T3` implement negative-path assertions with taxonomy validation.
+11. `E4-T1` execute Rabby matrix and publish evidence.
+12. `E4-T2` execute Ledger/Trezor passthrough smokes and publish evidence.
+13. `E5-T1` add soak harness (`scripts/run_prd05a_metamask_soak.sh`) and schedule CI runs.
+14. `E5-T2` enforce SLO gates and close release checklist C5 section.
+
+### C5 Success Criteria (Quantitative)
+
+1. Functional: `MM-PARITY-001..006` are 100% green in gate runs.
+2. Reliability:
+   - local >= 90% pass over 10 consecutive runs;
+   - CI >= 95% pass over 20 scheduled runs.
+3. Classification: 100% failed runs carry taxonomy labels (`ENV_BLOCKER|HARNESS_FAIL|APP_FAIL|WALLET_FAIL`).
+4. Performance:
+   - per-scenario p95 <= 120s;
+   - C5 gate job p95 <= 25 minutes.
+5. Release-readiness: C5-related checks in `prds/05A-RELEASE-GATE-CHECKLIST.md` are fully green.
 
 ### C-Milestone Commit Contract
 
@@ -1288,6 +1364,13 @@ Each continuation milestone follows the same contract:
 3. `milestone/<c-id>-gate-green` commit: gate evidence committed.
 4. Tag format: `prd05a-<c-id>-gate`.
 5. Commit messages must include relevant `PARITY-*` IDs.
+
+For C5 E2E execution phases, enforce phase-level discipline:
+
+1. One branch per `E0-E5` phase as listed above.
+2. Commit at least once per completed `E*-T*` task.
+3. Add one `-gate-green` commit per phase with evidence links.
+4. Tag each green phase: `prd05a-e2e-e<phase>-gate`.
 
 ## Context Preservation Map
 
