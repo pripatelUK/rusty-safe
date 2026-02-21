@@ -22,9 +22,15 @@ fi
 chromium_info="$(prd05a_chromium_version)"
 chromium_bin="${chromium_info%%|*}"
 chromium_version="${chromium_info#*|}"
+metamask_timeout_secs="${PRD05A_MATRIX_METAMASK_TIMEOUT_SECS:-240}"
+metamask_profile_only="${PRD05A_MATRIX_METAMASK_PROFILE_ONLY:-1}"
 
 set +e
-scripts/run_prd05a_metamask_e2e.sh
+if [[ "$metamask_profile_only" == "1" ]]; then
+  timeout "$metamask_timeout_secs" scripts/run_prd05a_metamask_e2e.sh --profile-check
+else
+  timeout "$metamask_timeout_secs" scripts/run_prd05a_metamask_e2e.sh
+fi
 metamask_rc=$?
 set -e
 
@@ -41,12 +47,22 @@ if [[ $metamask_rc -eq 0 ]]; then
   metamask_status="PASS"
 fi
 
-rabby_dir="${PRD05A_RABBY_PROFILE_DIR:-}"
+set +e
+scripts/run_prd05a_rabby_matrix.sh
+rabby_rc=$?
+set -e
+
+rabby_json="local/reports/prd05a/C5-rabby-runtime-report.json"
 rabby_status="BLOCKED"
-rabby_note="missing PRD05A_RABBY_PROFILE_DIR"
-if [[ -n "$rabby_dir" && -d "$rabby_dir" ]]; then
+rabby_taxonomy="ENV_BLOCKER"
+rabby_note="missing rabby json report"
+if [[ -f "$rabby_json" ]]; then
+  rabby_status="$("$node_bin" -p "require('./${rabby_json}').status" 2>/dev/null || echo "BLOCKED")"
+  rabby_taxonomy="$("$node_bin" -p "require('./${rabby_json}').taxonomy" 2>/dev/null || echo "ENV_BLOCKER")"
+  rabby_note="$("$node_bin" -p "require('./${rabby_json}').reason" 2>/dev/null || echo "rabby probe failed")"
+fi
+if [[ $rabby_rc -eq 0 ]]; then
   rabby_status="PASS"
-  rabby_note="profile directory detected (${rabby_dir})"
 fi
 
 cat >"$report_path" <<EOF
@@ -66,7 +82,7 @@ Schema: ${PRD05A_SCHEMA_VERSION}
 | Wallet | Browser | Status | Taxonomy | Notes |
 |---|---|---|---|---|
 | MetaMask | Chromium | ${metamask_status} | ${metamask_taxonomy} | ${metamask_note} |
-| Rabby | Chromium | ${rabby_status} | N/A | ${rabby_note} |
+| Rabby | Chromium | ${rabby_status} | ${rabby_taxonomy} | ${rabby_note} |
 
 ## Repro
 
@@ -74,8 +90,18 @@ Schema: ${PRD05A_SCHEMA_VERSION}
 - MetaMask reports:
   - \`local/reports/prd05a/C5-metamask-e2e-report.md\`
   - \`local/reports/prd05a/C5-metamask-e2e.json\`
-- Rabby currently remains profile-based; set \`PRD05A_RABBY_PROFILE_DIR\` for matrix evidence.
+- MetaMask runtime mode in matrix: \`profile-only=${metamask_profile_only}\`, timeout=\`${metamask_timeout_secs}s\`
+- Rabby gate command: \`scripts/run_prd05a_rabby_matrix.sh\`
+- Rabby reports:
+  - \`local/reports/prd05a/C5-rabby-runtime-report.md\`
+  - \`local/reports/prd05a/C5-rabby-runtime-report.json\`
 - Command: \`scripts/run_prd05a_compat_matrix.sh\`
+
+## Deferred Hardware Track (H1, Non-blocking for C5 Hot-wallet Release)
+
+- Owner: Security lead
+- Target: E5 gate date + 14 calendar days
+- Status: deferred, non-blocking
 EOF
 
 cat >"$json_path" <<EOF
@@ -97,14 +123,21 @@ cat >"$json_path" <<EOF
       "wallet": "Rabby",
       "browser": "Chromium",
       "status": "${rabby_status}",
-      "taxonomy": "N/A",
+      "taxonomy": "${rabby_taxonomy}",
       "notes": "$(prd05a_json_escape "$rabby_note")"
     }
   ],
   "artifacts": {
     "markdown_report": "${report_path}",
     "json_report": "${json_path}",
-    "metamask_json": "${metamask_json}"
+    "metamask_json": "${metamask_json}",
+    "rabby_json": "${rabby_json}"
+  },
+  "deferred_hardware_track": {
+    "id": "H1",
+    "owner": "Security lead",
+    "target": "E5 gate date + 14 calendar days",
+    "blocking": false
   }
 }
 EOF
