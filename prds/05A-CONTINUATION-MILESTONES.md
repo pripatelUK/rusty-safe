@@ -124,10 +124,11 @@ Delivered:
 5. Reports:
    - `local/reports/prd05a/C5-metamask-e2e-report.md`
    - `local/reports/prd05a/C5-e0-determinism-report.md`
+   - `local/reports/prd05a/C5-e1-driver-interface-report.md`
    - `local/reports/prd05a/C5-compatibility-matrix-report.md`
    - `local/reports/prd05a/C5-hardware-passthrough-smoke.md`
 6. Current blockers:
-   - `E0` gate is now green (10/10 deterministic profile self-check runs); remaining execution blockers are `E1-E5` completion.
+   - `E0` and `E1` gates are green; remaining execution blockers are `E2-E5` completion.
    - Rabby matrix is still profile-based and requires runtime scenario execution in `E4`.
    - Deferred hardware passthrough acceptance backlog remains pending until `E5` is green; owner/target are pre-assigned (Security lead, `E5` + 14 days).
 

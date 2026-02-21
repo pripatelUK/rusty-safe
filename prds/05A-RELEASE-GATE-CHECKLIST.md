@@ -24,7 +24,7 @@ Authoritative C5 E2E execution plan:
 ### 2.1 C5 E2E Phase Gates (`E0-E5`)
 
 - [x] `E0 Gate` green: deterministic runtime profile enforced (`headed + xvfb`, Node `v20`, locale pin, env validation).
-- [ ] `E1 Gate` green: `WalletDriver` abstraction and Synpress adapter path merged with no parity regression.
+- [x] `E1 Gate` green: `WalletDriver` abstraction and Synpress adapter path merged with no parity regression.
 - [ ] `E2 Gate` green: dappwright adapter bootstrap/connect/network path validated under same runtime profile.
 - [ ] `E3 Gate` green: full MetaMask parity scenarios (`MM-PARITY-001..006`) pass with deterministic recovery.
 - [ ] `E4 Gate` green: hot-wallet matrix evidence complete (MetaMask + Rabby).
@@ -89,7 +89,7 @@ Deferred artifact (non-blocking for current C5 release):
   Tags present: `prd05a-c1-c4-gate`, `prd05a-c2-c9-gate`, `prd05a-c5-c10-gate`.
 - [ ] C5 phase tags created after each phase gate:
   - `prd05a-e2e-e0-gate` (created locally)
-  - `prd05a-e2e-e1-gate`
+  - `prd05a-e2e-e1-gate` (created locally)
   - `prd05a-e2e-e2-gate`
   - `prd05a-e2e-e3-gate`
   - `prd05a-e2e-e4-gate`
