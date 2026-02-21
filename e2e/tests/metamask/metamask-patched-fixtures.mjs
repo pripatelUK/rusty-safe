@@ -36,15 +36,13 @@ export const test = base.extend({
       throw new Error(`MetaMask extension path missing at ${metamaskPath}. Run wallet setup first.`);
     }
 
-    const browserArgs = [`--disable-extensions-except=${metamaskPath}`];
-    if (process.env.HEADLESS) {
-      browserArgs.push("--headless=new");
-    }
+    const browserArgs = [`--disable-extensions-except=${metamaskPath}`, "--lang=en-US"];
 
     const context = await chromium.launchPersistentContext(_contextPath, {
       headless: false,
       args: browserArgs,
-      slowMo: process.env.HEADLESS ? 0 : 0,
+      locale: "en-US",
+      slowMo: 0,
     });
 
     sharedExtensionId = await getExtensionId(context, "MetaMask");

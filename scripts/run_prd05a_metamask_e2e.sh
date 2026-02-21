@@ -4,173 +4,238 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 
-timestamp="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+source "$ROOT_DIR/scripts/lib/prd05a_e2e_common.sh"
+
+timestamp="$(prd05a_now_utc)"
+run_id="$(prd05a_run_id)"
 report_path="local/reports/prd05a/C5-metamask-e2e-report.md"
+json_path="local/reports/prd05a/C5-metamask-e2e.json"
 log_path="local/reports/prd05a/C5-metamask-e2e.log"
+driver_mode="${PRD05A_DRIVER_MODE:-synpress}"
+release_gate_driver="synpress"
+expected_locale_prefix="${PRD05A_EXPECTED_LOCALE_PREFIX:-en}"
+profile_check_only="0"
+
+if [[ "${1:-}" == "--profile-check" ]]; then
+  profile_check_only="1"
+fi
 
 mkdir -p local/reports/prd05a
 
-node_bin="${PRD05A_NODE_BIN:-}"
-if [[ -z "$node_bin" ]]; then
-  if [[ -x "$HOME/.nvm/versions/node/v20.19.6/bin/node" ]]; then
-    node_bin="$HOME/.nvm/versions/node/v20.19.6/bin/node"
-  elif command -v node >/dev/null 2>&1; then
-    node_bin="$(command -v node)"
-  fi
-fi
+chromium_info="$(prd05a_chromium_version)"
+chromium_bin="${chromium_info%%|*}"
+chromium_version="${chromium_info#*|}"
+taxonomy="ENV_BLOCKER"
+status="BLOCKED"
+reason=""
+locale_value="en_US.UTF-8"
 
-if [[ -z "$node_bin" ]] || [[ ! -x "$node_bin" ]]; then
+artifacts_json='{
+    "log": "local/reports/prd05a/C5-metamask-e2e.log",
+    "markdown_report": "local/reports/prd05a/C5-metamask-e2e-report.md",
+    "json_report": "local/reports/prd05a/C5-metamask-e2e.json",
+    "playwright_report_dir": "e2e/playwright-report-metamask"
+  }'
+
+write_reports() {
   cat >"$report_path" <<EOF
 # C5 MetaMask E2E Report
 
 Generated: ${timestamp}
-
-Status: BLOCKED
-
-Reason:
-- Node.js runtime is not available. Set \`PRD05A_NODE_BIN\` to a valid Node binary.
-
-EOF
-  echo "wrote $report_path"
-  exit 2
-fi
-
-if ! command -v anvil >/dev/null 2>&1; then
-  cat >"$report_path" <<EOF
-# C5 MetaMask E2E Report
-
-Generated: ${timestamp}
-
-Status: BLOCKED
-
-Reason:
-- \`anvil\` is not available in PATH.
-
-EOF
-  echo "wrote $report_path"
-  exit 2
-fi
-
-if ! command -v trunk >/dev/null 2>&1; then
-  cat >"$report_path" <<EOF
-# C5 MetaMask E2E Report
-
-Generated: ${timestamp}
-
-Status: BLOCKED
-
-Reason:
-- \`trunk\` is not available in PATH.
-
-EOF
-  echo "wrote $report_path"
-  exit 2
-fi
-
-pushd e2e >/dev/null
-
-# Install deps when missing.
-if [[ ! -d node_modules ]]; then
-  if command -v bun >/dev/null 2>&1; then
-    bun install >/dev/null
-  elif command -v npm >/dev/null 2>&1; then
-    npm install >/dev/null
-  else
-    cat >"../${report_path}" <<EOF
-# C5 MetaMask E2E Report
-
-Generated: ${timestamp}
-
-Status: BLOCKED
-
-Reason:
-- Neither \`bun\` nor \`npm\` is available to install e2e dependencies.
-
-EOF
-    echo "wrote ../${report_path}"
-    popd >/dev/null
-    exit 2
-  fi
-fi
-
-# Ensure Chromium runtime exists for Playwright.
-"$node_bin" ./node_modules/playwright/cli.js install chromium >/dev/null
-
-setup_force_flag="${PRD05A_METAMASK_FORCE_SETUP:-0}"
-setup_cmd=("$node_bin" ./node_modules/@synthetixio/synpress/dist/cli.js wallet-setup --headless)
-if [[ "$setup_force_flag" == "1" ]]; then
-  setup_cmd+=(--force)
-fi
-
-set +e
-(
-  echo "[cache] building synpress metamask cache"
-  HEADLESS=true "${setup_cmd[@]}"
-  setup_rc=$?
-  if [[ $setup_rc -ne 0 ]]; then
-    echo "[cache] failed rc=${setup_rc}"
-    exit $setup_rc
-  fi
-
-  echo "[preflight] validating cached metamask state after unlock"
-  HEADLESS=true "$node_bin" ./tests/metamask/metamask-cache-preflight.mjs
-  preflight_rc=$?
-  if [[ $preflight_rc -ne 0 ]]; then
-    echo "[preflight] failed rc=${preflight_rc}"
-    exit $preflight_rc
-  fi
-
-  echo "[test] running metamask playwright suite"
-  HEADLESS=true "$node_bin" ./node_modules/playwright/cli.js test -c playwright.metamask.config.ts tests/metamask/metamask-eip1193.spec.mjs --project=chromium
-) >"../${log_path}" 2>&1
-rc=$?
-set -e
-
-popd >/dev/null
-
-status="FAIL"
-if [[ $rc -eq 0 ]]; then
-  status="PASS"
-fi
-
-cat >"$report_path" <<EOF
-# C5 MetaMask E2E Report
-
-Generated: ${timestamp}
+Run ID: ${run_id}
+Schema: ${PRD05A_SCHEMA_VERSION}
 
 Status: ${status}
+Taxonomy: ${taxonomy}
+
+Reason:
+- ${reason}
+
+## Runtime Profile
+
+- Driver mode: \`${driver_mode}\`
+- Release-gate driver: \`${release_gate_driver}\`
+- Node: \`${node_version}\`
+- Chromium binary: \`${chromium_bin}\`
+- Chromium version: \`${chromium_version}\`
+- Locale: \`${locale_value}\` (expected prefix: \`${expected_locale_prefix}\`)
+- Headed enforcement: \`enabled\`
+- xvfb wrapper: \`forced on Linux by default (disable with PRD05A_FORCE_XVFB=0)\`
 
 ## Scope
 
 - Chromium + MetaMask extension runtime via Synpress.
 - Cache preflight that validates post-unlock state is not onboarding.
 - EIP-1193 smoke coverage:
-  - \`eth_requestAccounts\`
-  - \`personal_sign\`
-  - \`eth_signTypedData_v4\`
-  - \`eth_sendTransaction\`
+  - \`eth_requestAccounts\` (\`MM-PARITY-001\`)
+  - \`personal_sign\` (\`MM-PARITY-002\`)
+  - \`eth_signTypedData_v4\` (\`MM-PARITY-003\`)
+  - \`eth_sendTransaction\` (\`MM-PARITY-004\`)
 
 ## Artifacts
 
 - Log: \`${log_path}\`
+- JSON: \`${json_path}\`
 - Playwright report dir: \`e2e/playwright-report-metamask\`
-
-## Configuration
-
-- Wallet password env: \`PRD05A_METAMASK_PASSWORD\` (optional, default deterministic test value)
-- Wallet seed env: \`PRD05A_METAMASK_SEED\` (optional, defaults to Foundry test mnemonic)
-- Setup force env: \`PRD05A_METAMASK_FORCE_SETUP=1\` (optional; rebuilds Synpress cache)
-- Recipient env: \`PRD05A_METAMASK_RECIPIENT\` (optional)
-- Base URL env: \`PRD05A_E2E_BASE_URL\` (optional, default \`http://localhost:7272\`)
-- Skip webserver env: \`PRD05A_E2E_SKIP_WEBSERVER=1\` (optional)
-- Node binary env: \`PRD05A_NODE_BIN\` (optional override)
-
 EOF
 
-echo "wrote $report_path"
+  prd05a_write_json \
+    "$json_path" \
+    "$PRD05A_SCHEMA_VERSION" \
+    "$timestamp" \
+    "$run_id" \
+    "$status" \
+    "$taxonomy" \
+    "$driver_mode" \
+    "$release_gate_driver" \
+    "$node_version" \
+    "$chromium_bin" \
+    "$chromium_version" \
+    "$locale_value" \
+    "$artifacts_json" \
+    "$reason"
+}
 
-if [[ "$status" == "PASS" ]]; then
+node_bin="$(prd05a_resolve_node || true)"
+if [[ -z "$node_bin" ]]; then
+  node_version="NOT_AVAILABLE"
+  reason="Node.js runtime is not available. Set PRD05A_NODE_BIN to a Node v20 binary."
+  write_reports
+  exit 2
+fi
+
+node_major="$(prd05a_node_major "$node_bin")"
+node_version="$(prd05a_node_version "$node_bin")"
+if [[ "$node_major" != "20" ]]; then
+  reason="Node major version must be 20.x for deterministic C5 runs (found ${node_version})."
+  write_reports
+  exit 2
+fi
+
+if [[ "${HEADLESS:-}" == "true" || "${HEADLESS:-}" == "1" ]]; then
+  reason="HEADLESS mode is disallowed for extension E2E. Run headed with xvfb when DISPLAY is unavailable."
+  write_reports
+  exit 2
+fi
+
+if prd05a_should_use_xvfb && ! command -v xvfb-run >/dev/null 2>&1; then
+  reason="xvfb-run is required for deterministic extension E2E on Linux (set PRD05A_FORCE_XVFB=0 to opt out)."
+  write_reports
+  exit 2
+fi
+
+if [[ "$profile_check_only" != "1" ]]; then
+  if ! command -v anvil >/dev/null 2>&1; then
+    reason="anvil is not available in PATH."
+    write_reports
+    exit 2
+  fi
+
+  if ! command -v trunk >/dev/null 2>&1; then
+    reason="trunk is not available in PATH."
+    write_reports
+    exit 2
+  fi
+fi
+
+export LANG="${PRD05A_LANG:-en_US.UTF-8}"
+export LC_ALL="${PRD05A_LC_ALL:-en_US.UTF-8}"
+locale_value="${LANG}"
+
+set +e
+(
+  echo "[header] schema_version=${PRD05A_SCHEMA_VERSION}"
+  echo "[header] run_id=${run_id}"
+  echo "[header] driver_mode=${driver_mode}"
+  echo "[header] release_gate_driver=${release_gate_driver}"
+  echo "[header] node_version=${node_version}"
+  echo "[header] chromium_bin=${chromium_bin}"
+  echo "[header] chromium_version=${chromium_version}"
+  echo "[header] lang=${LANG}"
+  echo "[header] lc_all=${LC_ALL}"
+
+  pushd e2e >/dev/null
+
+  if [[ ! -d node_modules ]]; then
+    if command -v npm >/dev/null 2>&1; then
+      npm install --silent >/dev/null
+    else
+      echo "[setup] npm unavailable for dependency install"
+      exit 20
+    fi
+  fi
+
+  "$node_bin" ./node_modules/playwright/cli.js install chromium >/dev/null
+
+  echo "[profile] running runtime profile check"
+  PRD05A_EXPECTED_LOCALE_PREFIX="${expected_locale_prefix}" \
+    prd05a_with_display "$node_bin" ./tests/metamask/runtime-profile-check.mjs || exit 21
+
+  if [[ "$profile_check_only" == "1" ]]; then
+    popd >/dev/null
+    exit 0
+  fi
+
+  setup_force_flag="${PRD05A_METAMASK_FORCE_SETUP:-0}"
+  setup_cmd=("$node_bin" ./node_modules/@synthetixio/synpress/dist/cli.js wallet-setup)
+  if [[ "$setup_force_flag" == "1" ]]; then
+    setup_cmd+=(--force)
+  fi
+
+  echo "[cache] building synpress metamask cache (headed)"
+  prd05a_with_display "${setup_cmd[@]}" || exit 31
+
+  echo "[preflight] validating cached metamask state"
+  PRD05A_EXPECTED_LOCALE_PREFIX="${expected_locale_prefix}" \
+    prd05a_with_display "$node_bin" ./tests/metamask/metamask-cache-preflight.mjs || exit 32
+
+  echo "[test] running metamask playwright suite"
+  prd05a_with_display "$node_bin" ./node_modules/playwright/cli.js test -c playwright.metamask.config.ts tests/metamask/metamask-eip1193.spec.mjs --project=chromium || exit 33
+
+  popd >/dev/null
+) >"$log_path" 2>&1
+rc=$?
+set -e
+
+if [[ $rc -eq 0 ]]; then
+  status="PASS"
+  taxonomy="NONE"
+  if [[ "$profile_check_only" == "1" ]]; then
+    reason="Runtime profile check passed."
+  else
+    reason="C5 MetaMask runtime gate passed."
+  fi
+  write_reports
   exit 0
 fi
 
+status="FAIL"
+taxonomy="APP_FAIL"
+reason="MetaMask runtime gate failed. See ${log_path}."
+
+case "$rc" in
+  20|21)
+    status="BLOCKED"
+    taxonomy="ENV_BLOCKER"
+    reason="Runtime profile prerequisites failed before wallet execution."
+    ;;
+  31|32)
+    taxonomy="HARNESS_FAIL"
+    reason="Wallet bootstrap or preflight convergence failed."
+    ;;
+  33)
+    taxonomy="APP_FAIL"
+    reason="Parity smoke assertions failed in runtime suite."
+    ;;
+  *)
+    taxonomy="APP_FAIL"
+    ;;
+esac
+
+if rg -qi "metamask had trouble starting|background connection unresponsive" "$log_path"; then
+  taxonomy="WALLET_FAIL"
+  reason="MetaMask extension runtime became unresponsive."
+fi
+
+write_reports
 exit 1

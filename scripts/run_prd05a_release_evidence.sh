@@ -4,7 +4,12 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 
-timestamp="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+source "$ROOT_DIR/scripts/lib/prd05a_e2e_common.sh"
+
+timestamp="$(prd05a_now_utc)"
+run_id="$(prd05a_run_id)"
+summary_md="local/reports/prd05a/C10-release-evidence-summary.md"
+summary_json="local/reports/prd05a/C10-release-evidence-summary.json"
 
 scripts/check_signing_boundaries.sh
 scripts/check_prd05a_traceability.sh
@@ -20,10 +25,12 @@ scripts/run_prd05a_compat_matrix.sh
 scripts/run_prd05a_hardware_smoke.sh
 
 mkdir -p local/reports/prd05a
-cat > local/reports/prd05a/C10-release-evidence-summary.md <<EOF
+cat >"$summary_md" <<EOF
 # C10 Release Evidence Summary
 
 Generated: ${timestamp}
+Run ID: ${run_id}
+Schema: ${PRD05A_SCHEMA_VERSION}
 
 ## Executed Gates
 
@@ -35,9 +42,9 @@ Generated: ${timestamp}
 6. Performance report: local/reports/prd05a/C6-performance-report.md
 7. Differential parity report: local/reports/prd05a/C9-differential-parity-report.md
 8. Safe service live validation report: local/reports/prd05a/C2-safe-service-live-report.md
-9. MetaMask preflight + Playwright E2E report: local/reports/prd05a/C5-metamask-e2e-report.md (details in local/reports/prd05a/C5-metamask-e2e.log)
+9. MetaMask preflight + Playwright E2E report: local/reports/prd05a/C5-metamask-e2e-report.md
 10. Compatibility matrix report: local/reports/prd05a/C5-compatibility-matrix-report.md
-11. Hardware passthrough smoke report: local/reports/prd05a/C5-hardware-passthrough-smoke.md
+11. Hardware passthrough smoke report (deferred/non-blocking for hot-wallet release): local/reports/prd05a/C5-hardware-passthrough-smoke.md
 
 ## Milestone Discipline
 
@@ -45,4 +52,28 @@ Generated: ${timestamp}
 - Release checklist tracked in prds/05A-RELEASE-GATE-CHECKLIST.md
 EOF
 
-echo "wrote local/reports/prd05a/C10-release-evidence-summary.md"
+cat >"$summary_json" <<EOF
+{
+  "schema_version": "${PRD05A_SCHEMA_VERSION}",
+  "generated": "${timestamp}",
+  "run_id": "${run_id}",
+  "status": "PASS",
+  "reports": {
+    "performance": "local/reports/prd05a/C6-performance-report.md",
+    "differential": "local/reports/prd05a/C9-differential-parity-report.md",
+    "safe_service_live": "local/reports/prd05a/C2-safe-service-live-report.md",
+    "metamask_e2e": "local/reports/prd05a/C5-metamask-e2e-report.md",
+    "metamask_e2e_json": "local/reports/prd05a/C5-metamask-e2e.json",
+    "compat_matrix": "local/reports/prd05a/C5-compatibility-matrix-report.md",
+    "compat_matrix_json": "local/reports/prd05a/C5-compatibility-matrix-report.json",
+    "hardware_smoke": "local/reports/prd05a/C5-hardware-passthrough-smoke.md"
+  },
+  "artifacts": {
+    "markdown_summary": "${summary_md}",
+    "json_summary": "${summary_json}"
+  }
+}
+EOF
+
+echo "wrote ${summary_md}"
+echo "wrote ${summary_json}"

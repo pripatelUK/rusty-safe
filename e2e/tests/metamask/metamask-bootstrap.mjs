@@ -1,5 +1,19 @@
 import { unlockForFixture } from "@synthetixio/synpress-metamask/playwright";
 
+async function ensureEnglishLocale(page) {
+  const expectedPrefix = (process.env.PRD05A_EXPECTED_LOCALE_PREFIX ?? "en").toLowerCase();
+  const locale = await page
+    .evaluate(() => {
+      return navigator.language ?? (navigator.languages?.[0] ?? "unknown");
+    })
+    .catch(() => "unknown");
+  const observed = String(locale).toLowerCase();
+  console.log(`[metamask-bootstrap] locale=${observed}`);
+  if (!observed.startsWith(expectedPrefix)) {
+    throw new Error(`metamask-bootstrap-locale-mismatch:${observed}:expected-${expectedPrefix}`);
+  }
+}
+
 async function detectState(page) {
   const onboardingExistingVisible = await page
     .getByRole("button", { name: /i have an existing wallet/i })
@@ -89,6 +103,7 @@ export async function bootstrapMetaMaskRuntime({
   for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
     await page.goto(homeUrl);
     await page.waitForTimeout(1000);
+    await ensureEnglishLocale(page);
 
     const state = await detectState(page);
     console.log(`[metamask-bootstrap] attempt=${attempt + 1} state=${JSON.stringify(state)}`);

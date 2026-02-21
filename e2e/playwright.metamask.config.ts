@@ -16,6 +16,8 @@ export default defineConfig({
   ],
   use: {
     baseURL: baseUrl,
+    headless: false,
+    locale: "en-US",
     trace: "retain-on-failure",
     screenshot: "only-on-failure",
     video: "retain-on-failure",

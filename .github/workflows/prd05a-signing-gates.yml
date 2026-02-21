@@ -13,8 +13,16 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Setup Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
+
+      - name: E2E runtime profile check (headed + locale + node pin)
+        run: ./scripts/run_prd05a_metamask_e2e.sh --profile-check
 
       - name: Boundary checks
         run: ./scripts/check_signing_boundaries.sh

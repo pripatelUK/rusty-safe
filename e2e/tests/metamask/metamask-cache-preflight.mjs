@@ -30,7 +30,8 @@ async function run() {
 
   const context = await chromium.launchPersistentContext(tempDir, {
     headless: false,
-    args: [`--disable-extensions-except=${extensionPath}`, "--headless=new"],
+    locale: "en-US",
+    args: [`--disable-extensions-except=${extensionPath}`, "--lang=en-US"],
   });
 
   try {
