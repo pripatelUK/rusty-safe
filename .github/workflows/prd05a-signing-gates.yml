@@ -4,9 +4,12 @@ on:
   pull_request:
   push:
     branches: [main, sign-tx]
+  schedule:
+    - cron: "15 3 * * *"
 
 jobs:
   prd05a-gates:
+    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
 
     steps:
@@ -23,6 +26,9 @@ jobs:
 
       - name: E2E runtime profile check (headed + locale + node pin)
         run: ./scripts/run_prd05a_metamask_e2e.sh --profile-check
+
+      - name: Phase discipline checks
+        run: ./scripts/check_prd05a_phase_discipline.sh
 
       - name: Boundary checks
         run: ./scripts/check_signing_boundaries.sh
@@ -44,3 +50,24 @@ jobs:
 
       - name: Differential parity harness
         run: ./scripts/run_prd05a_differential.sh
+
+      - name: Driver comparison report
+        run: PRD05A_DRIVER_COMPARE_TIMEOUT_SECS=90 ./scripts/run_prd05a_driver_comparison.sh
+
+      - name: PR soak gate (5-run)
+        run: PRD05A_SOAK_PROFILE_ONLY=1 ./scripts/run_prd05a_metamask_soak.sh pr
+
+  prd05a-daily-soak:
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Daily soak gate (20-run)
+        run: PRD05A_SOAK_PROFILE_ONLY=1 ./scripts/run_prd05a_metamask_soak.sh daily

@@ -121,14 +121,21 @@ Delivered:
    - `e2e/wallet-setup/metamask.anvil.setup.mjs`
    - `e2e/tests/metamask/metamask-eip1193.spec.mjs`
    - `e2e/playwright.metamask.config.ts`
+   - `e2e/tests/metamask/drivers/*`
+   - `e2e/tests/metamask/scenario-manifest.mjs`
+   - `e2e/tests/metamask/failure-taxonomy*.mjs`
 5. Reports:
    - `local/reports/prd05a/C5-metamask-e2e-report.md`
    - `local/reports/prd05a/C5-e0-determinism-report.md`
    - `local/reports/prd05a/C5-e1-driver-interface-report.md`
+   - `local/reports/prd05a/C5-dappwright-investigation.md`
+   - `local/reports/prd05a/C5-rabby-runtime-report.md`
    - `local/reports/prd05a/C5-compatibility-matrix-report.md`
+   - `local/reports/prd05a/C5-metamask-soak-report.md`
    - `local/reports/prd05a/C5-hardware-passthrough-smoke.md`
 6. Current blockers:
-   - `E0` and `E1` gates are green; remaining execution blockers are `E2-E5` completion.
+   - `E0` and `E1` gates are green; `E2-E5` implementation is merged but connect/network runtime probes still time out in extension popup routing.
+   - `MM-PARITY-001..004` full runtime release-gate runs remain blocked on MetaMask notification popup lifecycle (`getNotificationPageAndWaitForLoad`).
    - Rabby matrix is still profile-based and requires runtime scenario execution in `E4`.
    - Deferred hardware passthrough acceptance backlog remains pending until `E5` is green; owner/target are pre-assigned (Security lead, `E5` + 14 days).
 

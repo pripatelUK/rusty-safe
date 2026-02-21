@@ -12,6 +12,7 @@ mode="${1:-${PRD05A_SOAK_MODE:-pr}}"
 report_md="local/reports/prd05a/C5-metamask-soak-report.md"
 report_json="local/reports/prd05a/C5-metamask-soak-report.json"
 runs_dir="local/reports/prd05a/soak/${run_id}"
+profile_only="${PRD05A_SOAK_PROFILE_ONLY:-0}"
 
 runs=5
 min_passes=5
@@ -34,12 +35,16 @@ fi
 pass_count=0
 fail_count=0
 blocked_count=0
-taxonomy_summary="{}"
+declare -A taxonomy_counts
 
 for ((i=1; i<=runs; i++)); do
   echo "[soak] run ${i}/${runs}"
   set +e
-  scripts/run_prd05a_metamask_e2e.sh
+  if [[ "$profile_only" == "1" ]]; then
+    scripts/run_prd05a_metamask_e2e.sh --profile-check
+  else
+    scripts/run_prd05a_metamask_e2e.sh
+  fi
   rc=$?
   set -e
 
@@ -54,13 +59,17 @@ for ((i=1; i<=runs; i++)); do
   fi
 
   status="$("$node_bin" -p "require('./${runs_dir}/run-${i}.json').status" 2>/dev/null || echo "FAIL")"
+  taxonomy="$("$node_bin" -p "require('./${runs_dir}/run-${i}.json').taxonomy" 2>/dev/null || echo "APP_FAIL")"
+  taxonomy_counts["$taxonomy"]=$(( ${taxonomy_counts["$taxonomy"]:-0} + 1 ))
+
   case "$status" in
     PASS) pass_count=$((pass_count + 1)) ;;
     BLOCKED) blocked_count=$((blocked_count + 1)) ;;
     *) fail_count=$((fail_count + 1)) ;;
   esac
-  if [[ $rc -ne 0 ]]; then
-    fail_count=$fail_count
+  if [[ $rc -ne 0 && "$status" == "PASS" ]]; then
+    fail_count=$((fail_count + 1))
+    pass_count=$((pass_count - 1))
   fi
 done
 
@@ -68,6 +77,17 @@ status="FAIL"
 if [[ $pass_count -ge $min_passes ]]; then
   status="PASS"
 fi
+
+taxonomy_summary="{"
+for key in "${!taxonomy_counts[@]}"; do
+  taxonomy_summary="${taxonomy_summary}\"$(prd05a_json_escape "$key")\": ${taxonomy_counts[$key]},"
+done
+taxonomy_summary="${taxonomy_summary%,}}"
+if [[ "$taxonomy_summary" == "{" ]]; then
+  taxonomy_summary="{}"
+fi
+
+pass_rate_pct="$(awk -v p="$pass_count" -v r="$runs" 'BEGIN { if (r == 0) { print "0.00" } else { printf "%.2f", (p*100)/r } }')"
 
 cat >"$report_md" <<EOF
 # C5 MetaMask Soak Report
@@ -79,6 +99,7 @@ Schema: ${PRD05A_SCHEMA_VERSION}
 Mode: ${mode}
 Runs: ${runs}
 Minimum passes required: ${min_passes}
+Profile-only: ${profile_only}
 
 ## Summary
 
@@ -86,11 +107,16 @@ Minimum passes required: ${min_passes}
 - Pass count: ${pass_count}
 - Fail count: ${fail_count}
 - Blocked count: ${blocked_count}
+- Pass rate: ${pass_rate_pct}%
 
 ## Cadence Contract
 
 - PR cadence: 5-run smoke soak
 - Daily cadence: 20-run scheduled soak
+- SLO thresholds:
+  - local target: >= 90% over 10 runs (reference)
+  - PR target: 5/5 pass
+  - daily target: 19/20 pass
 
 ## Artifacts
 
@@ -104,12 +130,14 @@ cat >"$report_json" <<EOF
   "generated": "${timestamp}",
   "run_id": "${run_id}",
   "mode": "${mode}",
+  "profile_only": ${profile_only},
   "runs": ${runs},
   "min_passes": ${min_passes},
   "status": "${status}",
   "pass_count": ${pass_count},
   "fail_count": ${fail_count},
   "blocked_count": ${blocked_count},
+  "pass_rate_pct": ${pass_rate_pct},
   "taxonomy_summary": ${taxonomy_summary},
   "artifacts": {
     "run_dir": "${runs_dir}",
