@@ -48,6 +48,8 @@ Anti-feature-creep policy:
 Deferred track policy:
 1. Hardware passthrough acceptance (Ledger/Trezor) is explicitly deferred until hot-wallet objectives (`E0-E5`) are complete.
 2. Hardware evidence is non-blocking for the current C5 hot-wallet release gate.
+3. Deferred hardware track `H1` owner: Security lead.
+4. Deferred hardware track `H1` target: `E5` gate date + 14 calendar days.
 
 ## 3. Target End State (Definition of Done for C5)
 
@@ -281,7 +283,9 @@ E3 Gate:
 ### E4 Tasks
 1. `E4-T1` run Rabby parity matrix and capture evidence.
 2. `E4-T2` publish MetaMask + Rabby matrix summary with known limitations and reproducer commands.
-3. `E4-T3` document deferred hardware acceptance track (`H1`) with owner and target date.
+3. `E4-T3` document deferred hardware acceptance track (`H1`) with:
+   - owner = Security lead;
+   - target = `E5` gate date + 14 calendar days.
 
 E4 Gate:
 1. Hot-wallet matrix report includes PASS/FAIL with reproduction details for each row.

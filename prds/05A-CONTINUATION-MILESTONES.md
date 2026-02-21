@@ -102,7 +102,9 @@ Deliverables:
 1. Chromium + MetaMask cache preflight run (post-unlock state validation).
 2. Chromium + MetaMask Playwright/Synpress E2E run (EOA path).
 3. Chromium + Rabby matrix run.
-4. Deferred hardware acceptance backlog entry with owner/date (post-`E5`).
+4. Deferred hardware acceptance backlog entry:
+   - owner = Security lead;
+   - target = `E5` gate date + 14 calendar days.
 
 Gate:
 1. MetaMask preflight gate must pass (`e2e/tests/metamask/metamask-cache-preflight.mjs`) with non-onboarding state after bootstrap recovery.
@@ -126,7 +128,7 @@ Delivered:
 6. Current blockers:
    - MetaMask runtime E2E still fails in notification-popup routing (`connectToDapp`/network approval flows) under current extension/runtime behavior.
    - Rabby still relies on external profile evidence.
-   - Deferred hardware passthrough acceptance backlog still needs owner/date assignment.
+   - Deferred hardware passthrough acceptance backlog remains pending until `E5` is green; owner/target are pre-assigned (Security lead, `E5` + 14 days).
 
 ### C6: Performance Harness (Completed)
 
