@@ -1,4 +1,5 @@
 import { assertWalletDriverContract } from "./wallet-driver.mjs";
+import { unlockForFixture } from "@synthetixio/synpress-metamask/playwright";
 
 async function tryAction(label, action) {
   try {
@@ -102,53 +103,19 @@ export class SynpressDriver {
       return false;
     }
 
-    const overlayCleared = await this._waitForLoadingOverlayClear(page, `${label}:unlock-overlay`, 5000);
-    if (!overlayCleared) {
-      await page.reload({ waitUntil: "domcontentloaded" }).catch(() => {});
-      await page.waitForTimeout(500).catch(() => {});
-      await this._waitForLoadingOverlayClear(page, `${label}:unlock-overlay-after-reload`, 4000);
-    }
-
-    const unlockInput = page.getByTestId("unlock-password").first();
-    const unlockInputVisible = await unlockInput.isVisible().catch(() => false);
-    const unlockInputFallback = page.getByPlaceholder(/enter your password/i).first();
-    const unlockInputFallbackVisible = await unlockInputFallback.isVisible().catch(() => false);
-
     const unlockPassword =
       this._metamask.password ?? process.env.PRD05A_METAMASK_PASSWORD ?? "Prd05aMetaMask!123";
 
     try {
-      if (unlockInputVisible) {
-        await unlockInput.fill(unlockPassword);
-      } else {
-        await unlockInputFallback.fill(unlockPassword);
-      }
+      await unlockForFixture(page, unlockPassword);
     } catch (error) {
-      console.log(`[synpress-driver] ${label} unlock-fill failed: ${String(error?.message ?? error)}`);
+      console.log(`[synpress-driver] ${label} unlockForFixture failed: ${String(error?.message ?? error)}`);
       return false;
     }
-
-    await page.keyboard.press("Enter").catch(() => {});
-    await page.waitForTimeout(600).catch(() => {});
-    if (!(await this._isUnlockSurface(page))) {
-      return true;
-    }
-
-    const unlockSubmit = page.getByTestId("unlock-submit").first();
-    let clicked = await this._clickLocator(unlockSubmit, `${label}:unlock-submit`, {
-      allowForce: true,
-    });
-    if (!clicked) {
-      const unlockButton = page.getByRole("button", { name: /unlock/i }).first();
-      clicked = await this._clickLocator(unlockButton, `${label}:unlock-button`, {
-        allowForce: true,
-      });
-    }
-    if (!clicked) {
+    if (page.isClosed()) {
       return false;
     }
-
-    await page.waitForTimeout(900).catch(() => {});
+    await page.waitForTimeout(500).catch(() => {});
     return !(await this._isUnlockSurface(page));
   }
 
