@@ -23,8 +23,48 @@ export class SynpressDriver {
     return { supported: true, delegatedTo: "fixture-bootstrap" };
   }
 
+  async _approveWithDappwrightFallback(label) {
+    try {
+      const { getWallet } = await import("@tenkeylabs/dappwright");
+      const wallet = await getWallet("metamask", this._metamask.context);
+      let lastError = null;
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        try {
+          await wallet.approve();
+          console.log(
+            `[synpress-driver] ${label} fallback approved via dappwright (attempt=${attempt + 1})`,
+          );
+          return true;
+        } catch (error) {
+          lastError = error;
+          await new Promise((resolve) => setTimeout(resolve, 1000));
+        }
+      }
+      console.log(
+        `[synpress-driver] ${label} dappwright fallback unavailable: ${String(lastError?.message ?? lastError)}`,
+      );
+      return false;
+    } catch (error) {
+      console.log(
+        `[synpress-driver] ${label} dappwright loader unavailable: ${String(error?.message ?? error)}`,
+      );
+      return false;
+    }
+  }
+
   async connectToDapp() {
-    return await tryAction("connectToDapp", () => this._metamask.connectToDapp());
+    try {
+      await this._metamask.connectToDapp();
+      return true;
+    } catch (error) {
+      console.log(`[synpress-driver] connectToDapp unavailable: ${String(error?.message ?? error)}`);
+      const pageUrls = this._metamask.context
+        .pages()
+        .filter((page) => !page.isClosed())
+        .map((page) => page.url());
+      console.log(`[synpress-driver] connectToDapp context-pages=${JSON.stringify(pageUrls)}`);
+      return await this._approveWithDappwrightFallback("connectToDapp");
+    }
   }
 
   async approveSignature() {
@@ -68,4 +108,3 @@ export class SynpressDriver {
 export function createSynpressDriver(metamask) {
   return new SynpressDriver(metamask);
 }
-

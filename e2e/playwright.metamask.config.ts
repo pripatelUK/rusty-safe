@@ -32,9 +32,10 @@ export default defineConfig({
   ],
   webServer: shouldStartWebServer
     ? {
-        command: "cd ../crates/rusty-safe && trunk serve --port 7272",
+        command: "cd ../crates/rusty-safe && NO_COLOR=true trunk serve --port 7272",
         url: baseUrl,
-        reuseExistingServer: !process.env.CI,
+        // Force a clean build/runtime each run; stale reused servers have caused false E2E failures.
+        reuseExistingServer: false,
         timeout: 180 * 1000,
       }
     : undefined,

@@ -13,6 +13,54 @@ import { createWalletDriver, resolveDriverMode } from "./drivers/driver-factory.
 let sharedMetaMaskPage;
 let sharedExtensionId;
 
+async function resolveMetaMaskHomePage(context, extensionId) {
+  const homeUrl = `chrome-extension://${extensionId}/home.html`;
+  const extensionOrigin = `chrome-extension://${extensionId}/`;
+  const extensionPages = context
+    .pages()
+    .filter((candidate) => !candidate.isClosed() && candidate.url().startsWith(extensionOrigin));
+  const homePage = extensionPages.find((candidate) => candidate.url().startsWith(homeUrl));
+  if (homePage) {
+    return homePage;
+  }
+  const existingPage = extensionPages[0];
+  if (existingPage) {
+    await existingPage.goto(homeUrl).catch(() => {});
+    return existingPage;
+  }
+  const createdPage = await context.newPage();
+  await createdPage.goto(homeUrl).catch(() => {});
+  return createdPage;
+}
+
+async function initializeMetaMaskContext(context, extensionId, walletSetup, walletPassword) {
+  const homeUrl = `chrome-extension://${extensionId}/home.html`;
+  const extensionOrigin = `chrome-extension://${extensionId}/`;
+  let page = await resolveMetaMaskHomePage(context, extensionId);
+  const bootstrap = await bootstrapMetaMaskRuntime({
+    context,
+    page,
+    extensionId,
+    walletSetup,
+    walletPassword,
+    maxAttempts: 4,
+  });
+  console.log(`[metamask-fixture] bootstrap=${JSON.stringify(bootstrap)}`);
+  page = await resolveMetaMaskHomePage(context, extensionId);
+  for (const candidate of context.pages()) {
+    if (candidate === page || candidate.isClosed()) {
+      continue;
+    }
+    if (!candidate.url().startsWith(extensionOrigin)) {
+      continue;
+    }
+    await candidate.close().catch(() => {});
+  }
+  page = context.pages().find((candidate) => candidate.url().startsWith(homeUrl)) ?? page;
+  await page.bringToFront().catch(() => {});
+  return page;
+}
+
 export const test = base.extend({
   _contextPath: async ({ browserName }, use, testInfo) => {
     const contextPath = await createTempContextDir(browserName, testInfo.testId);
@@ -47,16 +95,12 @@ export const test = base.extend({
     });
 
     sharedExtensionId = await getExtensionId(context, "MetaMask");
-    sharedMetaMaskPage = context.pages()[0] ?? (await context.newPage());
-
-    await bootstrapMetaMaskRuntime({
+    sharedMetaMaskPage = await initializeMetaMaskContext(
       context,
-      page: sharedMetaMaskPage,
-      extensionId: sharedExtensionId,
-      walletSetup: metamaskSetup,
+      sharedExtensionId,
+      metamaskSetup,
       walletPassword,
-      maxAttempts: 3,
-    });
+    );
 
     await use(context);
     await context.close();

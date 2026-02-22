@@ -1,5 +1,6 @@
 import { defineWalletSetup } from "@synthetixio/synpress";
 import { expect } from "@playwright/test";
+import { unlockForFixture } from "@synthetixio/synpress-metamask/playwright";
 
 const DEFAULT_TEST_MNEMONIC =
   "test test test test test test test test test test test junk";
@@ -43,6 +44,8 @@ async function selectTwelveWordsIfVisible(walletPage) {
 }
 
 async function fillSrpByWords(walletPage, words) {
+  const firstInput = walletPage.getByTestId("import-srp__srp-word-0");
+  await firstInput.waitFor({ state: "visible", timeout: 20000 });
   for (const [index, word] of words.entries()) {
     const input = walletPage.getByTestId(`import-srp__srp-word-${index}`);
     await input.click();
@@ -54,15 +57,33 @@ async function fillSrp(walletPage, seed, words) {
   await selectTwelveWordsIfVisible(walletPage);
 
   const srpTextarea = walletPage.getByTestId("srp-input-import__srp-note");
-  if (await srpTextarea.isVisible().catch(() => false)) {
+  const textareaVisible = await srpTextarea
+    .waitFor({ state: "visible", timeout: 12000 })
+    .then(() => true)
+    .catch(() => false);
+  if (textareaVisible) {
     await srpTextarea.click();
     await srpTextarea.fill("");
     await srpTextarea.type(seed, { delay: 10 });
     return "textarea";
   }
 
-  await fillSrpByWords(walletPage, words);
-  return "word-inputs";
+  const firstWordInput = walletPage.getByTestId("import-srp__srp-word-0");
+  const wordInputsVisible = await firstWordInput
+    .waitFor({ state: "visible", timeout: 12000 })
+    .then(() => true)
+    .catch(() => false);
+  if (wordInputsVisible) {
+    await fillSrpByWords(walletPage, words);
+    return "word-inputs";
+  }
+
+  const pageSnapshot = await walletPage
+    .locator("body")
+    .innerText()
+    .then((text) => String(text).replace(/\s+/g, " ").trim().slice(0, 220))
+    .catch(() => "");
+  throw new Error(`metamask-setup-srp-input-not-visible:${pageSnapshot}`);
 }
 
 async function runSetup(walletPage) {
@@ -125,6 +146,10 @@ async function runSetup(walletPage) {
 
   // This screen often appears after analytics and must be closed for cached state to be reusable.
   const openWalletButton = walletPage.getByRole("button", { name: /open wallet/i }).first();
+  const openWalletEnableTimeoutMs = Number.parseInt(
+    process.env.PRD05A_OPEN_WALLET_ENABLE_TIMEOUT_MS ?? "5000",
+    10,
+  );
   for (let attempt = 0; attempt < 3; attempt += 1) {
     const readyScreenVisible = await openWalletButton
       .waitFor({ state: "visible", timeout: 5000 })
@@ -143,15 +168,14 @@ async function runSetup(walletPage) {
       continue;
     }
 
-    const enabledEventually = await openWalletButton
-      .waitFor({ state: "attached", timeout: 120000 })
+    const enabledEventually = await openWalletButton.waitFor({ state: "attached", timeout: 1000 })
       .then(async () => {
-        const deadline = Date.now() + 120000;
+        const deadline = Date.now() + openWalletEnableTimeoutMs;
         while (Date.now() < deadline) {
           if (await openWalletButton.isEnabled().catch(() => false)) {
             return true;
           }
-          await walletPage.waitForTimeout(1000);
+          await walletPage.waitForTimeout(500);
         }
         return false;
       })
@@ -169,6 +193,26 @@ async function runSetup(walletPage) {
       console.log("[metamask-setup] open-wallet remained disabled; using home.html fallback");
       await walletPage.goto(`chrome-extension://${extensionId}/home.html`);
       await walletPage.waitForLoadState("domcontentloaded");
+
+      const crashVisible = await walletPage
+        .getByRole("heading", { name: /metamask had trouble starting/i })
+        .isVisible()
+        .catch(() => false);
+      if (crashVisible) {
+        const restartButton = walletPage.getByRole("button", { name: /restart metamask/i });
+        if (await restartButton.isVisible().catch(() => false)) {
+          await restartButton.click();
+          await walletPage.waitForTimeout(2000);
+        }
+      }
+
+      const unlockVisible = await walletPage
+        .getByTestId("unlock-password")
+        .isVisible()
+        .catch(() => false);
+      if (unlockVisible) {
+        await unlockForFixture(walletPage, walletPassword);
+      }
       break;
     }
 

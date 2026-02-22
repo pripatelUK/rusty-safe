@@ -18,6 +18,9 @@ allow_dappwright_release="${PRD05A_ALLOW_DAPPWRIGHT_RELEASE:-0}"
 expected_locale_prefix="${PRD05A_EXPECTED_LOCALE_PREFIX:-en}"
 scenario_grep="${PRD05A_SCENARIO_GREP:-}"
 skip_preflight="${PRD05A_SKIP_PREFLIGHT:-0}"
+e2e_base_url="${PRD05A_E2E_BASE_URL:-http://localhost:7272}"
+e2e_skip_webserver="${PRD05A_E2E_SKIP_WEBSERVER:-0}"
+e2e_port="$(printf '%s' "$e2e_base_url" | sed -E 's#^[a-zA-Z]+://[^:/]+:([0-9]+).*$#\1#')"
 profile_check_only="0"
 
 if [[ "${1:-}" == "--profile-check" ]]; then
@@ -170,6 +173,10 @@ fi
 
 export LANG="${PRD05A_LANG:-en_US.UTF-8}"
 export LC_ALL="${PRD05A_LC_ALL:-en_US.UTF-8}"
+# trunk expects NO_COLOR to be a bool string; some environments set "1", which crashes startup.
+if [[ "${NO_COLOR:-}" == "1" ]]; then
+  export NO_COLOR="true"
+fi
 locale_value="${LANG}"
 
 set +e
@@ -187,6 +194,19 @@ set +e
   echo "[header] lc_all=${LC_ALL}"
   echo "[header] scenario_grep=${scenario_grep:-all}"
   echo "[header] skip_preflight=${skip_preflight}"
+  echo "[header] e2e_base_url=${e2e_base_url}"
+  echo "[header] e2e_skip_webserver=${e2e_skip_webserver}"
+
+  if [[ "$e2e_skip_webserver" != "1" && "$e2e_port" =~ ^[0-9]+$ ]]; then
+    if command -v lsof >/dev/null 2>&1; then
+      existing_web_pids="$(lsof -tiTCP:${e2e_port} -sTCP:LISTEN || true)"
+      if [[ -n "$existing_web_pids" ]]; then
+        echo "[webserver] terminating stale listeners on :${e2e_port}: ${existing_web_pids//$'\n'/,}"
+        kill $existing_web_pids || true
+        sleep 1
+      fi
+    fi
+  fi
 
   pushd e2e >/dev/null
 

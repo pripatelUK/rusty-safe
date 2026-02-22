@@ -19,9 +19,10 @@
     "report": "npx playwright show-report"
   },
   "devDependencies": {
-    "@tenkeylabs/dappwright": "^2.13.3",
-    "@playwright/test": "^1.57.0",
+    "@playwright/test": "^1.48.2",
     "@synthetixio/synpress": "4.1.2",
+    "@tenkeylabs/dappwright": "^2.13.3",
+    "playwright-core": "^1.48.2",
     "typescript": "^5.9.3"
   }
 }

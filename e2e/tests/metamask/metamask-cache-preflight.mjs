@@ -11,6 +11,23 @@ import { bootstrapMetaMaskRuntime } from "./metamask-bootstrap.mjs";
 
 const { chromium } = playwrightPkg;
 
+async function resolveMetaMaskHomePage(context, extensionId) {
+  const homeUrl = `chrome-extension://${extensionId}/home.html`;
+  const extensionOrigin = `chrome-extension://${extensionId}/`;
+
+  const existing = context.pages().find((page) => page.url().startsWith(extensionOrigin));
+  if (existing) {
+    if (!existing.url().startsWith(homeUrl)) {
+      await existing.goto(homeUrl);
+    }
+    return existing;
+  }
+
+  const created = await context.newPage();
+  await created.goto(homeUrl);
+  return created;
+}
+
 async function run() {
   const hash = metamaskSetup.hash;
   const thisFile = fileURLToPath(import.meta.url);
@@ -36,7 +53,7 @@ async function run() {
 
   try {
     const extensionId = await getExtensionId(context, "MetaMask");
-    const page = context.pages()[0] ?? (await context.newPage());
+    const page = await resolveMetaMaskHomePage(context, extensionId);
     const bootstrap = await bootstrapMetaMaskRuntime({
       context,
       page,

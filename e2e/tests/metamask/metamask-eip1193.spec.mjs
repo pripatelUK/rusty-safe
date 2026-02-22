@@ -26,6 +26,100 @@ async function tryWalletAction(label, action) {
   }
 }
 
+async function requestWithUserGesture(page, method, params) {
+  const triggerId = `__rustySafeTrigger_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+  await page.bringToFront();
+  await page.waitForFunction(() => document.readyState === "complete", null, { timeout: 10000 });
+  await page.evaluate(
+    ({ id, requestMethod, requestParams }) => {
+      window.__rustySafeGestureRequests = window.__rustySafeGestureRequests ?? {};
+
+      const existing = document.getElementById(id);
+      if (existing) {
+        existing.remove();
+      }
+
+      const trigger = document.createElement("button");
+      trigger.id = id;
+      trigger.type = "button";
+      trigger.textContent = "wallet-trigger";
+      trigger.style.position = "fixed";
+      trigger.style.top = "6px";
+      trigger.style.left = "6px";
+      trigger.style.width = "12px";
+      trigger.style.height = "12px";
+      trigger.style.opacity = "0.01";
+      trigger.style.zIndex = "2147483647";
+      trigger.style.pointerEvents = "auto";
+
+      trigger.addEventListener(
+        "click",
+        () => {
+          const payload = { method: requestMethod };
+          if (Array.isArray(requestParams)) {
+            payload.params = requestParams;
+          }
+          window.__rustySafeGestureRequests[id] = window.ethereum.request(payload);
+        },
+        { once: true },
+      );
+
+      document.body.appendChild(trigger);
+    },
+    {
+      id: triggerId,
+      requestMethod: method,
+      requestParams: Array.isArray(params) ? params : null,
+    },
+  );
+
+  const providerPromise = page.evaluate(async (id) => {
+    const deadline = Date.now() + 70000;
+    while (Date.now() < deadline) {
+      const pending = window.__rustySafeGestureRequests?.[id];
+      if (pending) {
+        try {
+          const result = await pending;
+          return { ok: true, result };
+        } catch (error) {
+          let serialized;
+          try {
+            serialized = JSON.parse(JSON.stringify(error));
+          } catch (_stringifyError) {
+            serialized = undefined;
+          }
+          return {
+            ok: false,
+            error: {
+              code: error?.code ?? null,
+              message: error?.message ?? String(error),
+              data: error?.data ?? null,
+              name: error?.name ?? null,
+              stack: error?.stack ?? null,
+              serialized,
+            },
+          };
+        }
+      }
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    throw new Error(`gesture-request-not-started:${id}`);
+  }, triggerId);
+
+  await page.click(`#${triggerId}`, { force: true });
+  const started = await page.evaluate((id) => {
+    return Boolean(window.__rustySafeGestureRequests?.[id]);
+  }, triggerId);
+  console.log(`[metamask-e2e] gesture-started method=${method} started=${started}`);
+  const outcome = await providerPromise;
+  if (!outcome?.ok) {
+    throw new Error(
+      `provider-request-failed:${method}:${JSON.stringify(outcome?.error ?? { message: "unknown" })}`,
+    );
+  }
+  return outcome.result;
+}
+
 async function ensureProvider(page) {
   const hasProvider = await page.evaluate(() => typeof window.ethereum !== "undefined");
   expect(hasProvider).toBe(true);
@@ -36,9 +130,7 @@ async function ensureConnectedAccount(page, walletDriver) {
     return await window.ethereum.request({ method: "eth_accounts" });
   });
   if (accounts.length === 0) {
-    const accountsPromise = page.evaluate(async () => {
-      return await window.ethereum.request({ method: "eth_requestAccounts" });
-    });
+    const accountsPromise = requestWithUserGesture(page, "eth_requestAccounts");
     await tryWalletAction("connectToDapp", () => walletDriver.connectToDapp());
     accounts = await awaitWithTimeout(accountsPromise, 45000, "eth_requestAccounts");
   }
@@ -118,9 +210,7 @@ for (const scenario of MM_PARITY_SCENARIOS) {
         return;
       }
 
-      const requestPromise = page.evaluate(async () => {
-        return await window.ethereum.request({ method: "eth_requestAccounts" });
-      });
+      const requestPromise = requestWithUserGesture(page, "eth_requestAccounts");
       await tryWalletAction("connectToDapp", () => walletDriver.connectToDapp());
       const accounts = await awaitWithTimeout(requestPromise, scenario.timeoutMs, scenario.method);
       expect(accounts.length).toBeGreaterThan(0);

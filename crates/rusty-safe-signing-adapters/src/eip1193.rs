@@ -140,7 +140,9 @@ impl Eip1193Adapter {
 
         #[cfg(target_arch = "wasm32")]
         if matches!(adapter.mode, ProviderMode::Browser) {
-            let _ = adapter.register_browser_hooks();
+            // Avoid eager provider.on(...) registration at startup.
+            // In MetaMask 13.13.1 this can leave eth_requestAccounts pending with no notification popup
+            // in our Chromium automation runtime; snapshot reads remain safe for initial state.
             let _ = adapter.refresh_browser_snapshot();
         }
 
