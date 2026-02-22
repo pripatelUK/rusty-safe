@@ -35,7 +35,6 @@ async function resolveMetaMaskHomePage(context, extensionId) {
 
 async function initializeMetaMaskContext(context, extensionId, walletSetup, walletPassword) {
   const homeUrl = `chrome-extension://${extensionId}/home.html`;
-  const extensionOrigin = `chrome-extension://${extensionId}/`;
   let page = await resolveMetaMaskHomePage(context, extensionId);
   const bootstrap = await bootstrapMetaMaskRuntime({
     context,
@@ -47,15 +46,8 @@ async function initializeMetaMaskContext(context, extensionId, walletSetup, wall
   });
   console.log(`[metamask-fixture] bootstrap=${JSON.stringify(bootstrap)}`);
   page = await resolveMetaMaskHomePage(context, extensionId);
-  for (const candidate of context.pages()) {
-    if (candidate === page || candidate.isClosed()) {
-      continue;
-    }
-    if (!candidate.url().startsWith(extensionOrigin)) {
-      continue;
-    }
-    await candidate.close().catch(() => {});
-  }
+  // Do not aggressively close extension tabs here.
+  // MetaMask may keep multiple home surfaces that are involved in routing request approvals.
   page = context.pages().find((candidate) => candidate.url().startsWith(homeUrl)) ?? page;
   await page.bringToFront().catch(() => {});
   return page;

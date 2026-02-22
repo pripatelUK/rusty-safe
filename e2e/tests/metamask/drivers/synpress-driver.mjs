@@ -57,7 +57,6 @@ export class SynpressDriver {
       const shouldNormalizeRoute =
         url.includes("#notifications/") ||
         url.includes("#account-list") ||
-        url.includes("#unlock") ||
         url.includes("#onboarding/");
       if (shouldNormalizeRoute) {
         await existingHome.goto(homeRoot, { waitUntil: "domcontentloaded" }).catch(() => {});
@@ -67,6 +66,102 @@ export class SynpressDriver {
     const page = await context.newPage();
     await page.goto(homeRoot, { waitUntil: "domcontentloaded" }).catch(() => {});
     return page;
+  }
+
+  async _waitForLoadingOverlayClear(page, label, timeoutMs = 4000) {
+    const overlay = page.locator(".loading-overlay").first();
+    const visible = await overlay.isVisible().catch(() => false);
+    if (!visible) {
+      return true;
+    }
+    const hidden = await overlay
+      .waitFor({ state: "hidden", timeout: timeoutMs })
+      .then(() => true)
+      .catch(() => false);
+    if (!hidden) {
+      console.log(`[synpress-driver] ${label} loading-overlay still visible after ${timeoutMs}ms`);
+    }
+    return hidden;
+  }
+
+  async _isUnlockSurface(page) {
+    if (page.url().includes("#unlock")) {
+      return true;
+    }
+    const unlockInput = page.getByTestId("unlock-password").first();
+    if (await unlockInput.isVisible().catch(() => false)) {
+      return true;
+    }
+    const unlockInputFallback = page.getByPlaceholder(/enter your password/i).first();
+    return await unlockInputFallback.isVisible().catch(() => false);
+  }
+
+  async _unlockPageIfNeeded(page, label) {
+    const unlockSurface = await this._isUnlockSurface(page);
+    if (!unlockSurface) {
+      return false;
+    }
+
+    const overlayCleared = await this._waitForLoadingOverlayClear(page, `${label}:unlock-overlay`, 5000);
+    if (!overlayCleared) {
+      await page.reload({ waitUntil: "domcontentloaded" }).catch(() => {});
+      await page.waitForTimeout(500).catch(() => {});
+      await this._waitForLoadingOverlayClear(page, `${label}:unlock-overlay-after-reload`, 4000);
+    }
+
+    const unlockInput = page.getByTestId("unlock-password").first();
+    const unlockInputVisible = await unlockInput.isVisible().catch(() => false);
+    const unlockInputFallback = page.getByPlaceholder(/enter your password/i).first();
+    const unlockInputFallbackVisible = await unlockInputFallback.isVisible().catch(() => false);
+
+    const unlockPassword =
+      this._metamask.password ?? process.env.PRD05A_METAMASK_PASSWORD ?? "Prd05aMetaMask!123";
+
+    try {
+      if (unlockInputVisible) {
+        await unlockInput.fill(unlockPassword);
+      } else {
+        await unlockInputFallback.fill(unlockPassword);
+      }
+    } catch (error) {
+      console.log(`[synpress-driver] ${label} unlock-fill failed: ${String(error?.message ?? error)}`);
+      return false;
+    }
+
+    await page.keyboard.press("Enter").catch(() => {});
+    await page.waitForTimeout(600).catch(() => {});
+    if (!(await this._isUnlockSurface(page))) {
+      return true;
+    }
+
+    const unlockSubmit = page.getByTestId("unlock-submit").first();
+    let clicked = await this._clickLocator(unlockSubmit, `${label}:unlock-submit`, {
+      allowForce: true,
+    });
+    if (!clicked) {
+      const unlockButton = page.getByRole("button", { name: /unlock/i }).first();
+      clicked = await this._clickLocator(unlockButton, `${label}:unlock-button`, {
+        allowForce: true,
+      });
+    }
+    if (!clicked) {
+      return false;
+    }
+
+    await page.waitForTimeout(900).catch(() => {});
+    return !(await this._isUnlockSurface(page));
+  }
+
+  async _unlockAnyExtensionPages(context, extensionId, label) {
+    let unlockedAny = false;
+    for (const extensionPage of this._extensionPages(context, extensionId)) {
+      await extensionPage.bringToFront().catch(() => {});
+      const unlocked = await this._unlockPageIfNeeded(extensionPage, label);
+      if (unlocked) {
+        unlockedAny = true;
+      }
+    }
+    return unlockedAny;
   }
 
   async _recoverExtensionRuntime(label) {
@@ -111,31 +206,7 @@ export class SynpressDriver {
       await page.waitForTimeout(1500).catch(() => {});
     }
 
-    const unlockPassword =
-      this._metamask.password ?? process.env.PRD05A_METAMASK_PASSWORD ?? "Prd05aMetaMask!123";
-    const unlockRoute = page.url().includes("#unlock");
-    const unlockInput = page.getByTestId("unlock-password").first();
-    const unlockInputVisible = await unlockInput.isVisible().catch(() => false);
-    const unlockInputFallback = page.getByPlaceholder(/enter your password/i).first();
-    const unlockInputFallbackVisible = await unlockInputFallback.isVisible().catch(() => false);
-    if (unlockRoute || unlockInputVisible || unlockInputFallbackVisible) {
-      try {
-        if (unlockInputVisible) {
-          await unlockInput.fill(unlockPassword);
-        } else {
-          await unlockInputFallback.fill(unlockPassword);
-        }
-        const unlockSubmit = page.getByTestId("unlock-submit").first();
-        if (await unlockSubmit.isVisible().catch(() => false)) {
-          await unlockSubmit.click();
-        } else {
-          await page.getByRole("button", { name: /unlock/i }).first().click();
-        }
-      } catch (error) {
-        console.log(`[synpress-driver] ${label} unlock failed: ${String(error?.message ?? error)}`);
-      }
-      await page.waitForTimeout(1000).catch(() => {});
-    }
+    await this._unlockAnyExtensionPages(context, extensionId, `${label}:recover-unlock`).catch(() => false);
 
     const onboardingVisible = page.url().includes("#onboarding/");
     if (onboardingVisible) {
@@ -146,19 +217,6 @@ export class SynpressDriver {
     return true;
   }
 
-  async _ensureNotificationPage(context, extensionId) {
-    const notificationPrefix = `chrome-extension://${extensionId}/notification.html`;
-    const existing = context
-      .pages()
-      .find((page) => !page.isClosed() && page.url().startsWith(notificationPrefix));
-    if (existing) {
-      return existing;
-    }
-    const created = await context.newPage();
-    await created.goto(notificationPrefix, { waitUntil: "domcontentloaded" }).catch(() => {});
-    return created;
-  }
-
   async _describePage(page) {
     const url = page.url();
     const body = await page
@@ -166,14 +224,19 @@ export class SynpressDriver {
       .innerText()
       .then((text) => String(text).replace(/\s+/g, " ").trim().slice(0, 220))
       .catch(() => "");
-    const buttons = await page
-      .evaluate(() => {
-        return Array.from(document.querySelectorAll("button"))
-          .map((button) => (button.textContent ?? "").replace(/\s+/g, " ").trim())
-          .filter((text) => text.length > 0)
-          .slice(0, 8);
-      })
-      .catch(() => []);
+    const buttons = [];
+    const buttonLocator = page.locator("button");
+    const buttonCount = await buttonLocator.count().catch(() => 0);
+    for (let index = 0; index < Math.min(buttonCount, 8); index += 1) {
+      const text = await buttonLocator
+        .nth(index)
+        .innerText()
+        .then((value) => String(value).replace(/\s+/g, " ").trim())
+        .catch(() => "");
+      if (text.length > 0) {
+        buttons.push(text);
+      }
+    }
     const interestingTestIds = [
       "account-options-menu-button",
       "account-menu-icon",
@@ -195,14 +258,8 @@ export class SynpressDriver {
         visibleTestIds.push(testId);
       }
     }
-    const indexedTestIds = await page
-      .evaluate(() => {
-        return Array.from(document.querySelectorAll("[data-testid]"))
-          .map((element) => element.getAttribute("data-testid"))
-          .filter((value) => typeof value === "string" && value.length > 0)
-          .slice(0, 80);
-      })
-      .catch(() => []);
+    // Avoid page.evaluate on MetaMask pages because LavaMoat scuttling can reject eval-based execution.
+    const indexedTestIds = [];
     return { url, body, buttons, visibleTestIds, indexedTestIds };
   }
 
@@ -264,6 +321,7 @@ export class SynpressDriver {
 
   async _clickApprovalControls(page) {
     let clicked = 0;
+    await this._waitForLoadingOverlayClear(page, "click-approval-controls");
     const pageUrl = page.url();
     if (pageUrl.includes("#account-list")) {
       await page.keyboard.press("Escape").catch(() => {});
@@ -295,12 +353,6 @@ export class SynpressDriver {
     }
 
     const testIds = [
-      "notifications-menu-item",
-      "global-menu-notification-count",
-      "notifications-page",
-      "notifications-list",
-      "notification-details-back-button",
-      "wallet-initiated-header-back-button",
       "page-container-footer-next",
       "confirmation-submit-button",
       "confirm-footer-button",
@@ -310,7 +362,6 @@ export class SynpressDriver {
       "allow-authorize-button",
       "connect-more-accounts-button",
       "connect-more-accounts",
-      "notifications-tag-counter__unread-dot",
       "connect-page",
       "confirmation_request-section",
     ];
@@ -369,32 +420,10 @@ export class SynpressDriver {
 
     let totalClicks = 0;
 
-    for (let attempt = 0; attempt < 20; attempt += 1) {
-      const homePage = await this._ensureExtensionHomePage(context, extensionId).catch(() => null);
-      if (homePage) {
-        if (attempt % 3 === 1) {
-          const notificationsUrl = `chrome-extension://${extensionId}/home.html#notifications`;
-          await homePage.goto(notificationsUrl, { waitUntil: "domcontentloaded" }).catch(() => {});
-        }
-        await homePage.bringToFront().catch(() => {});
-        totalClicks += await this._clickApprovalControls(homePage);
-      }
-      if (attempt === 0 || attempt % 4 === 3) {
-        const notificationPage = await this._ensureNotificationPage(context, extensionId).catch(() => null);
-        if (notificationPage) {
-          const notificationBody = await notificationPage
-            .locator("body")
-            .innerText()
-            .then((text) => String(text).replace(/\s+/g, " ").trim())
-            .catch(() => "");
-          if (!notificationBody) {
-            await notificationPage.reload({ waitUntil: "domcontentloaded" }).catch(() => {});
-            await notificationPage.waitForTimeout(200).catch(() => {});
-          }
-          await notificationPage.bringToFront().catch(() => {});
-          totalClicks += await this._clickApprovalControls(notificationPage);
-        }
-      }
+    for (let attempt = 0; attempt < 16; attempt += 1) {
+      await this._unlockAnyExtensionPages(context, extensionId, `${label}:unlock-attempt-${attempt + 1}`).catch(
+        () => false,
+      );
 
       const pages = this._candidatePages(context, extensionId);
       for (const page of pages) {
@@ -402,10 +431,13 @@ export class SynpressDriver {
         totalClicks += await this._clickApprovalControls(page);
       }
 
-      if (totalClicks > 0 && attempt >= 2) {
+      if (totalClicks > 0 && attempt >= 1) {
         break;
       }
-      await context.waitForEvent("page", { timeout: 700 }).catch(() => {});
+      if (attempt === 5 || attempt === 10) {
+        await this._recoverExtensionRuntime(`${label}:periodic-recover-${attempt + 1}`).catch(() => false);
+      }
+      await context.waitForEvent("page", { timeout: 900 }).catch(() => {});
     }
 
     const snapshots = [];
@@ -418,18 +450,12 @@ export class SynpressDriver {
   }
 
   async connectToDapp() {
-    const initialFallback = await Promise.race([
-      this._approveFromExtensionSurfaces("connectToDapp-pre"),
-      new Promise((resolve) => setTimeout(() => resolve("timeout"), 8000)),
-    ]);
-    if (initialFallback === true) {
-      return true;
-    }
-
     try {
       await Promise.race([
         this._metamask.connectToDapp(),
-        new Promise((_, reject) => setTimeout(() => reject(new Error("synpress-connect-timeout-6000ms")), 6000)),
+        new Promise((_, reject) =>
+          setTimeout(() => reject(new Error("synpress-connect-timeout-12000ms")), 12000),
+        ),
       ]);
       return true;
     } catch (error) {
@@ -439,21 +465,27 @@ export class SynpressDriver {
         .filter((page) => !page.isClosed())
         .map((page) => page.url());
       console.log(`[synpress-driver] connectToDapp context-pages=${JSON.stringify(pageUrls)}`);
-      const fallbackPromise = this._approveFromExtensionSurfaces("connectToDapp");
       const fallbackResult = await Promise.race([
-        fallbackPromise,
+        this._approveFromExtensionSurfaces("connectToDapp"),
         new Promise((resolve) => setTimeout(() => resolve("timeout"), 12000)),
       ]);
-      if (fallbackResult !== true) {
-        const recovered = await this._recoverExtensionRuntime("connectToDapp").catch(() => false);
-        if (recovered) {
-          const retryResult = await Promise.race([
-            this._approveFromExtensionSurfaces("connectToDapp-retry"),
-            new Promise((resolve) => setTimeout(() => resolve("timeout"), 8000)),
-          ]);
-          if (retryResult === true) {
-            return true;
-          }
+      if (fallbackResult === true) {
+        return true;
+      }
+      const recovered = await this._recoverExtensionRuntime("connectToDapp").catch(() => false);
+      if (recovered) {
+        const retryResult = await Promise.race([
+          this._approveFromExtensionSurfaces("connectToDapp-retry"),
+          new Promise((resolve) => setTimeout(() => resolve("timeout"), 10000)),
+        ]);
+        if (retryResult === true) {
+          return true;
+        }
+        const synpressRetry = await tryAction("connectToDapp-post-recovery", () =>
+          this._metamask.connectToDapp(),
+        );
+        if (synpressRetry) {
+          return true;
         }
       }
       if (fallbackResult === "timeout") {

@@ -1,4 +1,4 @@
-import { defineConfig, devices } from "@playwright/test";
+import { defineConfig } from "@playwright/test";
 
 const baseUrl = process.env.PRD05A_E2E_BASE_URL ?? "http://localhost:7272";
 const shouldStartWebServer = process.env.PRD05A_E2E_SKIP_WEBSERVER !== "1";
@@ -26,9 +26,7 @@ export default defineConfig({
   projects: [
     {
       name: "chromium",
-      use: {
-        ...devices["Desktop Chrome"],
-      },
+      use: {},
     },
   ],
   webServer: shouldStartWebServer
