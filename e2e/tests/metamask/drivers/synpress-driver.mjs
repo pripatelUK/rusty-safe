@@ -417,50 +417,41 @@ export class SynpressDriver {
   }
 
   async connectToDapp() {
-    try {
-      await Promise.race([
-        this._metamask.connectToDapp(),
-        new Promise((_, reject) =>
-          setTimeout(() => reject(new Error("synpress-connect-timeout-12000ms")), 12000),
-        ),
-      ]);
+    const context = this._metamask?.context;
+    if (!context || typeof context.pages !== "function") {
+      return await tryAction("connectToDapp", () => this._metamask.connectToDapp());
+    }
+
+    const pageUrls = context
+      .pages()
+      .filter((page) => !page.isClosed())
+      .map((page) => page.url());
+    console.log(`[synpress-driver] connectToDapp context-pages=${JSON.stringify(pageUrls)}`);
+
+    const fallbackResult = await Promise.race([
+      this._approveFromExtensionSurfaces("connectToDapp"),
+      new Promise((resolve) => setTimeout(() => resolve("timeout"), 12000)),
+    ]);
+    if (fallbackResult === true) {
       return true;
-    } catch (error) {
-      console.log(`[synpress-driver] connectToDapp unavailable: ${String(error?.message ?? error)}`);
-      const pageUrls = this._metamask.context
-        .pages()
-        .filter((page) => !page.isClosed())
-        .map((page) => page.url());
-      console.log(`[synpress-driver] connectToDapp context-pages=${JSON.stringify(pageUrls)}`);
-      const fallbackResult = await Promise.race([
-        this._approveFromExtensionSurfaces("connectToDapp"),
-        new Promise((resolve) => setTimeout(() => resolve("timeout"), 12000)),
+    }
+
+    const recovered = await this._recoverExtensionRuntime("connectToDapp").catch(() => false);
+    if (recovered) {
+      const retryResult = await Promise.race([
+        this._approveFromExtensionSurfaces("connectToDapp-retry"),
+        new Promise((resolve) => setTimeout(() => resolve("timeout"), 10000)),
       ]);
-      if (fallbackResult === true) {
+      if (retryResult === true) {
         return true;
       }
-      const recovered = await this._recoverExtensionRuntime("connectToDapp").catch(() => false);
-      if (recovered) {
-        const retryResult = await Promise.race([
-          this._approveFromExtensionSurfaces("connectToDapp-retry"),
-          new Promise((resolve) => setTimeout(() => resolve("timeout"), 10000)),
-        ]);
-        if (retryResult === true) {
-          return true;
-        }
-        const synpressRetry = await tryAction("connectToDapp-post-recovery", () =>
-          this._metamask.connectToDapp(),
-        );
-        if (synpressRetry) {
-          return true;
-        }
-      }
-      if (fallbackResult === "timeout") {
-        console.log("[synpress-driver] connectToDapp fallback timed out after 12000ms");
-        return false;
-      }
-      return Boolean(fallbackResult);
     }
+
+    if (fallbackResult === "timeout") {
+      console.log("[synpress-driver] connectToDapp fallback timed out after 12000ms");
+      return false;
+    }
+    return Boolean(fallbackResult);
   }
 
   async approveSignature() {
