@@ -344,19 +344,49 @@ export async function bootstrapMetaMaskRuntime({
   page = await resolveMetaMaskHomePage(context, extensionId);
   await page.goto(homeUrl).catch(() => {});
   await sleep(1000);
-  let finalState = (await waitForReadyStateWithRecovery(context, page, extensionId, 25000)).state;
-  if (!isWalletReady(finalState) && isLoadingState(finalState)) {
-    console.log("[metamask-bootstrap] final-state still loading; forcing final reload");
-    await page.reload({ waitUntil: "domcontentloaded" }).catch(() => {});
-    await sleep(1000);
-    finalState = (await waitForReadyStateWithRecovery(context, page, extensionId, 15000)).state;
-  }
-  if (!isWalletReady(finalState) && finalState.crashVisible && finalState.crashRestartVisible) {
-    console.log("[metamask-bootstrap] final-state crash detected; attempting restart");
-    const restartButton = page.getByRole("button", { name: /restart metamask/i });
-    await restartButton.click();
-    await sleep(2000);
-    finalState = (await waitForReadyStateWithRecovery(context, page, extensionId, 15000)).state;
+  let finalReady = await waitForReadyStateWithRecovery(context, page, extensionId, 25000);
+  page = finalReady.page;
+  let finalState = finalReady.state;
+  for (let attempt = 0; attempt < 3 && !isWalletReady(finalState); attempt += 1) {
+    if (finalState.unlockVisible) {
+      console.log("[metamask-bootstrap] final-state unlock detected; attempting unlock");
+      await unlockForFixture(page, walletPassword);
+      usedUnlock = true;
+      finalReady = await waitForReadyStateWithRecovery(context, page, extensionId, 15000);
+      page = finalReady.page;
+      finalState = finalReady.state;
+      continue;
+    }
+    if (isLoadingState(finalState)) {
+      console.log("[metamask-bootstrap] final-state still loading; forcing final reload");
+      await page.reload({ waitUntil: "domcontentloaded" }).catch(() => {});
+      await sleep(1000);
+      finalReady = await waitForReadyStateWithRecovery(context, page, extensionId, 15000);
+      page = finalReady.page;
+      finalState = finalReady.state;
+      continue;
+    }
+    if (finalState.crashVisible && finalState.crashRestartVisible) {
+      console.log("[metamask-bootstrap] final-state crash detected; attempting restart");
+      const restartButton = page.getByRole("button", { name: /restart metamask/i });
+      await restartButton.click();
+      await sleep(2000);
+      finalReady = await waitForReadyStateWithRecovery(context, page, extensionId, 15000);
+      page = finalReady.page;
+      finalState = finalReady.state;
+      continue;
+    }
+    if (finalState.onboardingVisible) {
+      console.log("[metamask-bootstrap] final-state onboarding detected; attempting one-shot recovery");
+      await walletSetup.fn(context, page);
+      usedRecovery = true;
+      page = await resolveMetaMaskHomePage(context, extensionId);
+      finalReady = await waitForReadyStateWithRecovery(context, page, extensionId, 15000);
+      page = finalReady.page;
+      finalState = finalReady.state;
+      continue;
+    }
+    break;
   }
   console.log(`[metamask-bootstrap] final-state=${JSON.stringify(finalState)}`);
 

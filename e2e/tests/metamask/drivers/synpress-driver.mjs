@@ -23,33 +23,131 @@ export class SynpressDriver {
     return { supported: true, delegatedTo: "fixture-bootstrap" };
   }
 
-  async _approveWithDappwrightFallback(label) {
-    try {
-      const { getWallet } = await import("@tenkeylabs/dappwright");
-      const wallet = await getWallet("metamask", this._metamask.context);
-      let lastError = null;
-      for (let attempt = 0; attempt < 3; attempt += 1) {
-        try {
-          await wallet.approve();
-          console.log(
-            `[synpress-driver] ${label} fallback approved via dappwright (attempt=${attempt + 1})`,
-          );
+  _extensionPages(context, extensionId) {
+    const prefix = `chrome-extension://${extensionId}/`;
+    return context.pages().filter((page) => !page.isClosed() && page.url().startsWith(prefix));
+  }
+
+  _candidatePages(context, extensionId) {
+    const extensionPrefix = `chrome-extension://${extensionId}/`;
+    return context
+      .pages()
+      .filter((page) => !page.isClosed())
+      .filter((page) => {
+        const url = page.url();
+        if (url.startsWith(extensionPrefix)) {
           return true;
-        } catch (error) {
-          lastError = error;
-          await new Promise((resolve) => setTimeout(resolve, 1000));
         }
+        if (url.startsWith("http://") || url.startsWith("https://")) {
+          return true;
+        }
+        return false;
+      });
+  }
+
+  async _describePage(page) {
+    const url = page.url();
+    const body = await page
+      .locator("body")
+      .innerText()
+      .then((text) => String(text).replace(/\s+/g, " ").trim().slice(0, 220))
+      .catch(() => "");
+    const buttons = await page
+      .evaluate(() => {
+        return Array.from(document.querySelectorAll("button"))
+          .map((button) => (button.textContent ?? "").replace(/\s+/g, " ").trim())
+          .filter((text) => text.length > 0)
+          .slice(0, 8);
+      })
+      .catch(() => []);
+    return { url, body, buttons };
+  }
+
+  async _clickApprovalControls(page) {
+    let clicked = 0;
+    const testIds = [
+      "confirm-btn",
+      "confirm-footer-button",
+      "page-container-footer-next",
+      "request-confirm-button",
+      "allow-authorize-button",
+    ];
+    for (const testId of testIds) {
+      const locator = page.getByTestId(testId).first();
+      const canClick =
+        (await locator.isVisible().catch(() => false)) && (await locator.isEnabled().catch(() => false));
+      if (!canClick) {
+        continue;
       }
-      console.log(
-        `[synpress-driver] ${label} dappwright fallback unavailable: ${String(lastError?.message ?? lastError)}`,
-      );
-      return false;
-    } catch (error) {
-      console.log(
-        `[synpress-driver] ${label} dappwright loader unavailable: ${String(error?.message ?? error)}`,
-      );
+      await locator.click().catch(() => {});
+      clicked += 1;
+      await page.waitForTimeout(250).catch(() => {});
+    }
+
+    const genericButton = page
+      .getByRole("button", { name: /connect|next|approve|confirm|sign|submit|continue|ok/i })
+      .first();
+    const canClickGeneric =
+      (await genericButton.isVisible().catch(() => false)) &&
+      (await genericButton.isEnabled().catch(() => false));
+    if (canClickGeneric) {
+      await genericButton.click().catch(() => {});
+      clicked += 1;
+      await page.waitForTimeout(250).catch(() => {});
+    }
+    return clicked;
+  }
+
+  async _approveFromExtensionSurfaces(label) {
+    const context = this._metamask.context;
+    const extensionId = this._metamask.extensionId;
+    if (!extensionId) {
+      console.log(`[synpress-driver] ${label} fallback skipped: missing-extension-id`);
       return false;
     }
+
+    const notificationUrl = `chrome-extension://${extensionId}/notification.html`;
+    let notificationEnsured = false;
+    let totalClicks = 0;
+
+    for (let attempt = 0; attempt < 12; attempt += 1) {
+      let pages = this._candidatePages(context, extensionId);
+      if (!notificationEnsured) {
+        const hasNotification = this._extensionPages(context, extensionId).some((page) =>
+          page.url().startsWith(notificationUrl),
+        );
+        if (!hasNotification) {
+          try {
+            const notificationPage = await context.newPage();
+            await notificationPage.goto(notificationUrl, { waitUntil: "domcontentloaded" });
+          } catch (error) {
+            console.log(
+              `[synpress-driver] ${label} notification goto failed: ${String(error?.message ?? error)}`,
+            );
+          }
+        }
+        notificationEnsured = true;
+        pages = this._candidatePages(context, extensionId);
+      }
+
+      for (const page of pages) {
+        await page.bringToFront().catch(() => {});
+        totalClicks += await this._clickApprovalControls(page);
+      }
+
+      if (totalClicks > 0 && attempt >= 2) {
+        break;
+      }
+      await context.waitForEvent("page", { timeout: 500 }).catch(() => {});
+    }
+
+    const snapshots = [];
+    for (const page of this._candidatePages(context, extensionId)) {
+      snapshots.push(await this._describePage(page));
+    }
+    console.log(`[synpress-driver] ${label} extension-snapshots=${JSON.stringify(snapshots)}`);
+    console.log(`[synpress-driver] ${label} extension-approval-clicks=${totalClicks}`);
+    return totalClicks > 0;
   }
 
   async connectToDapp() {
@@ -63,7 +161,7 @@ export class SynpressDriver {
         .filter((page) => !page.isClosed())
         .map((page) => page.url());
       console.log(`[synpress-driver] connectToDapp context-pages=${JSON.stringify(pageUrls)}`);
-      return await this._approveWithDappwrightFallback("connectToDapp");
+      return await this._approveFromExtensionSurfaces("connectToDapp");
     }
   }
 

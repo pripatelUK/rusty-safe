@@ -164,7 +164,11 @@ export const test = base.extend({
       });
       const addNetworkPromise = page.evaluate(
         async ({ rpcUrlValue, chainIdHexValue }) =>
-          await window.ethereum.request({
+          await (
+            (Array.isArray(window.ethereum?.providers)
+              ? window.ethereum.providers.find((candidate) => candidate?.isMetaMask)
+              : null) ?? window.ethereum
+          ).request({
             method: "wallet_addEthereumChain",
             params: [
               {

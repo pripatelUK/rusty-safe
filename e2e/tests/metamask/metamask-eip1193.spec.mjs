@@ -26,6 +26,50 @@ async function tryWalletAction(label, action) {
   }
 }
 
+async function providerRequest(page, method, params) {
+  return await page.evaluate(
+    async ({ requestMethod, requestParams }) => {
+      const root = window.ethereum;
+      const providers = Array.isArray(root?.providers) ? root.providers : [];
+      const provider = providers.find((candidate) => candidate?.isMetaMask) ?? root;
+      if (!provider || typeof provider.request !== "function") {
+        throw new Error("metamask-provider-request-missing");
+      }
+      const payload = { method: requestMethod };
+      if (Array.isArray(requestParams)) {
+        payload.params = requestParams;
+      }
+      return await provider.request(payload);
+    },
+    {
+      requestMethod: method,
+      requestParams: Array.isArray(params) ? params : null,
+    },
+  );
+}
+
+async function logProviderDiagnostics(page) {
+  const diagnostics = await page.evaluate(() => {
+    const root = window.ethereum;
+    const providers = Array.isArray(root?.providers) ? root.providers : [];
+    const selected = providers.find((candidate) => candidate?.isMetaMask) ?? root;
+    return {
+      hasWindowEthereum: typeof root !== "undefined",
+      rootIsMetaMask: Boolean(root?.isMetaMask),
+      providersCount: providers.length,
+      providers: providers.map((candidate, index) => ({
+        index,
+        isMetaMask: Boolean(candidate?.isMetaMask),
+        hasRequest: typeof candidate?.request === "function",
+        keys: Object.keys(candidate ?? {}).slice(0, 12),
+      })),
+      selectedIsMetaMask: Boolean(selected?.isMetaMask),
+      selectedHasRequest: typeof selected?.request === "function",
+    };
+  });
+  console.log(`[metamask-e2e] provider-diagnostics=${JSON.stringify(diagnostics)}`);
+}
+
 async function requestWithUserGesture(page, method, params) {
   const triggerId = `__rustySafeTrigger_${Date.now()}_${Math.random().toString(16).slice(2)}`;
   await page.bringToFront();
@@ -55,11 +99,14 @@ async function requestWithUserGesture(page, method, params) {
       trigger.addEventListener(
         "click",
         () => {
+          const rootProvider = window.ethereum;
+          const providers = Array.isArray(rootProvider?.providers) ? rootProvider.providers : [];
+          const provider = providers.find((candidate) => candidate?.isMetaMask) ?? rootProvider;
           const payload = { method: requestMethod };
           if (Array.isArray(requestParams)) {
             payload.params = requestParams;
           }
-          window.__rustySafeGestureRequests[id] = window.ethereum.request(payload);
+          window.__rustySafeGestureRequests[id] = provider.request(payload);
         },
         { once: true },
       );
@@ -121,14 +168,31 @@ async function requestWithUserGesture(page, method, params) {
 }
 
 async function ensureProvider(page) {
-  const hasProvider = await page.evaluate(() => typeof window.ethereum !== "undefined");
+  const hasProvider = await page.evaluate(() => {
+    const root = window.ethereum;
+    const providers = Array.isArray(root?.providers) ? root.providers : [];
+    const selected = providers.find((candidate) => candidate?.isMetaMask) ?? root;
+    return typeof selected?.request === "function";
+  });
   expect(hasProvider).toBe(true);
 }
 
 async function ensureConnectedAccount(page, walletDriver) {
-  let accounts = await page.evaluate(async () => {
-    return await window.ethereum.request({ method: "eth_accounts" });
-  });
+  let accounts = await providerRequest(page, "eth_accounts");
+  if (accounts.length === 0) {
+    try {
+      const permissionsPromise = requestWithUserGesture(page, "wallet_requestPermissions", [
+        { eth_accounts: {} },
+      ]);
+      await tryWalletAction("connectToDapp", () => walletDriver.connectToDapp());
+      await awaitWithTimeout(permissionsPromise, 45000, "wallet_requestPermissions");
+      accounts = await providerRequest(page, "eth_accounts");
+    } catch (error) {
+      console.log(
+        `[metamask-e2e] wallet_requestPermissions fallback unavailable: ${String(error?.message ?? error)}`,
+      );
+    }
+  }
   if (accounts.length === 0) {
     const accountsPromise = requestWithUserGesture(page, "eth_requestAccounts");
     await tryWalletAction("connectToDapp", () => walletDriver.connectToDapp());
@@ -200,42 +264,22 @@ for (const scenario of MM_PARITY_SCENARIOS) {
     );
 
     await ensureProvider(page);
+    await logProviderDiagnostics(page);
 
     if (scenario.method === "eth_requestAccounts") {
-      const existingAccounts = await page.evaluate(async () => {
-        return await window.ethereum.request({ method: "eth_accounts" });
-      });
-      if (existingAccounts.length > 0) {
-        expect(existingAccounts.length).toBeGreaterThan(0);
-        return;
-      }
-
-      const requestPromise = requestWithUserGesture(page, "eth_requestAccounts");
-      await tryWalletAction("connectToDapp", () => walletDriver.connectToDapp());
-      const accounts = await awaitWithTimeout(requestPromise, scenario.timeoutMs, scenario.method);
+      const accounts = await ensureConnectedAccount(page, walletDriver);
       expect(accounts.length).toBeGreaterThan(0);
       return;
     }
 
     const from = await ensureConnectedAccount(page, walletDriver);
 
-    const chainIdHex = await page.evaluate(async () => {
-      return await window.ethereum.request({
-        method: "eth_chainId",
-      });
-    });
+    const chainIdHex = await providerRequest(page, "eth_chainId");
     const chainIdNumber = Number.parseInt(chainIdHex, 16);
     expect(chainIdNumber).toBeGreaterThan(0);
 
     if (scenario.method === "personal_sign") {
-      const personalSignPromise = page.evaluate(
-        async ({ fromAddress, messageHex }) =>
-          await window.ethereum.request({
-            method: "personal_sign",
-            params: [messageHex, fromAddress],
-          }),
-        { fromAddress: from, messageHex: DEFAULT_MESSAGE_HEX },
-      );
+      const personalSignPromise = providerRequest(page, "personal_sign", [DEFAULT_MESSAGE_HEX, from]);
       await tryWalletAction("approveSignature(personal_sign)", () => walletDriver.approveSignature());
       const personalSignature = await awaitWithTimeout(
         personalSignPromise,
@@ -273,14 +317,7 @@ for (const scenario of MM_PARITY_SCENARIOS) {
         },
       });
 
-      const typedDataPromise = page.evaluate(
-        async ({ fromAddress, typedDataJson }) =>
-          await window.ethereum.request({
-            method: "eth_signTypedData_v4",
-            params: [fromAddress, typedDataJson],
-          }),
-        { fromAddress: from, typedDataJson: typedDataV4 },
-      );
+      const typedDataPromise = providerRequest(page, "eth_signTypedData_v4", [from, typedDataV4]);
       await tryWalletAction("approveSignature(typedData)", () => walletDriver.approveSignature());
       const typedDataSignature = await awaitWithTimeout(
         typedDataPromise,
@@ -296,25 +333,14 @@ for (const scenario of MM_PARITY_SCENARIOS) {
         await connectToAnvil();
       }
 
-      const sendTxPromise = page.evaluate(
-        async ({ fromAddress, toAddress, chainIdValue }) =>
-          await window.ethereum.request({
-            method: "eth_sendTransaction",
-            params: [
-              {
-                from: fromAddress,
-                to: toAddress,
-                value: "0x16345785d8a0000",
-                chainId: chainIdValue,
-              },
-            ],
-          }),
+      const sendTxPromise = providerRequest(page, "eth_sendTransaction", [
         {
-          fromAddress: from,
-          toAddress: process.env.PRD05A_METAMASK_RECIPIENT ?? DEFAULT_RECIPIENT,
-          chainIdValue: toHexChainId(chainIdNumber),
+          from,
+          to: process.env.PRD05A_METAMASK_RECIPIENT ?? DEFAULT_RECIPIENT,
+          value: "0x16345785d8a0000",
+          chainId: toHexChainId(chainIdNumber),
         },
-      );
+      ]);
       await tryWalletAction("approveTransaction", () => walletDriver.approveTransaction());
       const txHash = await awaitWithTimeout(sendTxPromise, scenario.timeoutMs, scenario.method);
       expect(txHash).toMatch(/^0x[0-9a-fA-F]{64}$/);
