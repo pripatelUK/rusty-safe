@@ -24,8 +24,8 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
-      - name: E2E runtime profile check (headed + locale + node pin)
-        run: ./scripts/run_prd05a_metamask_e2e.sh --profile-check
+      - name: E2E runtime profile check (wallet-mock deterministic lane)
+        run: ./scripts/run_prd05a_wallet_mock_preflight.sh
 
       - name: Phase discipline checks
         run: ./scripts/check_prd05a_phase_discipline.sh
@@ -54,8 +54,8 @@ jobs:
       - name: Driver comparison report
         run: PRD05A_DRIVER_COMPARE_TIMEOUT_SECS=90 ./scripts/run_prd05a_driver_comparison.sh
 
-      - name: PR soak gate (5-run)
-        run: PRD05A_SOAK_PROFILE_ONLY=1 ./scripts/run_prd05a_metamask_soak.sh pr
+      - name: PR soak gate (5-run blocking wallet-mock lane)
+        run: ./scripts/run_prd05a_wallet_mock_soak.sh pr
 
   prd05a-daily-soak:
     if: github.event_name == 'schedule'
@@ -69,5 +69,5 @@ jobs:
         with:
           node-version: 20
 
-      - name: Daily soak gate (20-run)
-        run: PRD05A_SOAK_PROFILE_ONLY=1 ./scripts/run_prd05a_metamask_soak.sh daily
+      - name: Daily soak gate (50-run blocking wallet-mock lane)
+        run: ./scripts/run_prd05a_wallet_mock_soak.sh daily

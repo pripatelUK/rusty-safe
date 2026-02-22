@@ -5,7 +5,10 @@
   "scripts": {
     "capture": "npx playwright test tests/capture.spec.ts --reporter=list",
     "test": "npx playwright test tests/visual.spec.ts",
+    "test:wallet-mock": "npx playwright test -c playwright.wallet-mock.config.ts",
     "test:wallet-mock:profile": "node tests/wallet-mock/runtime-profile-check.mjs",
+    "test:wallet-mock:contract": "node --test tests/wallet-mock/wallet-driver.contract.test.mjs",
+    "test:wallet-mock:taxonomy": "node --test tests/wallet-mock/failure-taxonomy.contract.test.mjs",
     "test:wallet-mock:preflight": "node --test tests/wallet-mock/runtime-preflight.contract.test.mjs",
     "test:wallet-mock:schema": "node tests/wallet-mock/validate-evidence-schema.mjs",
     "test:metamask": "npx playwright test -c playwright.metamask.config.ts",
