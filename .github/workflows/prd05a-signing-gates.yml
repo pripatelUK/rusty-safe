@@ -71,3 +71,7 @@ jobs:
 
       - name: Daily soak gate (50-run blocking wallet-mock lane)
         run: ./scripts/run_prd05a_wallet_mock_soak.sh daily
+
+      - name: MetaMask canary (non-blocking)
+        continue-on-error: true
+        run: ./scripts/run_prd05a_metamask_canary.sh
