@@ -77,6 +77,11 @@ async function requestWithUserGesture(page, method, params) {
   await page.evaluate(
     ({ id, requestMethod, requestParams }) => {
       window.__rustySafeGestureRequests = window.__rustySafeGestureRequests ?? {};
+      window.__rustySafeGestureMeta = window.__rustySafeGestureMeta ?? {};
+
+      for (const staleTrigger of document.querySelectorAll(".__rustySafeGestureTrigger")) {
+        staleTrigger.remove();
+      }
 
       const existing = document.getElementById(id);
       if (existing) {
@@ -88,17 +93,25 @@ async function requestWithUserGesture(page, method, params) {
       trigger.type = "button";
       trigger.textContent = "wallet-trigger";
       trigger.style.position = "fixed";
-      trigger.style.top = "6px";
-      trigger.style.left = "6px";
-      trigger.style.width = "12px";
-      trigger.style.height = "12px";
-      trigger.style.opacity = "0.01";
+      trigger.style.top = "8px";
+      trigger.style.left = "8px";
+      trigger.style.width = "132px";
+      trigger.style.height = "32px";
+      trigger.style.opacity = "1";
+      trigger.style.background = "#ffffff";
+      trigger.style.color = "#000000";
+      trigger.style.border = "1px solid #999999";
       trigger.style.zIndex = "2147483647";
       trigger.style.pointerEvents = "auto";
+      trigger.className = "__rustySafeGestureTrigger";
 
       trigger.addEventListener(
         "click",
         () => {
+          window.__rustySafeGestureMeta[id] = {
+            userActivation: Boolean(navigator.userActivation?.isActive),
+            visibilityState: document.visibilityState,
+          };
           const rootProvider = window.ethereum;
           const providers = Array.isArray(rootProvider?.providers) ? rootProvider.providers : [];
           const provider = providers.find((candidate) => candidate?.isMetaMask) ?? rootProvider;
@@ -153,11 +166,14 @@ async function requestWithUserGesture(page, method, params) {
     throw new Error(`gesture-request-not-started:${id}`);
   }, triggerId);
 
-  await page.click(`#${triggerId}`, { force: true });
+  await page.click(`#${triggerId}`);
   const started = await page.evaluate((id) => {
-    return Boolean(window.__rustySafeGestureRequests?.[id]);
+    return {
+      started: Boolean(window.__rustySafeGestureRequests?.[id]),
+      meta: window.__rustySafeGestureMeta?.[id] ?? null,
+    };
   }, triggerId);
-  console.log(`[metamask-e2e] gesture-started method=${method} started=${started}`);
+  console.log(`[metamask-e2e] gesture-started method=${method} data=${JSON.stringify(started)}`);
   const outcome = await providerPromise;
   if (!outcome?.ok) {
     throw new Error(
@@ -177,26 +193,79 @@ async function ensureProvider(page) {
   expect(hasProvider).toBe(true);
 }
 
+function parseProviderRequestFailure(error, methodLabel) {
+  const message = String(error?.message ?? error);
+  const marker = `provider-request-failed:${methodLabel}:`;
+  const index = message.indexOf(marker);
+  if (index < 0) {
+    return null;
+  }
+  const payload = message.slice(index + marker.length);
+  try {
+    return JSON.parse(payload);
+  } catch (_parseError) {
+    return { message: payload };
+  }
+}
+
+async function resolveRequestWithApprovalAttempts({
+  page,
+  walletDriver,
+  methodLabel,
+  requestFactory,
+  timeoutMs = 60000,
+  sliceMs = 12000,
+}) {
+  const deadline = Date.now() + timeoutMs;
+  let attempt = 0;
+  while (Date.now() < deadline) {
+    attempt += 1;
+    const requestPromise = requestFactory();
+    await tryWalletAction(`connectToDapp(${methodLabel})`, () =>
+      awaitWithTimeout(walletDriver.connectToDapp(), 10000, `connectToDapp-${methodLabel}`),
+    );
+    const remaining = Math.max(500, deadline - Date.now());
+    const windowMs = Math.min(sliceMs, remaining);
+    const timeoutLabel = `${methodLabel}-attempt-${attempt}`;
+    try {
+      return await awaitWithTimeout(requestPromise, windowMs, timeoutLabel);
+    } catch (error) {
+      const message = String(error?.message ?? error);
+      const requestError = parseProviderRequestFailure(error, methodLabel);
+      const timedOut = message.includes(`${timeoutLabel}-timeout-`);
+      const pendingRequest = requestError?.code === -32002;
+      if (!timedOut && !pendingRequest) {
+        console.log(
+          `[metamask-e2e] ${methodLabel} failed error=${JSON.stringify(requestError ?? { message })}`,
+        );
+        throw error;
+      }
+      const accounts = await providerRequest(page, "eth_accounts").catch(() => []);
+      if (Array.isArray(accounts) && accounts.length > 0) {
+        return accounts;
+      }
+      if (Date.now() >= deadline) {
+        break;
+      }
+      console.log(
+        `[metamask-e2e] ${methodLabel} pending; reattempting wallet approval remaining_ms=${deadline - Date.now()}`,
+      );
+      await page.waitForTimeout(600).catch(() => {});
+    }
+  }
+  throw new Error(`${methodLabel}-timeout-${timeoutMs}ms`);
+}
+
 async function ensureConnectedAccount(page, walletDriver) {
   let accounts = await providerRequest(page, "eth_accounts");
   if (accounts.length === 0) {
-    try {
-      const permissionsPromise = requestWithUserGesture(page, "wallet_requestPermissions", [
-        { eth_accounts: {} },
-      ]);
-      await tryWalletAction("connectToDapp", () => walletDriver.connectToDapp());
-      await awaitWithTimeout(permissionsPromise, 45000, "wallet_requestPermissions");
-      accounts = await providerRequest(page, "eth_accounts");
-    } catch (error) {
-      console.log(
-        `[metamask-e2e] wallet_requestPermissions fallback unavailable: ${String(error?.message ?? error)}`,
-      );
-    }
-  }
-  if (accounts.length === 0) {
-    const accountsPromise = requestWithUserGesture(page, "eth_requestAccounts");
-    await tryWalletAction("connectToDapp", () => walletDriver.connectToDapp());
-    accounts = await awaitWithTimeout(accountsPromise, 45000, "eth_requestAccounts");
+    accounts = await resolveRequestWithApprovalAttempts({
+      page,
+      walletDriver,
+      methodLabel: "eth_requestAccounts",
+      requestFactory: () => requestWithUserGesture(page, "eth_requestAccounts"),
+      timeoutMs: 60000,
+    });
   }
   expect(accounts.length).toBeGreaterThan(0);
   return accounts[0];

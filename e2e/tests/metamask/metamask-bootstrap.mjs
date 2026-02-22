@@ -76,6 +76,7 @@ async function detectState(page) {
     .getByRole("button", { name: /create a new wallet/i })
     .isVisible()
     .catch(() => false);
+  const onboardingRoute = pageUrl.includes("#onboarding/");
   const openWalletButton = page.getByRole("button", { name: /open wallet/i }).first();
   const openWalletVisible = await openWalletButton.isVisible().catch(() => false);
   const openWalletEnabled = openWalletVisible
@@ -123,7 +124,8 @@ async function detectState(page) {
     pageUrl,
     pageTitle,
     bodyTextSample,
-    onboardingVisible: onboardingExistingVisible || onboardingCreateVisible,
+    onboardingRoute,
+    onboardingVisible: onboardingExistingVisible || onboardingCreateVisible || onboardingRoute,
     openWalletVisible,
     openWalletEnabled,
     unlockVisible,
@@ -140,6 +142,9 @@ async function detectState(page) {
 }
 
 function isWalletReady(state) {
+  if (state.onboardingVisible || state.openWalletVisible || state.unlockVisible || state.crashVisible) {
+    return false;
+  }
   return Boolean(
     state.networkVisible ||
       state.accountMenuVisible ||
@@ -348,6 +353,16 @@ export async function bootstrapMetaMaskRuntime({
   page = finalReady.page;
   let finalState = finalReady.state;
   for (let attempt = 0; attempt < 3 && !isWalletReady(finalState); attempt += 1) {
+    if (finalState.openWalletVisible) {
+      console.log("[metamask-bootstrap] final-state open-wallet detected; attempting settle");
+      const settled = await settleOpenWallet(page);
+      if (settled) {
+        finalReady = await waitForReadyStateWithRecovery(context, page, extensionId, 15000);
+        page = finalReady.page;
+        finalState = finalReady.state;
+        continue;
+      }
+    }
     if (finalState.unlockVisible) {
       console.log("[metamask-bootstrap] final-state unlock detected; attempting unlock");
       await unlockForFixture(page, walletPassword);
@@ -377,6 +392,19 @@ export async function bootstrapMetaMaskRuntime({
       continue;
     }
     if (finalState.onboardingVisible) {
+      const onboardingRoute = finalState.pageUrl.includes("#onboarding/");
+      if (onboardingRoute) {
+        console.log("[metamask-bootstrap] final-state onboarding route detected; attempting home redirect");
+        await page.goto(homeUrl).catch(() => {});
+        await sleep(1000);
+        finalReady = await waitForReadyStateWithRecovery(context, page, extensionId, 15000);
+        page = finalReady.page;
+        finalState = finalReady.state;
+        if (!finalState.onboardingVisible) {
+          continue;
+        }
+      }
+
       console.log("[metamask-bootstrap] final-state onboarding detected; attempting one-shot recovery");
       await walletSetup.fn(context, page);
       usedRecovery = true;

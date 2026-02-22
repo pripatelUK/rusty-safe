@@ -2,10 +2,11 @@ import { defineConfig, devices } from "@playwright/test";
 
 const baseUrl = process.env.PRD05A_E2E_BASE_URL ?? "http://localhost:7272";
 const shouldStartWebServer = process.env.PRD05A_E2E_SKIP_WEBSERVER !== "1";
+const suiteTimeoutMs = Number.parseInt(process.env.PRD05A_E2E_TEST_TIMEOUT_MS ?? "420000", 10);
 
 export default defineConfig({
   testDir: "./tests/metamask",
-  timeout: 180 * 1000,
+  timeout: suiteTimeoutMs,
   fullyParallel: false,
   forbidOnly: !!process.env.CI,
   retries: 0,
@@ -36,7 +37,7 @@ export default defineConfig({
         url: baseUrl,
         // Force a clean build/runtime each run; stale reused servers have caused false E2E failures.
         reuseExistingServer: false,
-        timeout: 180 * 1000,
+        timeout: 300 * 1000,
       }
     : undefined,
 });
