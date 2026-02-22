@@ -1,0 +1,124 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://rustysafe.local/schemas/c5e2e-v1.schema.json",
+  "title": "Rusty Safe C5 E2E Evidence v1",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "generated",
+    "run_id",
+    "status",
+    "taxonomy",
+    "driver_mode",
+    "release_gate_driver",
+    "triage_label",
+    "node_version",
+    "chromium_bin",
+    "chromium_version",
+    "locale",
+    "reason",
+    "artifacts"
+  ],
+  "additionalProperties": true,
+  "properties": {
+    "schema_version": {
+      "const": "c5e2e-v1"
+    },
+    "generated": {
+      "type": "string",
+      "minLength": 1
+    },
+    "run_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "PASS",
+        "FAIL",
+        "BLOCKED"
+      ]
+    },
+    "taxonomy": {
+      "type": "string",
+      "enum": [
+        "NONE",
+        "ENV_BLOCKER",
+        "HARNESS_FAIL",
+        "APP_FAIL",
+        "WALLET_FAIL"
+      ]
+    },
+    "driver_mode": {
+      "type": "string",
+      "minLength": 1
+    },
+    "release_gate_driver": {
+      "type": "string",
+      "minLength": 1
+    },
+    "triage_label": {
+      "type": "string",
+      "minLength": 1
+    },
+    "gate_tier": {
+      "type": "string",
+      "enum": [
+        "blocking",
+        "canary",
+        "manual"
+      ]
+    },
+    "gate_effect": {
+      "type": "string",
+      "enum": [
+        "BLOCKING",
+        "CANARY",
+        "MANUAL"
+      ]
+    },
+    "node_version": {
+      "type": "string",
+      "minLength": 1
+    },
+    "chromium_bin": {
+      "type": "string",
+      "minLength": 1
+    },
+    "chromium_version": {
+      "type": "string",
+      "minLength": 1
+    },
+    "locale": {
+      "type": "string",
+      "minLength": 1
+    },
+    "reason": {
+      "type": "string"
+    },
+    "artifacts": {
+      "type": "object",
+      "required": [
+        "log",
+        "markdown_report",
+        "json_report"
+      ],
+      "additionalProperties": true,
+      "properties": {
+        "log": {
+          "type": "string",
+          "minLength": 1
+        },
+        "markdown_report": {
+          "type": "string",
+          "minLength": 1
+        },
+        "json_report": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    }
+  }
+}

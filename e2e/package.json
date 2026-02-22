@@ -5,6 +5,9 @@
   "scripts": {
     "capture": "npx playwright test tests/capture.spec.ts --reporter=list",
     "test": "npx playwright test tests/visual.spec.ts",
+    "test:wallet-mock:profile": "node tests/wallet-mock/runtime-profile-check.mjs",
+    "test:wallet-mock:preflight": "node --test tests/wallet-mock/runtime-preflight.contract.test.mjs",
+    "test:wallet-mock:schema": "node tests/wallet-mock/validate-evidence-schema.mjs",
     "test:metamask": "npx playwright test -c playwright.metamask.config.ts",
     "test:metamask:headed": "npx playwright test -c playwright.metamask.config.ts",
     "test:metamask:profile": "node tests/metamask/runtime-profile-check.mjs",
@@ -20,6 +23,7 @@
   },
   "devDependencies": {
     "@playwright/test": "^1.48.2",
+    "@synthetixio/ethereum-wallet-mock": "0.0.14",
     "@synthetixio/synpress": "4.1.2",
     "@tenkeylabs/dappwright": "^2.13.3",
     "playwright-core": "^1.48.2",

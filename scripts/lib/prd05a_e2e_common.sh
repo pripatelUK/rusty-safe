@@ -107,6 +107,15 @@ prd05a_write_json() {
   local artifacts_json="${13}"
   local triage_label="${14}"
   local reason="${15}"
+  local gate_tier="${16:-${PRD05A_GATE_MODE:-blocking}}"
+  local gate_effect="${17:-}"
+  if [[ -z "$gate_effect" ]]; then
+    case "$gate_tier" in
+      canary) gate_effect="CANARY" ;;
+      manual) gate_effect="MANUAL" ;;
+      *) gate_effect="BLOCKING" ;;
+    esac
+  fi
 
   cat >"$path" <<EOF
 {
@@ -117,6 +126,8 @@ prd05a_write_json() {
   "taxonomy": "$(prd05a_json_escape "$taxonomy")",
   "driver_mode": "$(prd05a_json_escape "$driver_mode")",
   "release_gate_driver": "$(prd05a_json_escape "$release_gate_driver")",
+  "gate_tier": "$(prd05a_json_escape "$gate_tier")",
+  "gate_effect": "$(prd05a_json_escape "$gate_effect")",
   "triage_label": "$(prd05a_json_escape "$triage_label")",
   "node_version": "$(prd05a_json_escape "$node_version")",
   "chromium_bin": "$(prd05a_json_escape "$chromium_bin")",
