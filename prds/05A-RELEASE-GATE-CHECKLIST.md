@@ -1,6 +1,6 @@
 # PRD 05A Release Gate Checklist
 
-Status: Draft  
+Status: Active  
 Owner: Rusty Safe
 
 Authoritative C5 E2E execution plan:
@@ -10,45 +10,39 @@ Authoritative C5 E2E execution plan:
 
 ### 1. Security
 
-- [ ] Security review completed for C2/C3/C4 runtime integrations.
+- [ ] Security review completed for signing runtime integrations.
 - [ ] No open critical/high findings.
 - [ ] Signature-context and replay protections verified.
 
-### 2. Compatibility
+### 2. C5 Wallet Runtime Model
 
-- [ ] Chromium + MetaMask cache preflight pass (`e2e/tests/metamask/metamask-cache-preflight.mjs`).
-- [ ] Chromium + MetaMask runtime parity E2E pass for `MM-PARITY-001..004` (`eth_requestAccounts`, `personal_sign`, `eth_signTypedData_v4`, `eth_sendTransaction`).
-- [ ] Chromium + Rabby matrix pass.
-- [ ] Hardware passthrough acceptance explicitly deferred (non-blocking for hot-wallet C5 release).
+- [x] Deterministic blocking lane is `wallet-mock`.
+- [x] MetaMask automation is non-blocking canary.
+- [x] Manual MetaMask sanity (`MANUAL-MM-001..004`) is required before RC sign-off.
+- [x] Hardware passthrough acceptance is deferred and non-blocking for C5.
 
 ### 2.1 C5 E2E Phase Gates (`E0-E5`)
 
-- [x] `E0 Gate` green: deterministic runtime profile enforced (`headed + xvfb`, Node `v20`, locale pin, env validation).
-- [x] `E1 Gate` green: `WalletDriver` abstraction and Synpress adapter path merged with no parity regression.
-- [ ] `E2 Gate` green: dappwright adapter bootstrap/connect/network path validated under same runtime profile.
-- [ ] `E3 Gate` green: full MetaMask parity scenarios (`MM-PARITY-001..006`) pass with deterministic recovery.
-- [x] `E4 Gate` green: hot-wallet matrix evidence complete (MetaMask + Rabby).
-- [x] `E5 Gate` green: CI hard gate + reliability SLO reports complete and passing.
-
-Current blockers for unchecked phase gates:
-1. MetaMask notification popup lifecycle still intermittently closes page/context during connect/network probes (`getNotificationPageAndWaitForLoad` path).
-2. E2 comparative report captures HARNESS_FAIL timeouts for connect/network in all modes.
+- [x] `E0 Gate` green: deterministic preflight + Node `v20` pin + `c5e2e-v1` schema/artifact checks.
+- [x] `E1 Gate` green: `WalletMockDriver` and `WM-PARITY-001..006` blocking lane scenarios.
+- [x] `E2 Gate` green: manual MetaMask release checklist workflow (`scripts/run_prd05a_manual_metamask_checklist.sh`) is implemented.
+- [ ] `E3 Gate` green: MetaMask nightly canary (`MM-CANARY-001..003`) artifacts for 5 consecutive days.
+- [ ] `E4 Gate` green: Rabby canary matrix evidence completed (if enabled).
+- [ ] `E5 Gate` green: CI hard-gate/SLO/release evidence index complete and passing.
 
 Required phase evidence:
-1. `scripts/run_prd05a_metamask_e2e.sh`
-2. `scripts/run_prd05a_compat_matrix.sh`
-3. `scripts/run_prd05a_release_evidence.sh`
-4. `scripts/run_prd05a_metamask_soak.sh` (SLO gate; must exist and run in CI)
-5. `scripts/run_prd05a_driver_comparison.sh`
-6. `scripts/run_prd05a_rabby_matrix.sh`
-7. `scripts/check_prd05a_phase_discipline.sh`
-8. `local/reports/prd05a/C5-metamask-e2e-report.md`
-9. `local/reports/prd05a/C5-compatibility-matrix-report.md`
-10. `local/reports/prd05a/C5-dappwright-investigation.md`
-11. `local/reports/prd05a/C5-rabby-runtime-report.md`
-12. `local/reports/prd05a/C5-metamask-soak-report.md`
+1. `scripts/run_prd05a_wallet_mock_preflight.sh`
+2. `scripts/run_prd05a_wallet_mock_gate.sh`
+3. `scripts/run_prd05a_wallet_mock_soak.sh`
+4. `scripts/run_prd05a_manual_metamask_checklist.sh`
+5. `scripts/run_prd05a_release_evidence.sh`
+6. `scripts/check_prd05a_phase_discipline.sh`
+7. `local/reports/prd05a/C5-wallet-mock-gate-report.md`
+8. `local/reports/prd05a/C5-wallet-mock-soak-report.md`
+9. `local/reports/prd05a/C5-manual-metamask-sanity.md`
+10. `local/reports/prd05a/C5-release-evidence-index.md`
 
-Deferred artifact (non-blocking for current C5 release):
+Deferred artifact (non-blocking for C5):
 1. `local/reports/prd05a/C5-hardware-passthrough-smoke.md`
 
 ### 3. Functional Parity
@@ -59,60 +53,34 @@ Deferred artifact (non-blocking for current C5 release):
 - [x] `PARITY-WC-01` complete.
 - [x] `PARITY-ABI-01` complete.
 - [x] `PARITY-COLLAB-01` complete.
-- [ ] `PARITY-HW-01` runtime proof complete (Deferred; non-blocking for hot-wallet C5 release).
+- [ ] `PARITY-HW-01` runtime proof complete (Deferred; non-blocking for C5 hot-wallet release).
 
-### 4. Performance
+### 4. Reliability and Performance
 
-- [x] Command latency p95 <= 150ms.
-- [x] Rehydration latency p95 <= 1500ms.
-- [x] No regressions beyond agreed tolerance.
-
-### 4.1 Runtime Validation
-
-- [x] Safe service live endpoint validation completed (`local/reports/prd05a/C2-safe-service-live-report.md`).
-- [x] WASM target checks pass for signing runtime crates.
-- [ ] MetaMask cache preflight evidence attached (`local/reports/prd05a/C5-metamask-e2e.log` includes `[metamask-preflight]` entry).
-- [x] MetaMask E2E evidence attached (`local/reports/prd05a/C5-metamask-e2e-report.md`).
-- [x] Browser wallet matrix evidence attached for Rabby runtime profile.
-- [x] Release-gate driver mode is `synpress` for C5 runs until dappwright SLO promotion criteria is met.
-- [x] Failure taxonomy present on C5 failures (`ENV_BLOCKER|HARNESS_FAIL|APP_FAIL|WALLET_FAIL`) in reports.
-- [x] Reliability SLO evidence attached:
-  - Local run set >= 90% pass over 10 consecutive runs.
-  - CI run set >= 95% pass over 20 scheduled runs.
-- [x] Soak cadence evidence attached:
-  - Per-PR 5-run smoke soak.
-  - Daily 20-run scheduled soak.
+- [ ] Blocking lane local SLO met (`>=95%` over 20 runs).
+- [ ] Blocking lane CI SLO met (`>=99%` over 50 runs).
+- [ ] Blocking scenario p95 runtime <= 90s.
+- [ ] Blocking PR gate p95 runtime <= 15 minutes.
 
 ### 5. CI Gates
 
-- [x] `scripts/check_signing_boundaries.sh` passes.
-- [x] `scripts/check_prd05a_traceability.sh` passes.
-- [x] `cargo fmt --all -- --check` passes.
-- [x] Strict clippy for signing crates passes.
-- [x] `cargo test --workspace` passes.
+- [ ] `scripts/check_signing_boundaries.sh` passes.
+- [ ] `scripts/check_prd05a_traceability.sh` passes.
+- [ ] `cargo fmt --all -- --check` passes.
+- [ ] Strict clippy for signing crates passes.
+- [ ] `cargo test --workspace` passes.
+- [ ] PR blocking gate wired to `scripts/run_prd05a_wallet_mock_gate.sh` + 5-run soak.
+- [ ] Scheduled daily gate wired to `scripts/run_prd05a_wallet_mock_soak.sh daily` (50-run).
 
-### 6. Milestone/Tag Discipline
+### 6. Milestone and Tag Discipline
 
-- [ ] All continuation milestones have `-gate-green` commits.
-- [x] Required tags (`prd05a-<milestone>-gate`) created.
-  Tags present: `prd05a-c1-c4-gate`, `prd05a-c2-c9-gate`, `prd05a-c5-c10-gate`.
-- [x] C5 phase tags created after each phase gate:
-  - `prd05a-e2e-e0-gate` (created locally)
-  - `prd05a-e2e-e1-gate` (created locally)
-  - `prd05a-e2e-e2-gate` (created locally)
-  - `prd05a-e2e-e3-gate` (created locally)
-  - `prd05a-e2e-e4-gate` (created locally)
-  - `prd05a-e2e-e5-gate` (created locally)
-- [ ] Phase branches closed with evidence references:
-  - `feat/prd05a-e2e-e0-determinism`
-  - `feat/prd05a-e2e-e1-driver-interface`
-  - `feat/prd05a-e2e-e2-dappwright-adapter`
-  - `feat/prd05a-e2e-e3-parity-scenarios`
-  - `feat/prd05a-e2e-e4-hot-wallet-matrix`
-  - `feat/prd05a-e2e-e5-ci-release-gate`
-- [x] CI enforcement for phase discipline is active:
-  - branch names match `feat/prd05a-e2e-e<phase>-<slug>`;
-  - phase commits reference `E*-T*` task IDs.
+- [x] `E0` committed with `E*-T*` and `-gate-green` marker.
+- [x] `E1` committed with `E*-T*` and `-gate-green` marker.
+- [x] `E2` committed with `E*-T*` and `-gate-green` marker.
+- [ ] `E3` committed/tagged.
+- [ ] `E4` committed/tagged.
+- [ ] `E5` committed/tagged.
+- [x] Phase branch naming policy enforced (`feat/prd05a-e2e-e<phase>-<slug>`).
 - [ ] Branch closure report completed.
 
 ## Sign-off
