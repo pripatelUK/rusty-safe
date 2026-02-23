@@ -1,7 +1,8 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-use alloy::primitives::{keccak256, Address, Bytes, B256};
+use alloy::primitives::{keccak256, Address, Bytes, PrimitiveSignature, B256};
+use alloy::signers::{local::PrivateKeySigner, SignerSync};
 use serde_json::Value;
 
 use rusty_safe_signing_core::{
@@ -15,6 +16,10 @@ use crate::crypto::{
     generate_salt, hmac_sha256_b256,
 };
 use crate::SigningAdapterConfig;
+
+const EXPORT_SIGNER_PRIVATE_KEY_ENV: &str = "RUSTY_SAFE_EXPORT_SIGNER_PRIVATE_KEY";
+const DEFAULT_EXPORT_SIGNER_PRIVATE_KEY: &str =
+    "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
 
 #[derive(Debug, Clone)]
 pub struct QueueAdapter {
@@ -59,6 +64,19 @@ impl QueueAdapter {
     fn export_passphrase(&self) -> String {
         std::env::var(&self.config.export_passphrase_env)
             .unwrap_or_else(|_| "rusty-safe-dev-passphrase".to_owned())
+    }
+
+    fn export_signer(&self) -> Result<PrivateKeySigner, PortError> {
+        let key = std::env::var(EXPORT_SIGNER_PRIVATE_KEY_ENV)
+            .unwrap_or_else(|_| DEFAULT_EXPORT_SIGNER_PRIVATE_KEY.to_owned());
+        key.trim()
+            .trim_start_matches("0x")
+            .parse::<PrivateKeySigner>()
+            .map_err(|e| {
+                PortError::Validation(format!(
+                    "invalid export signer private key in {EXPORT_SIGNER_PRIVATE_KEY_ENV}: {e}"
+                ))
+            })
     }
 }
 
@@ -336,6 +354,8 @@ impl QueuePort for QueueAdapter {
                 bundle.wc_requests.clone(),
             )
         };
+        let digest = bundle_payload_digest(&bundle_txs, &bundle_messages, &bundle_wc_requests)?;
+        verify_bundle_authenticity(bundle, digest)?;
 
         let mut g = self
             .inner
@@ -423,6 +443,10 @@ impl QueuePort for QueueAdapter {
         });
         let canonical_plaintext = canonical_json_bytes(&plaintext_payload)?;
         let digest = keccak256(canonical_plaintext.clone());
+        let signer = self.export_signer()?;
+        let signature = signer
+            .sign_hash_sync(&digest)
+            .map_err(|e| PortError::Transport(format!("bundle signing failed: {e}")))?;
         let salt = generate_salt()?;
         let nonce = generate_nonce()?;
         let derived = derive_crypto(self.export_passphrase().as_bytes(), salt)?;
@@ -464,9 +488,9 @@ impl QueuePort for QueueAdapter {
         Ok(SigningBundle {
             schema_version: 1,
             exported_at_ms: TimestampMs(0),
-            exporter: Address::ZERO,
+            exporter: signer.address(),
             bundle_digest: digest,
-            bundle_signature: Bytes::from(vec![0x1b; 65]),
+            bundle_signature: Bytes::copy_from_slice(&signature.as_bytes()),
             txs,
             messages,
             wc_requests,
@@ -551,6 +575,12 @@ impl QueueAdapter {
             .txs
             .get_mut(&tx_hash)
             .ok_or_else(|| PortError::NotFound("tx for signature import not found".to_owned()))?;
+        let recovered = recover_signature_signer(&sig, tx.safe_tx_hash)?;
+        if recovered != signer {
+            return Err(PortError::Validation(
+                "importSig signer mismatch for txHash".to_owned(),
+            ));
+        }
         tx.signatures
             .push(rusty_safe_signing_core::CollectedSignature {
                 signer,
@@ -561,7 +591,7 @@ impl QueueAdapter {
                 safe_address: tx.safe_address,
                 payload_hash: tx.safe_tx_hash,
                 expected_signer: signer,
-                recovered_signer: Some(signer),
+                recovered_signer: Some(recovered),
                 added_at_ms: TimestampMs(0),
             });
         tx.state_revision = tx.state_revision.saturating_add(1);
@@ -654,6 +684,48 @@ impl QueueAdapter {
         merge.message_updated = 1;
         Ok(merge)
     }
+}
+
+fn bundle_payload_digest(
+    txs: &[PendingSafeTx],
+    messages: &[PendingSafeMessage],
+    wc_requests: &[PendingWalletConnectRequest],
+) -> Result<B256, PortError> {
+    let payload = serde_json::json!({
+        "schema_version": 1,
+        "txs": txs,
+        "messages": messages,
+        "wc_requests": wc_requests,
+    });
+    let canonical = canonical_json_bytes(&payload)?;
+    Ok(keccak256(canonical))
+}
+
+fn verify_bundle_authenticity(
+    bundle: &SigningBundle,
+    expected_digest: B256,
+) -> Result<(), PortError> {
+    if bundle.bundle_digest != expected_digest {
+        return Err(PortError::Validation("bundle digest mismatch".to_owned()));
+    }
+    let sig = PrimitiveSignature::from_raw(bundle.bundle_signature.as_ref())
+        .map_err(|e| PortError::Validation(format!("invalid bundle signature: {e}")))?;
+    let recovered = sig
+        .recover_address_from_prehash(&bundle.bundle_digest)
+        .map_err(|e| PortError::Validation(format!("bundle signature recovery failed: {e}")))?;
+    if recovered != bundle.exporter {
+        return Err(PortError::Validation(
+            "bundle exporter/signature mismatch".to_owned(),
+        ));
+    }
+    Ok(())
+}
+
+fn recover_signature_signer(signature: &Bytes, payload_hash: B256) -> Result<Address, PortError> {
+    let sig = PrimitiveSignature::from_raw(signature.as_ref())
+        .map_err(|e| PortError::Validation(format!("invalid signature format: {e}")))?;
+    sig.recover_address_from_prehash(&payload_hash)
+        .map_err(|e| PortError::Validation(format!("signature recovery failed: {e}")))
 }
 
 fn decode_base64_url(input: &str) -> Result<Vec<u8>, PortError> {

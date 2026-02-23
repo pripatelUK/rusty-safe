@@ -1,12 +1,14 @@
 mod common;
 
-use alloy::primitives::{Address, Bytes, B256};
+use alloy::primitives::{keccak256, Address, PrimitiveSignature, B256};
 use rusty_safe_signing_adapters::crypto::{canonical_json_bytes, derive_crypto, hmac_sha256_b256};
 use rusty_safe_signing_core::{
     MacAlgorithm, PendingSafeTx, QueuePort, SigningBundle, TimestampMs, TxBuildSource, TxStatus,
 };
 
-use common::{acquire_lock, new_orchestrator, safe_address};
+use common::{
+    acquire_lock, new_orchestrator, owner_address, owner_signer, safe_address, sign_tx_hash,
+};
 
 #[test]
 fn import_bundle_merges_by_state_revision() {
@@ -70,15 +72,26 @@ fn import_bundle_merges_by_state_revision() {
             derive_crypto(b"rusty-safe-dev-passphrase", [0u8; 16]).expect("derive fallback key");
         hmac_sha256_b256(&derived.mac_key, &canonical).expect("hmac")
     };
+    let bundle_digest = {
+        let payload = serde_json::json!({
+            "schema_version": 1,
+            "txs": [imported.clone()],
+            "messages": [],
+            "wc_requests": [],
+        });
+        let canonical = canonical_json_bytes(&payload).expect("canonical payload");
+        keccak256(canonical)
+    };
+    let bundle_signature = sign_tx_hash(bundle_digest, &owner_signer());
 
     let merge = orch
         .queue
         .import_bundle(&SigningBundle {
             schema_version: 1,
             exported_at_ms: TimestampMs(10),
-            exporter: safe_address(),
-            bundle_digest: B256::ZERO,
-            bundle_signature: Bytes::from(vec![0x1b; 65]),
+            exporter: owner_address(),
+            bundle_digest,
+            bundle_signature,
             txs: vec![imported],
             messages: vec![],
             wc_requests: vec![],
@@ -133,4 +146,49 @@ fn export_bundle_contains_selected_flows() {
     assert_eq!(bundle.txs.len(), 1);
     assert!(bundle.bundle_signature.len() >= 65);
     assert_ne!(bundle.bundle_digest, B256::ZERO);
+    let signature =
+        PrimitiveSignature::from_raw(bundle.bundle_signature.as_ref()).expect("signature decode");
+    let recovered = signature
+        .recover_address_from_prehash(&bundle.bundle_digest)
+        .expect("recover exporter");
+    assert_eq!(recovered, bundle.exporter);
+}
+
+#[test]
+fn import_bundle_rejects_digest_tamper() {
+    let source = new_orchestrator();
+    acquire_lock(&source);
+    let create = source
+        .handle(rusty_safe_signing_core::SigningCommand::CreateSafeTx {
+            chain_id: 1,
+            safe_address: safe_address(),
+            nonce: 44,
+            payload: serde_json::json!({
+                "to": "0x000000000000000000000000000000000000CAFE",
+                "value": "0",
+                "data": "0x",
+                "operation": 0,
+                "safeTxGas": "0",
+                "baseGas": "0",
+                "gasPrice": "0",
+                "gasToken": "0x0000000000000000000000000000000000000000",
+                "refundReceiver": "0x0000000000000000000000000000000000000000",
+                "threshold": 1,
+                "safeVersion": "1.3.0"
+            }),
+        })
+        .expect("create tx");
+    let flow_id = create.transition.expect("transition").flow_id;
+    let mut bundle = source
+        .queue
+        .export_bundle(&[flow_id])
+        .expect("export bundle");
+    bundle.bundle_digest = B256::ZERO;
+
+    let target = new_orchestrator();
+    let err = target
+        .queue
+        .import_bundle(&bundle)
+        .expect_err("tampered digest should be rejected");
+    assert!(err.to_string().contains("bundle digest mismatch"));
 }

@@ -1,4 +1,7 @@
-use alloy::primitives::{Address, B256};
+mod common;
+
+use alloy::primitives::{Address, PrimitiveSignature, B256};
+use common::{owner_address, owner_signer, sign_tx_hash};
 use rusty_safe_signing_adapters::QueueAdapter;
 use rusty_safe_signing_core::{
     MacAlgorithm, PendingSafeMessage, PendingSafeTx, QueuePort, TimestampMs, TxBuildSource,
@@ -57,8 +60,8 @@ fn import_tx_and_signature_url_keys_are_supported() {
     let sig_payload = serde_json::json!({
         "txHash": tx_hash,
         "signature": {
-            "signer": "0x1000000000000000000000000000000000000001",
-            "data": format!("0x{}", "11".repeat(65))
+            "signer": owner_address(),
+            "data": sign_tx_hash(tx_hash, &owner_signer())
         }
     });
     let sig_payload = serde_json::to_string(&sig_payload).expect("serialize sig payload");
@@ -71,6 +74,67 @@ fn import_tx_and_signature_url_keys_are_supported() {
         })
         .expect("importSig should succeed");
     assert_eq!(merge.tx_updated, 1);
+}
+
+#[test]
+fn import_sig_rejects_signer_mismatch() {
+    let queue = QueueAdapter::default();
+
+    let tx_hash: B256 = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        .parse()
+        .expect("tx hash");
+    let tx_payload = serde_json::json!({
+        "schema_version": 1,
+        "chain_id": 1,
+        "safe_address": "0x000000000000000000000000000000000000BEEF",
+        "nonce": 1,
+        "payload": {
+          "to": "0x000000000000000000000000000000000000CAFE",
+          "value": "0",
+          "data": "0x",
+          "threshold": 1
+        },
+        "build_source": "RawCalldata",
+        "abi_context": null,
+        "safe_tx_hash": tx_hash,
+        "signatures": [],
+        "status": "Draft",
+        "state_revision": 0,
+        "idempotency_key": "idem-1",
+        "created_at_ms": 1,
+        "updated_at_ms": 1,
+        "executed_tx_hash": null,
+        "mac_algorithm": "HmacSha256V1",
+        "mac_key_id": "mac-key-v1",
+        "integrity_mac": "0x0000000000000000000000000000000000000000000000000000000000000000"
+    });
+    let tx_payload = serde_json::to_string(&tx_payload).expect("serialize tx payload");
+
+    queue
+        .import_url_payload(&UrlImportEnvelope {
+            key: UrlImportKey::ImportTx,
+            schema_version: 1,
+            payload_base64url: to_base64url(&tx_payload),
+        })
+        .expect("importTx should succeed");
+
+    let sig_payload = serde_json::json!({
+        "txHash": tx_hash,
+        "signature": {
+            "signer": "0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC",
+            "data": sign_tx_hash(tx_hash, &owner_signer())
+        }
+    });
+    let sig_payload = serde_json::to_string(&sig_payload).expect("serialize sig payload");
+
+    let err = queue
+        .import_url_payload(&UrlImportEnvelope {
+            key: UrlImportKey::ImportSig,
+            schema_version: 1,
+            payload_base64url: to_base64url(&sig_payload),
+        })
+        .expect_err("signer mismatch should fail");
+    assert!(err.to_string().contains("importSig signer mismatch"));
 }
 
 #[test]
@@ -175,4 +239,10 @@ fn export_bundle_contains_mac_and_digest() {
     assert_eq!(bundle.txs.len(), 1);
     assert_ne!(bundle.bundle_digest, B256::ZERO);
     assert_ne!(bundle.integrity_mac, B256::ZERO);
+    let signature =
+        PrimitiveSignature::from_raw(bundle.bundle_signature.as_ref()).expect("signature decode");
+    let recovered = signature
+        .recover_address_from_prehash(&bundle.bundle_digest)
+        .expect("recover exporter");
+    assert_eq!(recovered, bundle.exporter);
 }
