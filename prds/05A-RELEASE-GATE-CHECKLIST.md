@@ -28,7 +28,7 @@ Authoritative C5 E2E execution plan:
 - [x] `E2 Gate` green: manual MetaMask release checklist workflow (`scripts/run_prd05a_manual_metamask_checklist.sh`) is implemented.
 - [ ] `E3 Gate` green: MetaMask nightly canary (`MM-CANARY-001..003`) artifacts for 5 consecutive days.
 - [ ] `E4 Gate` green: Rabby canary matrix evidence completed (if enabled).
-- [ ] `E5 Gate` green: CI hard-gate/SLO/release evidence index complete and passing.
+- [x] `E5 Gate` implemented: CI hard-gate/SLO/release evidence index wiring is complete.
 
 Required phase evidence:
 1. `scripts/run_prd05a_wallet_mock_preflight.sh`
@@ -57,27 +57,27 @@ Deferred artifact (non-blocking for C5):
 
 ### 4. Reliability and Performance
 
-- [ ] Blocking lane local SLO met (`>=95%` over 20 runs).
+- [x] Blocking lane local SLO met (`>=95%` over 20 runs).
 - [ ] Blocking lane CI SLO met (`>=99%` over 50 runs).
 - [ ] Blocking scenario p95 runtime <= 90s.
 - [ ] Blocking PR gate p95 runtime <= 15 minutes.
 
 ### 5. CI Gates
 
-- [ ] `scripts/check_signing_boundaries.sh` passes.
-- [ ] `scripts/check_prd05a_traceability.sh` passes.
-- [ ] `cargo fmt --all -- --check` passes.
-- [ ] Strict clippy for signing crates passes.
-- [ ] `cargo test --workspace` passes.
-- [ ] PR blocking gate wired to `scripts/run_prd05a_wallet_mock_gate.sh` + 5-run soak.
-- [ ] Scheduled daily gate wired to `scripts/run_prd05a_wallet_mock_soak.sh daily` (50-run).
+- [x] `scripts/check_signing_boundaries.sh` passes.
+- [x] `scripts/check_prd05a_traceability.sh` passes.
+- [x] `cargo fmt --all -- --check` passes.
+- [x] Strict clippy for signing crates passes.
+- [x] `cargo test --workspace` passes.
+- [x] PR blocking gate wired to `scripts/run_prd05a_wallet_mock_gate.sh` + 5-run soak.
+- [x] Scheduled daily gate wired to `scripts/run_prd05a_wallet_mock_soak.sh daily` (50-run).
 
 ### 6. Milestone and Tag Discipline
 
 - [x] `E0` committed with `E*-T*` and `-gate-green` marker.
 - [x] `E1` committed with `E*-T*` and `-gate-green` marker.
 - [x] `E2` committed with `E*-T*` and `-gate-green` marker.
-- [ ] `E3` committed/tagged.
+- [x] `E3` committed/tagged.
 - [ ] `E4` committed/tagged.
 - [ ] `E5` committed/tagged.
 - [x] Phase branch naming policy enforced (`feat/prd05a-e2e-e<phase>-<slug>`).

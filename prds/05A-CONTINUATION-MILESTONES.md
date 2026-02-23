@@ -91,53 +91,53 @@ Delivered:
 2. Encrypted export and authenticated import in `crates/rusty-safe-signing-adapters/src/queue.rs`.
 3. Bundle schema extension in `crates/rusty-safe-signing-core/src/domain.rs`.
 
-### C5: Compatibility Matrix (In Progress)
+### C5: Wallet Runtime Compatibility and Gating (Active)
 
 Objective:
-1. Prove runtime hot-wallet viability for target browsers/wallets (MetaMask + Rabby).
-2. Execute against the complete E2E program in `prds/05A-E2E-WALLET-RUNTIME-PLAN.md` (MetaMask-first, parity-scoped, milestone-gated).
-3. Prioritize hot-wallet acceptance first (MetaMask + Rabby); hardware passthrough acceptance is deferred and non-blocking for current C5 release.
+1. Establish deterministic blocking release gates for signing parity using `wallet-mock`.
+2. Keep real-wallet coverage through non-blocking canary + mandatory manual MetaMask sanity at release time.
+3. Maintain strict localsafe parity scope and defer hardware passthrough acceptance (`H1`) as non-blocking.
 
 Deliverables:
-1. Chromium + MetaMask cache preflight run (post-unlock state validation).
-2. Chromium + MetaMask Playwright/Synpress E2E run (EOA path).
-3. Chromium + Rabby matrix run.
-4. Deferred hardware acceptance backlog entry:
-   - owner = Security lead;
-   - target = `E5` gate date + 14 calendar days.
+1. E0 deterministic preflight/runtime evidence:
+   - `scripts/run_prd05a_wallet_mock_preflight.sh`
+   - `e2e/tests/schemas/c5e2e-v1.schema.json`
+   - `e2e/tests/wallet-mock/runtime-profile-check.mjs`
+   - `e2e/tests/wallet-mock/runtime-preflight.contract.test.mjs`
+2. E1 blocking parity lane:
+   - `scripts/run_prd05a_wallet_mock_gate.sh`
+   - `scripts/run_prd05a_wallet_mock_soak.sh`
+   - `e2e/playwright.wallet-mock.config.ts`
+   - `e2e/tests/wallet-mock/wallet-mock-eip1193.spec.mjs`
+   - `e2e/tests/wallet-mock/drivers/*`
+3. E2 manual release sanity workflow:
+   - `scripts/run_prd05a_manual_metamask_checklist.sh`
+   - `prds/05A-RELEASE-GATE-CHECKLIST.md` updates for `MANUAL-MM-001..004`.
+4. E3 non-blocking canary lane:
+   - `scripts/run_prd05a_metamask_canary.sh`
+   - scheduled CI canary step in `.github/workflows/prd05a-signing-gates.yml`.
+5. E5 release evidence aggregation:
+   - `scripts/run_prd05a_release_evidence.sh`
+   - `local/reports/prd05a/C5-release-evidence-index.md` and JSON counterpart.
 
 Gate:
-1. MetaMask preflight gate must pass (`e2e/tests/metamask/metamask-cache-preflight.mjs`) with non-onboarding state after bootstrap recovery.
-2. MetaMask E2E gate must pass for `eth_requestAccounts`, `personal_sign`, `eth_signTypedData_v4`, and `eth_sendTransaction`.
-3. Compatibility report committed with pass/fail and known limitations.
-4. Hardware passthrough acceptance is explicitly deferred and non-blocking for current C5 hot-wallet gate.
+1. Blocking lane: `WM-PARITY-001..006` must pass.
+2. Blocking SLOs:
+   - local >= 95% over 20 runs;
+   - CI >= 99% over 50 runs.
+3. Manual release sanity checklist (`MANUAL-MM-001..004`) is complete before RC sign-off.
+4. MetaMask canary is non-blocking but must emit taxonomy artifacts for triage.
 
 Delivered:
-1. Matrix automation/report script `scripts/run_prd05a_compat_matrix.sh`.
-2. MetaMask Playwright gate script `scripts/run_prd05a_metamask_e2e.sh`.
-3. MetaMask cache preflight script:
-   - `e2e/tests/metamask/metamask-cache-preflight.mjs`
-4. Synpress wallet-setup and test artifacts:
-   - `e2e/wallet-setup/metamask.anvil.setup.mjs`
-   - `e2e/tests/metamask/metamask-eip1193.spec.mjs`
-   - `e2e/playwright.metamask.config.ts`
-   - `e2e/tests/metamask/drivers/*`
-   - `e2e/tests/metamask/scenario-manifest.mjs`
-   - `e2e/tests/metamask/failure-taxonomy*.mjs`
-5. Reports:
-   - `local/reports/prd05a/C5-metamask-e2e-report.md`
-   - `local/reports/prd05a/C5-e0-determinism-report.md`
-   - `local/reports/prd05a/C5-e1-driver-interface-report.md`
-   - `local/reports/prd05a/C5-dappwright-investigation.md`
-   - `local/reports/prd05a/C5-rabby-runtime-report.md`
-   - `local/reports/prd05a/C5-compatibility-matrix-report.md`
-   - `local/reports/prd05a/C5-metamask-soak-report.md`
-   - `local/reports/prd05a/C5-hardware-passthrough-smoke.md`
-6. Current blockers:
-   - `E0` and `E1` gates are green; `E2-E5` implementation is merged but connect/network runtime probes still time out in extension popup routing.
-   - `MM-PARITY-001..004` full runtime release-gate runs remain blocked on MetaMask notification popup lifecycle (`getNotificationPageAndWaitForLoad`).
-   - Rabby matrix is still profile-based and requires runtime scenario execution in `E4`.
-   - Deferred hardware passthrough acceptance backlog remains pending until `E5` is green; owner/target are pre-assigned (Security lead, `E5` + 14 days).
+1. `E0` complete and tagged (`prd05a-e2e-e0-gate`).
+2. `E1` complete and tagged (`prd05a-e2e-e1-gate`).
+3. `E2` complete and tagged (`prd05a-e2e-e2-gate`).
+4. `E3` complete and tagged (`prd05a-e2e-e3-gate`).
+5. `E5` release hard-gate script updated for blocking lane evidence index.
+
+Open items:
+1. `E4` Rabby canary matrix remains pending.
+2. `H1` hardware passthrough validation remains deferred/non-blocking with owner Security lead and target `E5 + 14 days`.
 
 ### C6: Performance Harness (Completed)
 
