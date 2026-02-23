@@ -1,4 +1,4 @@
-use alloy::primitives::{Address, Bytes, B256};
+use alloy::primitives::{Address, Bytes, PrimitiveSignature, B256};
 use serde_json::Value;
 
 use crate::domain::{
@@ -500,6 +500,10 @@ where
                 provider_recovery: None,
             });
         }
+        let recovered = recover_tx_signer(&signature, tx.safe_tx_hash)?;
+        if recovered != signer {
+            return Err(PortError::Validation("SIGNER_RECOVERY_MISMATCH".to_owned()));
+        }
 
         let (mut status, transition) = tx_transition(tx.status, TxAction::Sign)?;
         let now = TimestampMs(self.clock.now_ms()?);
@@ -512,7 +516,7 @@ where
             safe_address: tx.safe_address,
             payload_hash: tx.safe_tx_hash,
             expected_signer: signer,
-            recovered_signer: Some(signer),
+            recovered_signer: Some(recovered),
             added_at_ms: now,
         });
 
@@ -560,6 +564,25 @@ where
                 "cannot propose tx without signatures".to_owned(),
             ));
         }
+        if matches!(tx.status, TxStatus::Proposed | TxStatus::ReadyToExecute) {
+            let state = format!("{:?}", tx.status);
+            let rec = self.transition_record(
+                &envelope,
+                format!("tx:{}", tx.safe_tx_hash),
+                state.clone(),
+                state,
+                Some(tx.idempotency_key.clone()),
+                false,
+                Some("already_proposed".to_owned()),
+            )?;
+            self.queue.append_transition_log(rec.clone())?;
+            return Ok(CommandResult {
+                transition: Some(rec),
+                merge: None,
+                exported_bundle: None,
+                provider_recovery: None,
+            });
+        }
 
         let (_, transition) = tx_transition(tx.status, TxAction::Propose)?;
         self.safe_service.propose_tx(&tx)?;
@@ -600,6 +623,25 @@ where
             .queue
             .load_tx(safe_tx_hash)?
             .ok_or_else(|| PortError::NotFound(format!("tx not found: {safe_tx_hash}")))?;
+        if tx.signatures.iter().any(|x| x.signature == signature) {
+            let state = format!("{:?}", tx.status);
+            let rec = self.transition_record(
+                &envelope,
+                format!("tx:{}", tx.safe_tx_hash),
+                state.clone(),
+                state,
+                Some(tx.idempotency_key.clone()),
+                false,
+                Some("duplicate_confirmation_skipped".to_owned()),
+            )?;
+            self.queue.append_transition_log(rec.clone())?;
+            return Ok(CommandResult {
+                transition: Some(rec),
+                merge: None,
+                exported_bundle: None,
+                provider_recovery: None,
+            });
+        }
 
         let (_, transition) = tx_transition(tx.status, TxAction::Confirm)?;
         self.safe_service.confirm_tx(tx.safe_tx_hash, &signature)?;
@@ -1062,6 +1104,13 @@ fn validate_signature_bytes(signature: &Bytes) -> Result<(), PortError> {
         return Err(PortError::Validation("INVALID_SIGNATURE_FORMAT".to_owned()));
     }
     Ok(())
+}
+
+fn recover_tx_signer(signature: &Bytes, safe_tx_hash: B256) -> Result<Address, PortError> {
+    let sig = PrimitiveSignature::from_raw(signature.as_ref())
+        .map_err(|e| PortError::Validation(format!("INVALID_SIGNATURE_FORMAT: {e}")))?;
+    sig.recover_address_from_prehash(&safe_tx_hash)
+        .map_err(|e| PortError::Validation(format!("SIGNER_RECOVERY_FAILED: {e}")))
 }
 
 fn threshold_from_payload(payload: &Value) -> usize {
