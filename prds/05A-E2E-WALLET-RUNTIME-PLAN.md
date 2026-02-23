@@ -1,6 +1,6 @@
 # PRD 05A E2E Wallet Runtime Plan (Deterministic Gate + Real-Wallet Sanity + Canary)
 
-Status: Draft (Revised)  
+Status: Active (Revised for Build/Sign/Share Priority Execution)  
 Owner: Rusty Safe  
 Parent PRD: `prds/05A-PRD-PARITY-WAVE.md`  
 Continuation Milestone: `C5` in `prds/05A-CONTINUATION-MILESTONES.md`
@@ -41,12 +41,18 @@ In scope:
 2. Manual MetaMask hot-wallet sanity flow evidence before release candidate sign-off.
 3. Non-blocking nightly canary automation for MetaMask (required) and Rabby (targeted).
 4. CI hard-gate enforcement for deterministic lane only.
+5. Priority closure of build/sign/share parity capabilities required for daily Rusty Safe usage:
+   - `PARITY-TX-01` tx lifecycle (`create/hash/sign/propose/confirm/execute`)
+   - `PARITY-TX-02` manual signature merge paths
+   - `PARITY-ABI-01` ABI-assisted tx composition safety
+   - `PARITY-COLLAB-01` import/export/share compatibility and integrity
 
 Out of scope:
 1. Making MetaMask automation a blocking CI gate in C5.
 2. Hardware passthrough acceptance (Ledger/Trezor) for C5.
 3. New connector ecosystem expansion or non-parity features.
 4. Direct native HID browser integration in this wave.
+5. Connector expansion beyond current parity lane requirements.
 
 Anti-feature-creep policy:
 1. Every task must map to `PARITY-*` and `C5`.
@@ -209,6 +215,14 @@ Manual release sanity scenarios:
 Deferred hardware scenarios (post `E5`):
 1. `MATRIX-HW-001`: Ledger passthrough smoke via wallet software.
 2. `MATRIX-HW-002`: Trezor passthrough smoke via wallet software.
+
+Blocking build/sign/share closure scenarios (priority add-on):
+1. `WM-BSS-001`: tx flow `create -> sign -> propose -> confirm -> execute` is deterministic.
+2. `WM-BSS-002`: ABI-assisted create path includes selector mismatch guard and explicit override handling.
+3. `WM-BSS-003`: manual signature add/merge path is deterministic and idempotent.
+4. `WM-BSS-004`: export/import bundle path validates digest/authenticity and deterministic merge semantics.
+5. `WM-BSS-005`: localsafe URL keys (`importTx/importSig/importMsg/importMsgSig`) import successfully.
+6. `WM-BSS-006`: tampered bundle (MAC/auth mismatch) is rejected and quarantined.
 
 ## 8. Environment and Configuration Contract
 
@@ -433,9 +447,91 @@ Tag policy:
 
 ## 17. Immediate Next Actions
 
-1. Approve this revised two-lane plan as authoritative for C5.
-2. Start `E0` and produce deterministic schema/profile evidence.
-3. Implement `E1` blocking `wallet-mock` parity suite and gate scripts.
-4. Implement `E2` manual MetaMask release sanity checklist artifacts.
-5. Wire `E3` nightly MetaMask canary as non-blocking with taxonomy reporting.
-6. Update `prds/05A-RELEASE-GATE-CHECKLIST.md` when each phase gate turns green.
+1. Keep `wallet-mock` as the only blocking lane and treat MetaMask as canary/manual evidence.
+2. Prioritize bundle authenticity closure (remove placeholder bundle signature/exporter behavior).
+3. Complete deterministic build/sign/share E2E coverage (`WM-BSS-001..006`) before adding any connector depth.
+4. Keep scope lock to localsafe parity IDs and reject any non-parity additions in C5.
+5. Close remaining C5 release checklist items with explicit evidence updates.
+
+## 18. Priority Backlog (Build, Sign, Share)
+
+Priority model:
+1. `P0` means release-blocking for the core product goal (build/sign/share Safe transactions).
+2. `P1` means reliability and confidence for release operation.
+3. `P2` means deferred/non-blocking hardening.
+
+### P0 (Release-Blocking)
+
+1. `P0-1` Bundle authenticity parity:
+   - Replace placeholder export signer/signature behavior with real signer-backed semantics.
+   - Anchor: `crates/rusty-safe-signing-adapters/src/queue.rs`.
+   - Gate: tamper/auth vectors pass; recovered exporter matches expected signer; invalid bundles are quarantined.
+2. `P0-2` Tx lifecycle correctness:
+   - Ensure deterministic `create/hash/sign/propose/confirm/execute` flow with idempotency and conflict safety.
+   - Anchors: `crates/rusty-safe-signing-core/src/orchestrator.rs`, `crates/rusty-safe-signing-adapters/src/safe_service.rs`.
+   - Gate: tx E2E pass with no duplicate side effects.
+3. `P0-3` Manual signature parity:
+   - Ensure manual signature add/merge is deterministic, idempotent, and signer-validated.
+   - Anchor: `crates/rusty-safe-signing-adapters/tests/tx_manual_signature.rs`.
+   - Gate: duplicate/invalid/recovery vectors all pass.
+4. `P0-4` ABI-safe tx composition:
+   - Enforce selector mismatch warning/ack behavior and deterministic encoding.
+   - Anchor: `crates/rusty-safe-signing-adapters/tests/abi_builder.rs`.
+   - Gate: ABI vectors green with explicit mismatch rejection path.
+5. `P0-5` Import/export/share compatibility:
+   - Keep deterministic merge and localsafe URL key compatibility.
+   - Anchors: `crates/rusty-safe-signing-adapters/tests/import_export_merge.rs`, `crates/rusty-safe-signing-adapters/tests/url_import_compat.rs`.
+   - Gate: `PARITY-COLLAB-01` vectors pass including `importTx/importSig/importMsg/importMsgSig`.
+6. `P0-6` Build/sign/share blocking E2E lane:
+   - Add `WM-BSS-001..006` to the wallet-mock blocking suite.
+   - Anchors: `e2e/tests/wallet-mock/scenario-manifest.mjs`, `e2e/tests/wallet-mock/wallet-mock-eip1193.spec.mjs`.
+   - Gate: 100% pass on `WM-PARITY-*` + `WM-BSS-*`.
+
+### P1 (Operational Confidence)
+
+1. `P1-1` CI reliability closure:
+   - Demonstrate `>=99%` pass over scheduled 50-run blocking soak.
+2. `P1-2` Blocking performance closure:
+   - Meet p95 scenario and gate runtime budgets.
+3. `P1-3` Real-wallet confidence:
+   - Keep nightly MetaMask canary artifacts and mandatory manual RC sanity evidence.
+4. `P1-4` Differential parity guardrail:
+   - Keep localsafe fixture differential report green for mandatory `PARITY-*` flows.
+
+### P2 (Deferred/Non-Blocking)
+
+1. `P2-1` Rabby matrix completeness and dappwright comparison polish.
+2. `P2-2` Hardware passthrough acceptance (`H1`) after C5 hot-wallet release path is fully green.
+
+## 19. Milestone Execution Order (Now)
+
+1. `M1` Bundle + collaboration integrity closure (`P0-1`, `P0-5`) - `Completed 2026-02-23`:
+   - Branch: `feat/prd05a-e2e-m1-bundle-collab`
+   - Exit gate: auth + merge + URL compatibility vectors all green.
+2. `M2` Tx/signing correctness closure (`P0-2`, `P0-3`, `P0-4`) - `Completed 2026-02-23`:
+   - Branch: `feat/prd05a-e2e-m2-tx-sign-core`
+   - Exit gate: tx/manual/ABI suites green with deterministic replay.
+3. `M3` Blocking E2E build/sign/share closure (`P0-6`) - `Completed 2026-02-23`:
+   - Branch: `feat/prd05a-e2e-m3-wallet-mock-bss`
+   - Exit gate: `WM-PARITY-*` + `WM-BSS-*` all green locally and in PR gate.
+4. `M4` Release confidence closure (`P1-1`..`P1-4`) - `Pending`:
+   - Branch: `feat/prd05a-e2e-m4-release-confidence`
+   - Exit gate: checklist performance/reliability/canary/manual/differential items green.
+
+Commit and tag discipline:
+1. Commit at task boundaries with task IDs in commit subject/body.
+2. Add one explicit `-gate-green` commit at each milestone close.
+3. Tag milestones as `prd05a-e2e-m<index>-gate`.
+
+## 20. Next 10 Steps (Actionable)
+
+1. Run `scripts/run_prd05a_wallet_mock_soak.sh custom` with `PRD05A_SOAK_RUNS=20` and publish updated reliability evidence.
+2. Run `scripts/run_prd05a_wallet_mock_soak.sh daily` baseline (50 runs) and capture CI-equivalent pass-rate evidence.
+3. Execute `scripts/run_prd05a_performance.sh` and verify p95 runtime gates for blocking lane.
+4. Refresh `local/reports/prd05a/C9-differential-parity-report.md` after the new P0 hardening changes.
+5. Execute nightly MetaMask canary for 5 consecutive runs and keep taxonomy artifacts current.
+6. Keep Rabby canary scoped as optional and only run if explicitly enabled.
+7. Complete manual MetaMask release sanity workflow using `scripts/run_prd05a_manual_metamask_checklist.sh`.
+8. Update `prds/05A-RELEASE-GATE-CHECKLIST.md` for new reliability/performance evidence after M4 runs.
+9. Commit `M4 -gate-green` with evidence-index updates and tag `prd05a-e2e-m4-gate`.
+10. Finalize C5 sign-off bundle via `scripts/run_prd05a_release_evidence.sh`.

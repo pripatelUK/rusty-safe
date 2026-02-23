@@ -80,6 +80,13 @@ Reason:
   - \`WM-PARITY-004\` \`eth_sendTransaction\`
   - \`WM-PARITY-005\` \`accountsChanged\` recovery
   - \`WM-PARITY-006\` \`chainChanged\` recovery
+- Build/sign/share scenarios:
+  - \`WM-BSS-001\` tx lifecycle intent
+  - \`WM-BSS-002\` ABI selector guard
+  - \`WM-BSS-003\` manual signature idempotency
+  - \`WM-BSS-004\` bundle roundtrip determinism
+  - \`WM-BSS-005\` URL import key compatibility
+  - \`WM-BSS-006\` tampered bundle rejection
 
 ## Artifacts
 
@@ -136,6 +143,7 @@ locale_value="${LANG}"
 
 set +e
 (
+  set -euo pipefail
   echo "[header] schema_version=${PRD05A_SCHEMA_VERSION}"
   echo "[header] run_id=${run_id}"
   echo "[header] driver_mode=${driver_mode}"
@@ -200,6 +208,13 @@ else
     taxonomy="HARNESS_FAIL"
     triage_label="triage/harness"
   fi
+fi
+
+if rg -q "already used, make sure that nothing is running on the port/url" "$log_path"; then
+  status="BLOCKED"
+  taxonomy="ENV_BLOCKER"
+  triage_label="triage/env"
+  reason="playwright webServer startup blocked by existing process on base URL"
 fi
 
 write_reports

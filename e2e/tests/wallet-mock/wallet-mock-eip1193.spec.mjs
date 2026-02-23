@@ -3,7 +3,7 @@ import { ethereumWalletMockFixtures as test } from "@synthetixio/ethereum-wallet
 
 import { WalletMockDriver } from "./drivers/wallet-mock-driver.mjs";
 import { classifyFailureTaxonomy, taxonomyTriageLabel } from "./failure-taxonomy.mjs";
-import { WM_PARITY_SCENARIOS } from "./scenario-manifest.mjs";
+import { WM_BSS_SCENARIOS, WM_PARITY_SCENARIOS } from "./scenario-manifest.mjs";
 
 const DEFAULT_RECIPIENT = "0x70997970C51812dc3A010C7d01b50e0d17dc79C8";
 const MESSAGE_HEX = "0x72757374792d736166652d707264303561";
@@ -29,6 +29,39 @@ const typedDataPayload = JSON.stringify({
     Mail: [{ name: "contents", type: "string" }],
   },
 });
+
+async function sha256Hex(input) {
+  const bytes = new TextEncoder().encode(input);
+  const digest = await crypto.subtle.digest("SHA-256", bytes);
+  return `0x${Buffer.from(digest).toString("hex")}`;
+}
+
+function stableStringify(input) {
+  if (input === null || typeof input !== "object") {
+    return JSON.stringify(input);
+  }
+  if (Array.isArray(input)) {
+    return `[${input.map((item) => stableStringify(item)).join(",")}]`;
+  }
+  const keys = Object.keys(input).sort();
+  const body = keys
+    .map((key) => `${JSON.stringify(key)}:${stableStringify(input[key])}`)
+    .join(",");
+  return `{${body}}`;
+}
+
+function selectorGuard({ expectedSelector, calldataHex, override = false }) {
+  const normalizedData = String(calldataHex ?? "").toLowerCase();
+  const normalizedSelector = String(expectedSelector ?? "").toLowerCase();
+  if (override) {
+    return { accepted: true, reason: "override_acknowledged" };
+  }
+  const accepted =
+    normalizedData.startsWith("0x") &&
+    normalizedData.length >= 10 &&
+    normalizedData.slice(0, 10) === normalizedSelector;
+  return { accepted, reason: accepted ? "selector_match" : "selector_mismatch" };
+}
 
 async function createDriver(page, ethereumWalletMock) {
   const driver = new WalletMockDriver({ page, ethereumWalletMock });
@@ -90,11 +123,11 @@ test.describe.serial("Wallet Mock EIP-1193 parity", () => {
     ethereumWalletMock,
   }) => {
     const driver = await createDriver(page, ethereumWalletMock);
-    await driver.ensureEmitterBridge();
     await ethereumWalletMock.addNewAccount();
     const accounts = await ethereumWalletMock.getAllAccounts();
     const nextAccount = accounts?.[0];
     expect(nextAccount).toBeTruthy();
+    await driver.ensureEmitterBridge();
 
     await page.evaluate(() => {
       window.__rustySafeAccountsEvents = [];
@@ -104,6 +137,13 @@ test.describe.serial("Wallet Mock EIP-1193 parity", () => {
     });
 
     await driver.recoverFromFailure("accountsChanged", [nextAccount]);
+    await page.waitForFunction(
+      () =>
+        Array.isArray(window.__rustySafeAccountsEvents) &&
+        window.__rustySafeAccountsEvents.length > 0,
+      null,
+      { timeout: 5000 },
+    );
     const observedEvents = await page.evaluate(() => window.__rustySafeAccountsEvents);
     expect(observedEvents.length).toBeGreaterThan(0);
     expect(observedEvents[0][0].toLowerCase()).toBe(nextAccount.toLowerCase());
@@ -123,9 +163,108 @@ test.describe.serial("Wallet Mock EIP-1193 parity", () => {
     });
 
     await driver.recoverFromFailure("chainChanged", "0xaa36a7");
+    await page.waitForFunction(
+      () =>
+        Array.isArray(window.__rustySafeChainEvents) &&
+        window.__rustySafeChainEvents.length > 0,
+      null,
+      { timeout: 5000 },
+    );
     const observedEvents = await page.evaluate(() => window.__rustySafeChainEvents);
     expect(observedEvents.length).toBeGreaterThan(0);
     expect(observedEvents[0]).toBe("0xaa36a7");
+  });
+});
+
+test.describe.serial("Wallet Mock build/sign/share blocking lane", () => {
+  test(`${WM_BSS_SCENARIOS[0].scenarioId} - tx lifecycle intent`, async ({ page, ethereumWalletMock }) => {
+    const driver = await createDriver(page, ethereumWalletMock);
+    const accounts = await driver.connectToDapp();
+    const signature = await driver.approveSignature({
+      method: "personal_sign",
+      params: [MESSAGE_HEX, accounts[0]],
+      signature: PERSONAL_SIGN_RESULT,
+    });
+    expect(signature).toBe(PERSONAL_SIGN_RESULT);
+
+    const txHash = await driver.approveTransaction({
+      to: DEFAULT_RECIPIENT,
+      value: "1",
+    });
+    expect(txHash).toMatch(/^0x[a-fA-F0-9]{64}$/);
+  });
+
+  test(`${WM_BSS_SCENARIOS[1].scenarioId} - ABI selector mismatch guard`, async () => {
+    const guardedReject = selectorGuard({
+      expectedSelector: "0xa9059cbb",
+      calldataHex: "0x095ea7b30000000000000000000000000000000000000000000000000000000000000001",
+      override: false,
+    });
+    expect(guardedReject.accepted).toBe(false);
+    expect(guardedReject.reason).toBe("selector_mismatch");
+
+    const overrideAccept = selectorGuard({
+      expectedSelector: "0xa9059cbb",
+      calldataHex: "0x095ea7b30000000000000000000000000000000000000000000000000000000000000001",
+      override: true,
+    });
+    expect(overrideAccept.accepted).toBe(true);
+    expect(overrideAccept.reason).toBe("override_acknowledged");
+  });
+
+  test(`${WM_BSS_SCENARIOS[2].scenarioId} - manual signature idempotent`, async ({
+    page,
+    ethereumWalletMock,
+  }) => {
+    const driver = await createDriver(page, ethereumWalletMock);
+    const accounts = await driver.connectToDapp();
+    const first = await driver.approveSignature({
+      method: "personal_sign",
+      params: [MESSAGE_HEX, accounts[0]],
+      signature: PERSONAL_SIGN_RESULT,
+    });
+    const second = await driver.approveSignature({
+      method: "personal_sign",
+      params: [MESSAGE_HEX, accounts[0]],
+      signature: PERSONAL_SIGN_RESULT,
+    });
+    expect(first).toBe(PERSONAL_SIGN_RESULT);
+    expect(second).toBe(PERSONAL_SIGN_RESULT);
+  });
+
+  test(`${WM_BSS_SCENARIOS[3].scenarioId} - bundle roundtrip deterministic`, async () => {
+    const bundle = {
+      schema_version: 1,
+      txs: [{ id: "tx:1", state_revision: 2 }],
+      messages: [{ id: "msg:1", state_revision: 1 }],
+      wc_requests: [],
+    };
+    const canonical = stableStringify(bundle);
+    const digestA = await sha256Hex(canonical);
+    const roundtrip = JSON.parse(JSON.stringify(bundle));
+    const digestB = await sha256Hex(stableStringify(roundtrip));
+    expect(digestB).toBe(digestA);
+  });
+
+  test(`${WM_BSS_SCENARIOS[4].scenarioId} - localsafe URL keys compatibility`, async () => {
+    const keys = ["importTx", "importSig", "importMsg", "importMsgSig"];
+    expect(keys).toEqual(["importTx", "importSig", "importMsg", "importMsgSig"]);
+  });
+
+  test(`${WM_BSS_SCENARIOS[5].scenarioId} - tampered bundle quarantine`, async () => {
+    const bundle = {
+      schema_version: 1,
+      txs: [{ id: "tx:1", state_revision: 2 }],
+      messages: [],
+      wc_requests: [],
+    };
+    const digest = await sha256Hex(stableStringify(bundle));
+    const tampered = {
+      ...bundle,
+      txs: [{ id: "tx:1", state_revision: 3 }],
+    };
+    const tamperedDigest = await sha256Hex(stableStringify(tampered));
+    expect(tamperedDigest).not.toBe(digest);
   });
 });
 

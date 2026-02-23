@@ -38,48 +38,60 @@ export class WalletMockDriver {
 
   async ensureEmitterBridge() {
     await this.page.evaluate(() => {
-      const provider = window.ethereum;
-      if (!provider || provider.__rustySafeEmitBridgeReady) {
+      const rootProvider = window.ethereum;
+      if (!rootProvider) {
         return;
       }
 
-      const listeners = {};
-      const originalOn = typeof provider.on === "function" ? provider.on.bind(provider) : null;
-      const originalRemove =
-        typeof provider.removeListener === "function" ? provider.removeListener.bind(provider) : null;
+      const candidates = Array.isArray(rootProvider.providers)
+        ? [rootProvider, ...rootProvider.providers]
+        : [rootProvider];
 
-      provider.on = (eventName, handler) => {
-        listeners[eventName] = listeners[eventName] ?? [];
-        listeners[eventName].push(handler);
-        if (originalOn) {
-          try {
-            originalOn(eventName, handler);
-          } catch (_error) {
-            // no-op: wallet mock may not support native listener plumbing for all events
+      for (const provider of candidates) {
+        if (!provider || provider.__rustySafeEmitBridgeReady) {
+          continue;
+        }
+
+        const listeners = {};
+        const originalOn = typeof provider.on === "function" ? provider.on.bind(provider) : null;
+        const originalRemove =
+          typeof provider.removeListener === "function"
+            ? provider.removeListener.bind(provider)
+            : null;
+
+        provider.on = (eventName, handler) => {
+          listeners[eventName] = listeners[eventName] ?? [];
+          listeners[eventName].push(handler);
+          if (originalOn) {
+            try {
+              originalOn(eventName, handler);
+            } catch (_error) {
+              // no-op: wallet mock may not support native listener plumbing for all events
+            }
           }
-        }
-        return provider;
-      };
+          return provider;
+        };
 
-      provider.removeListener = (eventName, handler) => {
-        const eventListeners = listeners[eventName] ?? [];
-        listeners[eventName] = eventListeners.filter((candidate) => candidate !== handler);
-        if (originalRemove) {
-          try {
-            originalRemove(eventName, handler);
-          } catch (_error) {
-            // no-op
+        provider.removeListener = (eventName, handler) => {
+          const eventListeners = listeners[eventName] ?? [];
+          listeners[eventName] = eventListeners.filter((candidate) => candidate !== handler);
+          if (originalRemove) {
+            try {
+              originalRemove(eventName, handler);
+            } catch (_error) {
+              // no-op
+            }
           }
-        }
-        return provider;
-      };
+          return provider;
+        };
 
-      provider.__rustySafeEmit = (eventName, payload) => {
-        for (const handler of listeners[eventName] ?? []) {
-          handler(payload);
-        }
-      };
-      provider.__rustySafeEmitBridgeReady = true;
+        provider.__rustySafeEmit = (eventName, payload) => {
+          for (const handler of listeners[eventName] ?? []) {
+            handler(payload);
+          }
+        };
+        provider.__rustySafeEmitBridgeReady = true;
+      }
     });
   }
 
@@ -134,18 +146,29 @@ export class WalletMockDriver {
 
   async recoverFromFailure(kind, payload) {
     await this.ensureEmitterBridge();
-    if (kind === "accountsChanged") {
+    const emitEvent = async (eventName, eventPayload) => {
       await this.page.evaluate(
-        ({ nextAccounts }) => window.ethereum?.__rustySafeEmit?.("accountsChanged", nextAccounts),
-        { nextAccounts: payload },
+        ({ nextEventName, nextPayload }) => {
+          const rootProvider = window.ethereum;
+          if (!rootProvider) {
+            return;
+          }
+          const candidates = Array.isArray(rootProvider.providers)
+            ? [rootProvider, ...rootProvider.providers]
+            : [rootProvider];
+          for (const provider of candidates) {
+            provider?.__rustySafeEmit?.(nextEventName, nextPayload);
+          }
+        },
+        { nextEventName: eventName, nextPayload: eventPayload },
       );
+    };
+    if (kind === "accountsChanged") {
+      await emitEvent("accountsChanged", payload);
       return { recovered: true, kind, payload };
     }
     if (kind === "chainChanged") {
-      await this.page.evaluate(
-        ({ nextChainId }) => window.ethereum?.__rustySafeEmit?.("chainChanged", nextChainId),
-        { nextChainId: payload },
-      );
+      await emitEvent("chainChanged", payload);
       return { recovered: true, kind, payload };
     }
     return { recovered: false, kind };

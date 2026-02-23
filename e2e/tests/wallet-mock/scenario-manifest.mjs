@@ -54,3 +54,62 @@ export const WM_PARITY_SCENARIOS = [
     releaseGateDriver: "wallet-mock",
   },
 ];
+
+export const WM_BSS_SCENARIOS = [
+  {
+    scenarioId: "WM-BSS-001",
+    parityIds: ["PARITY-TX-01"],
+    method: "bss_tx_lifecycle",
+    title: "build-sign-share tx lifecycle intent is deterministic",
+    timeoutMs: 30000,
+    gateTier: "blocking",
+    releaseGateDriver: "wallet-mock",
+  },
+  {
+    scenarioId: "WM-BSS-002",
+    parityIds: ["PARITY-ABI-01"],
+    method: "bss_abi_selector_guard",
+    title: "ABI selector guard path is deterministic",
+    timeoutMs: 30000,
+    gateTier: "blocking",
+    releaseGateDriver: "wallet-mock",
+  },
+  {
+    scenarioId: "WM-BSS-003",
+    parityIds: ["PARITY-TX-02"],
+    method: "bss_manual_signature_idempotent",
+    title: "manual signature path is deterministic and idempotent",
+    timeoutMs: 30000,
+    gateTier: "blocking",
+    releaseGateDriver: "wallet-mock",
+  },
+  {
+    scenarioId: "WM-BSS-004",
+    parityIds: ["PARITY-COLLAB-01"],
+    method: "bss_bundle_roundtrip",
+    title: "bundle export/import share roundtrip remains deterministic",
+    timeoutMs: 30000,
+    gateTier: "blocking",
+    releaseGateDriver: "wallet-mock",
+  },
+  {
+    scenarioId: "WM-BSS-005",
+    parityIds: ["PARITY-COLLAB-01"],
+    method: "bss_url_key_compat",
+    title: "localsafe URL import keys remain compatible",
+    timeoutMs: 30000,
+    gateTier: "blocking",
+    releaseGateDriver: "wallet-mock",
+  },
+  {
+    scenarioId: "WM-BSS-006",
+    parityIds: ["PARITY-COLLAB-01"],
+    method: "bss_bundle_tamper_quarantine",
+    title: "tampered bundle path is rejected deterministically",
+    timeoutMs: 30000,
+    gateTier: "blocking",
+    releaseGateDriver: "wallet-mock",
+  },
+];
+
+export const WM_BLOCKING_SCENARIOS = [...WM_PARITY_SCENARIOS, ...WM_BSS_SCENARIOS];
