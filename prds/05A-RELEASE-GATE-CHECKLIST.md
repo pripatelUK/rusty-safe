@@ -79,7 +79,7 @@ Deferred artifact (non-blocking for C5):
 - [x] `E2` committed with `E*-T*` and `-gate-green` marker.
 - [x] `E3` committed/tagged.
 - [ ] `E4` committed/tagged.
-- [ ] `E5` committed/tagged.
+- [x] `E5` committed/tagged.
 - [x] Phase branch naming policy enforced (`feat/prd05a-e2e-e<phase>-<slug>`).
 - [ ] Branch closure report completed.
 
