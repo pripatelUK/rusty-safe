@@ -99,6 +99,25 @@ impl SigningAdapterConfig {
                 _ => RuntimeProfile::Development,
             };
         }
+        #[cfg(target_arch = "wasm32")]
+        {
+            use wasm_bindgen::JsValue;
+
+            if let Some(window) = web_sys::window() {
+                let window_ref = window.as_ref();
+                if let Ok(value) = js_sys::Reflect::get(
+                    window_ref,
+                    &JsValue::from_str("__RUSTY_SAFE_RUNTIME_PROFILE"),
+                ) {
+                    if let Some(profile) = value.as_string() {
+                        cfg.runtime_profile = match profile.trim().to_ascii_lowercase().as_str() {
+                            "prod" | "production" => RuntimeProfile::Production,
+                            _ => RuntimeProfile::Development,
+                        };
+                    }
+                }
+            }
+        }
         cfg
     }
 

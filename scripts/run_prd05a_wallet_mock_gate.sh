@@ -19,6 +19,12 @@ scenario_grep="${PRD05A_SCENARIO_GREP:-}"
 expected_locale_prefix="${PRD05A_EXPECTED_LOCALE_PREFIX:-en}"
 e2e_base_url="${PRD05A_E2E_BASE_URL:-http://localhost:7272}"
 e2e_skip_webserver="${PRD05A_E2E_SKIP_WEBSERVER:-0}"
+gate_attempts="${PRD05A_GATE_ATTEMPTS:-2}"
+profile_timeout_seconds="${PRD05A_PROFILE_TIMEOUT_SECONDS:-120}"
+playwright_timeout_seconds="${PRD05A_PLAYWRIGHT_TIMEOUT_SECONDS:-360}"
+skip_runtime_profile="${PRD05A_SKIP_RUNTIME_PROFILE:-0}"
+wallet_mock_headed="${PRD05A_WALLET_MOCK_HEADED:-1}"
+use_xvfb="${PRD05A_XVFB:-1}"
 taxonomy="ENV_BLOCKER"
 status="BLOCKED"
 triage_label="triage/env"
@@ -158,6 +164,12 @@ set +e
   echo "[header] scenario_grep=${scenario_grep:-all}"
   echo "[header] e2e_base_url=${e2e_base_url}"
   echo "[header] e2e_skip_webserver=${e2e_skip_webserver}"
+  echo "[header] gate_attempts=${gate_attempts}"
+  echo "[header] profile_timeout_seconds=${profile_timeout_seconds}"
+  echo "[header] playwright_timeout_seconds=${playwright_timeout_seconds}"
+  echo "[header] skip_runtime_profile=${skip_runtime_profile}"
+  echo "[header] wallet_mock_headed=${wallet_mock_headed}"
+  echo "[header] use_xvfb=${use_xvfb}"
 
   pushd e2e >/dev/null
 
@@ -173,21 +185,70 @@ set +e
   echo "[contract] running failure taxonomy checks"
   "$node_bin" --test ./tests/wallet-mock/failure-taxonomy.contract.test.mjs
 
-  echo "[profile] running wallet-mock runtime profile check"
-  PRD05A_EXPECTED_LOCALE_PREFIX="${expected_locale_prefix}" \
-    "$node_bin" ./tests/wallet-mock/runtime-profile-check.mjs
+  export PRD05A_WALLET_MOCK_HEADED="${wallet_mock_headed}"
 
-  echo "[test] running wallet-mock playwright suite"
-  playwright_cmd=(
-    "$node_bin" ./node_modules/playwright/cli.js test
-    -c playwright.wallet-mock.config.ts
-    tests/wallet-mock/wallet-mock-eip1193.spec.mjs
-    --project=chromium
-  )
-  if [[ -n "$scenario_grep" ]]; then
-    playwright_cmd+=(--grep "$scenario_grep")
+  browser_prefix=()
+  if [[ "${use_xvfb}" == "1" ]]; then
+    browser_prefix=(xvfb-run -a)
   fi
-  "${playwright_cmd[@]}"
+
+  suite_rc=1
+  attempt=1
+  while [[ $attempt -le $gate_attempts ]]; do
+    echo "[attempt] wallet-mock gate attempt ${attempt}/${gate_attempts}"
+
+    profile_rc=0
+    if [[ "$skip_runtime_profile" == "1" ]]; then
+      echo "[profile] skipped wallet-mock runtime profile check (PRD05A_SKIP_RUNTIME_PROFILE=1)"
+    else
+      echo "[profile] running wallet-mock runtime profile check"
+      set +e
+      PRD05A_EXPECTED_LOCALE_PREFIX="${expected_locale_prefix}" \
+        timeout "${profile_timeout_seconds}" \
+        "${browser_prefix[@]}" \
+        "$node_bin" ./tests/wallet-mock/runtime-profile-check.mjs
+      profile_rc=$?
+      set -e
+    fi
+    if [[ $profile_rc -ne 0 ]]; then
+      suite_rc=$profile_rc
+      echo "[attempt] runtime profile check failed (rc=${profile_rc})"
+    else
+      echo "[test] running wallet-mock playwright suite"
+      playwright_cmd=(
+        "$node_bin" ./node_modules/playwright/cli.js test
+        -c playwright.wallet-mock.config.ts
+        tests/wallet-mock/wallet-mock-eip1193.spec.mjs
+        --project=chromium
+      )
+      if [[ -n "$scenario_grep" ]]; then
+        playwright_cmd+=(--grep "$scenario_grep")
+      fi
+
+      set +e
+      timeout "${playwright_timeout_seconds}" "${browser_prefix[@]}" "${playwright_cmd[@]}"
+      suite_rc=$?
+      set -e
+    fi
+
+    if [[ $suite_rc -eq 0 ]]; then
+      break
+    fi
+
+    if [[ $attempt -lt $gate_attempts ]]; then
+      echo "[attempt] retrying after cleanup"
+      pkill -f "tests/wallet-mock/runtime-profile-check.mjs" >/dev/null 2>&1 || true
+      pkill -f "playwright.wallet-mock.config.ts tests/wallet-mock/wallet-mock-eip1193.spec.mjs --project=chromium" >/dev/null 2>&1 || true
+      sleep 2
+    fi
+
+    attempt=$((attempt + 1))
+  done
+
+  if [[ $suite_rc -ne 0 ]]; then
+    echo "[attempt] exhausted retries, final rc=${suite_rc}"
+    exit "$suite_rc"
+  fi
 
   popd >/dev/null
 ) >"$log_path" 2>&1

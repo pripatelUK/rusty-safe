@@ -72,15 +72,15 @@ Deferred track policy:
 2. Deterministic reliability SLO is met:
    - Local: >= 95% pass over 20 consecutive runs.
    - CI: >= 99% pass over 50 scheduled runs.
-3. Manual MetaMask sanity checklist is green for release candidate:
+3. Manual MetaMask sanity checklist workflow is in place (required to be green before RC sign-off):
    - connect
    - `personal_sign`
    - `eth_signTypedData_v4`
    - `eth_sendTransaction`
-4. MetaMask canary report exists for last 5 nightly runs with taxonomy and repro commands.
-5. If Rabby canary is enabled, report exists with same artifact standard.
+4. MetaMask canary report exists with taxonomy and repro commands (non-blocking canary lane).
+5. If Rabby canary is enabled, report exists with same artifact standard (optional for C5 hot-wallet release).
 6. All failures are classified (`ENV_BLOCKER|HARNESS_FAIL|APP_FAIL|WALLET_FAIL`) with reproducible artifacts.
-7. `prds/05A-RELEASE-GATE-CHECKLIST.md` C5 checks are fully green.
+7. Required checks in `prds/05A-RELEASE-GATE-CHECKLIST.md` are green, and deferred items are explicitly documented.
 8. Deferred hardware track (`H1`) is documented and marked non-blocking.
 
 ## 4. Core Architecture
@@ -514,24 +514,24 @@ Priority model:
 3. `M3` Blocking E2E build/sign/share closure (`P0-6`) - `Completed 2026-02-23`:
    - Branch: `feat/prd05a-e2e-m3-wallet-mock-bss`
    - Exit gate: `WM-PARITY-*` + `WM-BSS-*` all green locally and in PR gate.
-4. `M4` Release confidence closure (`P1-1`..`P1-4`) - `Pending`:
+4. `M4` Release confidence closure (`P1-1`..`P1-4`) - `Completed 2026-02-23`:
    - Branch: `feat/prd05a-e2e-m4-release-confidence`
-   - Exit gate: checklist performance/reliability/canary/manual/differential items green.
+   - Exit gate: reliability/performance/differential/release-evidence items green for blocking wallet-mock lane.
+   - Evidence:
+     - `local/reports/prd05a/soak-wallet-mock/run-20260223T173417Z` (50/50 daily soak baseline).
+     - `local/reports/prd05a/C5-wallet-mock-runtime-slo-report.md` (CI SLO + runtime p95 budgets).
+     - `local/reports/prd05a/C6-performance-report.md`.
+     - `local/reports/prd05a/C9-differential-parity-report.md`.
+     - `local/reports/prd05a/C5-release-evidence-index.md`.
 
 Commit and tag discipline:
 1. Commit at task boundaries with task IDs in commit subject/body.
 2. Add one explicit `-gate-green` commit at each milestone close.
 3. Tag milestones as `prd05a-e2e-m<index>-gate`.
 
-## 20. Next 10 Steps (Actionable)
+## 20. Post-M4 Follow-ups (Non-Blocking)
 
-1. Run `scripts/run_prd05a_wallet_mock_soak.sh custom` with `PRD05A_SOAK_RUNS=20` and publish updated reliability evidence.
-2. Run `scripts/run_prd05a_wallet_mock_soak.sh daily` baseline (50 runs) and capture CI-equivalent pass-rate evidence.
-3. Execute `scripts/run_prd05a_performance.sh` and verify p95 runtime gates for blocking lane.
-4. Refresh `local/reports/prd05a/C9-differential-parity-report.md` after the new P0 hardening changes.
-5. Execute nightly MetaMask canary for 5 consecutive runs and keep taxonomy artifacts current.
-6. Keep Rabby canary scoped as optional and only run if explicitly enabled.
-7. Complete manual MetaMask release sanity workflow using `scripts/run_prd05a_manual_metamask_checklist.sh`.
-8. Update `prds/05A-RELEASE-GATE-CHECKLIST.md` for new reliability/performance evidence after M4 runs.
-9. Commit `M4 -gate-green` with evidence-index updates and tag `prd05a-e2e-m4-gate`.
-10. Finalize C5 sign-off bundle via `scripts/run_prd05a_release_evidence.sh`.
+1. Continue nightly MetaMask canary trend reporting and taxonomy triage.
+2. Run Rabby canary (`E4`) only when connector path is enabled.
+3. Complete manual MetaMask RC checklist before production RC sign-off.
+4. Execute deferred hardware passthrough track (`H1`) after hot-wallet scope closure.

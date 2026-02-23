@@ -6,6 +6,13 @@ export const WALLET_DRIVER_METHODS = [
   "approveNetworkChange",
   "recoverFromFailure",
   "collectWalletDiagnostics",
+  "openSigningTab",
+  "acquireWriterLock",
+  "createRawTxDraft",
+  "triggerExportBundle",
+  "triggerImportBundle",
+  "triggerImportUrlPayload",
+  "readStatusBanner",
 ];
 
 export function assertWalletDriverContract(driver, driverName = "wallet-driver") {

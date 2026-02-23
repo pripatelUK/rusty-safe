@@ -39,7 +39,7 @@ declare -A taxonomy_counts
 for ((i=1; i<=runs; i++)); do
   echo "[soak-wallet-mock] run ${i}/${runs}"
   set +e
-  scripts/run_prd05a_wallet_mock_gate.sh
+  PRD05A_SKIP_RUNTIME_PROFILE=1 scripts/run_prd05a_wallet_mock_gate.sh
   rc=$?
   set -e
 

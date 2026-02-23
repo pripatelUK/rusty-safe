@@ -1,6 +1,8 @@
 //! Main application state and update loop
 
 use alloy::hex;
+#[cfg(target_arch = "wasm32")]
+use alloy::primitives::{Address, Bytes};
 use alloy::primitives::{ChainId, B256};
 use eframe::egui;
 use safe_hash::SafeWarnings;
@@ -9,6 +11,8 @@ use safe_utils::{
     SafeWalletVersion,
 };
 use std::sync::{Arc, Mutex};
+#[cfg(target_arch = "wasm32")]
+use wasm_bindgen::JsValue;
 
 use crate::api::SafeTransaction;
 use crate::decode::{self, ComparisonResult, SignatureLookup, TransactionKind};
@@ -156,6 +160,19 @@ pub enum Tab {
 impl App {
     /// Create a new App instance
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
+        #[cfg(target_arch = "wasm32")]
+        {
+            use wasm_bindgen::JsValue;
+
+            if let Some(window) = web_sys::window() {
+                let _ = js_sys::Reflect::set(
+                    window.as_ref(),
+                    &JsValue::from_str("__rustySafeE2EAppReady"),
+                    &JsValue::TRUE,
+                );
+            }
+        }
+
         // Load custom font for logo
         let mut fonts = egui::FontDefinitions::default();
         fonts.font_data.insert(
@@ -198,6 +215,43 @@ impl App {
     }
 }
 
+#[cfg(target_arch = "wasm32")]
+fn parse_signing_surface(raw: &str) -> Result<SigningSurface, String> {
+    match raw.trim() {
+        "Queue" => Ok(SigningSurface::Queue),
+        "TxDetails" => Ok(SigningSurface::TxDetails),
+        "MessageDetails" => Ok(SigningSurface::MessageDetails),
+        "WalletConnect" => Ok(SigningSurface::WalletConnect),
+        "ImportExport" => Ok(SigningSurface::ImportExport),
+        _ => Err(format!("invalid signing surface: {raw}")),
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+fn js_value_to_json(value: &JsValue) -> Result<serde_json::Value, String> {
+    let serialized =
+        js_sys::JSON::stringify(value).map_err(|_| "failed to stringify e2e command".to_owned())?;
+    let json_str = serialized
+        .as_string()
+        .ok_or_else(|| "stringified e2e command was not string".to_owned())?;
+    serde_json::from_str(&json_str).map_err(|e| format!("failed to parse e2e command json: {e}"))
+}
+
+#[cfg(target_arch = "wasm32")]
+fn write_signing_e2e_result(results: &js_sys::Object, id: &str, payload: &serde_json::Value) {
+    use js_sys::Reflect;
+
+    let serialized = match serde_json::to_string(payload) {
+        Ok(v) => v,
+        Err(e) => format!(r#"{{"ok":false,"error":"result serialization failed: {e}"}}"#),
+    };
+    let _ = Reflect::set(
+        results.as_ref(),
+        &JsValue::from_str(id),
+        &JsValue::from_str(&serialized),
+    );
+}
+
 impl eframe::App for App {
     /// Called by eframe to save state before shutdown
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
@@ -222,6 +276,9 @@ impl eframe::App for App {
 
         // Check for async signing-runtime results
         self.check_signing_async_result();
+        self.process_signing_e2e_commands();
+        #[cfg(target_arch = "wasm32")]
+        ctx.request_repaint_after(std::time::Duration::from_millis(16));
 
         // Header with tabs
         egui::TopBottomPanel::top("header").show(ctx, |ui| {
@@ -2240,6 +2297,417 @@ impl App {
                 SigningAsyncResult::Success(msg) => self.signing_ui_state.set_info(msg),
                 SigningAsyncResult::Error(msg) => self.signing_ui_state.set_error(msg),
             }
+        }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn process_signing_e2e_commands(&mut self) {}
+
+    #[cfg(target_arch = "wasm32")]
+    fn process_signing_e2e_commands(&mut self) {
+        use js_sys::{Array, Object, Reflect};
+        use wasm_bindgen::JsCast;
+
+        let Some(window) = web_sys::window() else {
+            return;
+        };
+
+        let window_ref = window.as_ref();
+        let queue_key = JsValue::from_str("__rustySafeE2EQueue");
+        let results_key = JsValue::from_str("__rustySafeE2EResults");
+        let ready_key = JsValue::from_str("__rustySafeE2EAppReady");
+        let _ = Reflect::set(window_ref, &ready_key, &JsValue::TRUE);
+
+        let queue_value = Reflect::get(window_ref, &queue_key).unwrap_or(JsValue::UNDEFINED);
+        let queue = if queue_value.is_undefined() || queue_value.is_null() {
+            let array = Array::new();
+            let _ = Reflect::set(window_ref, &queue_key, &array.clone().into());
+            array
+        } else if Array::is_array(&queue_value) {
+            queue_value.unchecked_into::<Array>()
+        } else {
+            let array = Array::new();
+            let _ = Reflect::set(window_ref, &queue_key, &array.clone().into());
+            array
+        };
+
+        let results_value = Reflect::get(window_ref, &results_key).unwrap_or(JsValue::UNDEFINED);
+        let results = if results_value.is_undefined() || results_value.is_null() {
+            let object = Object::new();
+            let _ = Reflect::set(window_ref, &results_key, &object.clone().into());
+            object
+        } else if results_value.is_object() {
+            results_value.unchecked_into::<Object>()
+        } else {
+            let object = Object::new();
+            let _ = Reflect::set(window_ref, &results_key, &object.clone().into());
+            object
+        };
+
+        let command_count = queue.length();
+        if command_count == 0 {
+            return;
+        }
+
+        let mut commands = Vec::with_capacity(command_count as usize);
+        for idx in 0..command_count {
+            commands.push(queue.get(idx));
+        }
+        queue.set_length(0);
+
+        for command in commands {
+            let parsed = js_value_to_json(&command);
+            let (id, response) = match parsed {
+                Ok(payload) => {
+                    let id = payload
+                        .get("id")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("unknown")
+                        .to_owned();
+                    let method = payload
+                        .get("method")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or_default();
+                    let params = payload
+                        .get("params")
+                        .cloned()
+                        .unwrap_or(serde_json::Value::Null);
+                    let response = match self.handle_signing_e2e_command(method, params) {
+                        Ok(result) => serde_json::json!({ "ok": true, "result": result }),
+                        Err(error) => serde_json::json!({ "ok": false, "error": error }),
+                    };
+                    (id, response)
+                }
+                Err(error) => (
+                    "unknown".to_owned(),
+                    serde_json::json!({ "ok": false, "error": error }),
+                ),
+            };
+
+            write_signing_e2e_result(&results, &id, &response);
+        }
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    fn handle_signing_e2e_command(
+        &mut self,
+        method: &str,
+        params: serde_json::Value,
+    ) -> Result<serde_json::Value, String> {
+        match method {
+            "open_signing_tab" => {
+                self.active_tab = Tab::Signing;
+                if let Some(surface) = params.get("surface").and_then(|v| v.as_str()) {
+                    self.signing_ui_state.active_surface = parse_signing_surface(surface)?;
+                }
+                Ok(serde_json::json!({
+                    "active_tab": "Signing",
+                    "surface": format!("{:?}", self.signing_ui_state.active_surface),
+                }))
+            }
+            "acquire_writer_lock" => {
+                let holder = params
+                    .get("holder")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("e2e-wallet-mock")
+                    .to_owned();
+                let ttl_ms = params
+                    .get("ttl_ms")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(60_000);
+                self.signing_bridge
+                    .acquire_writer_lock(holder.clone(), B256::ZERO, ttl_ms)
+                    .map_err(|e| e.to_string())?;
+                self.signing_ui_state
+                    .set_info(format!("writer lock acquired ({holder})"));
+                Ok(serde_json::json!({ "holder": holder, "ttl_ms": ttl_ms }))
+            }
+            "create_raw_tx" => {
+                let chain_id = params.get("chain_id").and_then(|v| v.as_u64()).unwrap_or(1);
+                let safe_address: Address = params
+                    .get("safe_address")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| "create_raw_tx missing safe_address".to_owned())?
+                    .parse()
+                    .map_err(|e| format!("invalid safe_address: {e}"))?;
+                let nonce = params
+                    .get("nonce")
+                    .and_then(|v| v.as_u64())
+                    .ok_or_else(|| "create_raw_tx missing nonce".to_owned())?;
+                let to: Address = params
+                    .get("to")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| "create_raw_tx missing to".to_owned())?
+                    .parse()
+                    .map_err(|e| format!("invalid to address: {e}"))?;
+                let value = params
+                    .get("value")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("0")
+                    .to_owned();
+                let data = params
+                    .get("data")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("0x")
+                    .to_owned();
+                let threshold = params
+                    .get("threshold")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(1)
+                    .max(1);
+                let safe_version = params
+                    .get("safe_version")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("1.3.0")
+                    .to_owned();
+                let payload = serde_json::json!({
+                    "to": to,
+                    "value": value,
+                    "data": data,
+                    "operation": 0u8,
+                    "safeTxGas": "0",
+                    "baseGas": "0",
+                    "gasPrice": "0",
+                    "gasToken": Address::ZERO,
+                    "refundReceiver": Address::ZERO,
+                    "threshold": threshold,
+                    "safeVersion": safe_version,
+                });
+                let result = self
+                    .signing_bridge
+                    .create_safe_tx(chain_id, safe_address, nonce, payload)
+                    .map_err(|e| e.to_string())?;
+                let flow_id = result
+                    .transition
+                    .as_ref()
+                    .map(|t| t.flow_id.clone())
+                    .ok_or_else(|| "create_raw_tx missing transition flow id".to_owned())?;
+                let safe_tx_hash = flow_id
+                    .strip_prefix("tx:")
+                    .ok_or_else(|| "create_raw_tx transition missing tx prefix".to_owned())?
+                    .to_owned();
+                self.active_tab = Tab::Signing;
+                self.signing_ui_state.active_surface = SigningSurface::TxDetails;
+                self.signing_ui_state.selected_flow_id = Some(flow_id.clone());
+                self.signing_ui_state
+                    .set_info(format!("created tx {safe_tx_hash}"));
+                Ok(serde_json::json!({
+                    "flow_id": flow_id,
+                    "safe_tx_hash": safe_tx_hash,
+                }))
+            }
+            "add_tx_signature" => {
+                let safe_tx_hash: B256 = params
+                    .get("safe_tx_hash")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| "add_tx_signature missing safe_tx_hash".to_owned())?
+                    .parse()
+                    .map_err(|e| format!("invalid safe_tx_hash: {e}"))?;
+                let signer: Address = params
+                    .get("signer")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| "add_tx_signature missing signer".to_owned())?
+                    .parse()
+                    .map_err(|e| format!("invalid signer: {e}"))?;
+                let signature: Bytes = params
+                    .get("signature")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| "add_tx_signature missing signature".to_owned())?
+                    .parse()
+                    .map_err(|e| format!("invalid signature: {e}"))?;
+                self.signing_bridge
+                    .add_tx_signature(safe_tx_hash, signer, signature)
+                    .map_err(|e| e.to_string())?;
+                self.signing_ui_state.set_info("tx signature added");
+                Ok(serde_json::json!({ "safe_tx_hash": safe_tx_hash }))
+            }
+            "propose_tx" => {
+                let safe_tx_hash: B256 = params
+                    .get("safe_tx_hash")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| "propose_tx missing safe_tx_hash".to_owned())?
+                    .parse()
+                    .map_err(|e| format!("invalid safe_tx_hash: {e}"))?;
+                self.signing_bridge
+                    .propose_tx(safe_tx_hash)
+                    .map_err(|e| e.to_string())?;
+                self.signing_ui_state.set_info("tx proposed");
+                Ok(serde_json::json!({ "safe_tx_hash": safe_tx_hash }))
+            }
+            "confirm_tx" => {
+                let safe_tx_hash: B256 = params
+                    .get("safe_tx_hash")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| "confirm_tx missing safe_tx_hash".to_owned())?
+                    .parse()
+                    .map_err(|e| format!("invalid safe_tx_hash: {e}"))?;
+                let signature: Bytes = params
+                    .get("signature")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| "confirm_tx missing signature".to_owned())?
+                    .parse()
+                    .map_err(|e| format!("invalid confirm signature: {e}"))?;
+                self.signing_bridge
+                    .confirm_tx(safe_tx_hash, signature)
+                    .map_err(|e| e.to_string())?;
+                self.signing_ui_state.set_info("tx confirmed");
+                Ok(serde_json::json!({ "safe_tx_hash": safe_tx_hash }))
+            }
+            "execute_tx" => {
+                let safe_tx_hash: B256 = params
+                    .get("safe_tx_hash")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| "execute_tx missing safe_tx_hash".to_owned())?
+                    .parse()
+                    .map_err(|e| format!("invalid safe_tx_hash: {e}"))?;
+                if let Err(error) = self.signing_bridge.execute_tx(safe_tx_hash) {
+                    let tx_debug = self
+                        .signing_bridge
+                        .load_tx(safe_tx_hash)
+                        .ok()
+                        .flatten()
+                        .map(|tx| {
+                            let threshold = tx
+                                .payload
+                                .get("threshold")
+                                .and_then(|v| v.as_u64())
+                                .unwrap_or(1);
+                            format!(
+                                "tx_status={:?}, signatures={}, threshold={}",
+                                tx.status,
+                                tx.signatures.len(),
+                                threshold
+                            )
+                        })
+                        .unwrap_or_else(|| "tx_status=missing".to_owned());
+                    return Err(format!("{error}; {tx_debug}"));
+                }
+                self.signing_ui_state.set_info("tx executed");
+                Ok(serde_json::json!({ "safe_tx_hash": safe_tx_hash }))
+            }
+            "load_tx" => {
+                let safe_tx_hash: B256 = params
+                    .get("safe_tx_hash")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| "load_tx missing safe_tx_hash".to_owned())?
+                    .parse()
+                    .map_err(|e| format!("invalid safe_tx_hash: {e}"))?;
+                let tx = self
+                    .signing_bridge
+                    .load_tx(safe_tx_hash)
+                    .map_err(|e| e.to_string())?;
+                Ok(serde_json::json!({
+                    "tx": tx,
+                }))
+            }
+            "load_message" => {
+                let message_hash: B256 = params
+                    .get("message_hash")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| "load_message missing message_hash".to_owned())?
+                    .parse()
+                    .map_err(|e| format!("invalid message_hash: {e}"))?;
+                let msg = self
+                    .signing_bridge
+                    .load_message(message_hash)
+                    .map_err(|e| e.to_string())?;
+                Ok(serde_json::json!({
+                    "message": msg,
+                }))
+            }
+            "load_transition_log" => {
+                let flow_id = params
+                    .get("flow_id")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| "load_transition_log missing flow_id".to_owned())?;
+                let log = self
+                    .signing_bridge
+                    .load_transition_log(flow_id)
+                    .map_err(|e| e.to_string())?;
+                Ok(serde_json::json!({ "records": log }))
+            }
+            "export_bundle" => {
+                let flow_ids = params
+                    .get("flow_ids")
+                    .and_then(|v| v.as_array())
+                    .ok_or_else(|| "export_bundle missing flow_ids[]".to_owned())?
+                    .iter()
+                    .filter_map(|v| v.as_str().map(ToOwned::to_owned))
+                    .collect::<Vec<_>>();
+                if flow_ids.is_empty() {
+                    return Err("export_bundle flow_ids cannot be empty".to_owned());
+                }
+                let result = self
+                    .signing_bridge
+                    .export_bundle(flow_ids)
+                    .map_err(|e| e.to_string())?;
+                let bundle = result
+                    .exported_bundle
+                    .ok_or_else(|| "export_bundle returned no bundle".to_owned())?;
+                self.signing_ui_state.set_info("bundle export complete");
+                Ok(serde_json::json!({ "bundle": bundle }))
+            }
+            "import_bundle" => {
+                let bundle = params
+                    .get("bundle")
+                    .cloned()
+                    .ok_or_else(|| "import_bundle missing bundle".to_owned())
+                    .and_then(|v| {
+                        serde_json::from_value::<rusty_safe_signing_core::SigningBundle>(v)
+                            .map_err(|e| format!("invalid import_bundle payload: {e}"))
+                    })?;
+                let result = self
+                    .signing_bridge
+                    .import_bundle(bundle)
+                    .map_err(|e| e.to_string())?;
+                self.signing_ui_state.set_info("bundle import complete");
+                Ok(serde_json::json!({ "merge": result.merge }))
+            }
+            "import_url_payload" => {
+                let key = params
+                    .get("key")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| "import_url_payload missing key".to_owned())?;
+                let schema_version = params
+                    .get("schema_version")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(1) as u16;
+                let payload_base64url = params
+                    .get("payload_base64url")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| "import_url_payload missing payload_base64url".to_owned())?
+                    .to_owned();
+                let url_key =
+                    match key {
+                        "importTx" => rusty_safe_signing_core::UrlImportKey::ImportTx,
+                        "importSig" => rusty_safe_signing_core::UrlImportKey::ImportSig,
+                        "importMsg" => rusty_safe_signing_core::UrlImportKey::ImportMsg,
+                        "importMsgSig" => rusty_safe_signing_core::UrlImportKey::ImportMsgSig,
+                        _ => return Err(
+                            "invalid url key (expected importTx/importSig/importMsg/importMsgSig)"
+                                .to_owned(),
+                        ),
+                    };
+                let result = self
+                    .signing_bridge
+                    .import_url_payload(rusty_safe_signing_core::UrlImportEnvelope {
+                        key: url_key,
+                        schema_version,
+                        payload_base64url,
+                    })
+                    .map_err(|e| e.to_string())?;
+                self.signing_ui_state.set_info("url import complete");
+                Ok(serde_json::json!({ "merge": result.merge }))
+            }
+            "get_notice" => Ok(serde_json::json!({
+                "last_error": self.signing_ui_state.last_error.clone(),
+                "last_info": self.signing_ui_state.last_info.clone(),
+            })),
+            "clear_notice" => {
+                self.signing_ui_state.clear_notice();
+                Ok(serde_json::json!({ "cleared": true }))
+            }
+            other => Err(format!("unsupported e2e command: {other}")),
         }
     }
 

@@ -10,7 +10,8 @@ const web3MockPath = require.resolve("@depay/web3-mock/dist/umd/index.bundle.js"
 
 async function run() {
   const expectedLocalePrefix = (process.env.PRD05A_EXPECTED_LOCALE_PREFIX ?? "en").toLowerCase();
-  const browser = await chromium.launch({ headless: true });
+  const headed = process.env.PRD05A_WALLET_MOCK_HEADED === "1";
+  const browser = await chromium.launch({ headless: !headed });
 
   const context = await browser.newContext({
     locale: "en-US",

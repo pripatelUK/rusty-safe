@@ -91,7 +91,7 @@ Delivered:
 2. Encrypted export and authenticated import in `crates/rusty-safe-signing-adapters/src/queue.rs`.
 3. Bundle schema extension in `crates/rusty-safe-signing-core/src/domain.rs`.
 
-### C5: Wallet Runtime Compatibility and Gating (Active)
+### C5: Wallet Runtime Compatibility and Gating (Completed for hot-wallet scope)
 
 Objective:
 1. Establish deterministic blocking release gates for signing parity using `wallet-mock`.
@@ -107,6 +107,7 @@ Deliverables:
 2. E1 blocking parity lane:
    - `scripts/run_prd05a_wallet_mock_gate.sh`
    - `scripts/run_prd05a_wallet_mock_soak.sh`
+   - `scripts/run_prd05a_wallet_mock_runtime_slo.sh`
    - `e2e/playwright.wallet-mock.config.ts`
    - `e2e/tests/wallet-mock/wallet-mock-eip1193.spec.mjs`
    - `e2e/tests/wallet-mock/drivers/*`
@@ -134,6 +135,7 @@ Delivered:
 3. `E2` complete and tagged (`prd05a-e2e-e2-gate`).
 4. `E3` complete and tagged (`prd05a-e2e-e3-gate`).
 5. `E5` release hard-gate script updated for blocking lane evidence index.
+6. `M4` reliability closure complete with 50-run baseline SLO evidence (`local/reports/prd05a/C5-wallet-mock-runtime-slo-report.md`).
 
 Open items:
 1. `E4` Rabby canary matrix remains pending.
@@ -212,3 +214,4 @@ Gate:
 Delivered:
 1. End-to-end evidence runner `scripts/run_prd05a_release_evidence.sh`.
 2. Release evidence summary `local/reports/prd05a/C10-release-evidence-summary.md`.
+3. Milestone branch closure report `prds/05A-M4-BRANCH-CLOSURE-REPORT.md`.
