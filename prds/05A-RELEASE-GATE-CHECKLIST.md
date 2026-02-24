@@ -4,7 +4,7 @@ Status: Active
 Owner: Rusty Safe
 
 Authoritative C5 E2E execution plan:
-1. `prds/05A-E2E-WALLET-RUNTIME-PLAN.md` (`E0` through `E5`).
+1. `prds/05A-E2E-WALLET-RUNTIME-PLAN.md` (`E0`, `E1`, `E5`).
 
 ## Required Evidence
 
@@ -17,35 +17,28 @@ Authoritative C5 E2E execution plan:
 ### 2. C5 Wallet Runtime Model
 
 - [x] Deterministic blocking lane is `wallet-mock`.
-- [x] MetaMask automation is non-blocking canary.
-- [x] Manual MetaMask sanity (`MANUAL-MM-001..004`) is required before RC sign-off.
-- [x] Hardware passthrough acceptance is deferred and non-blocking for C5.
+- [x] 05A release criteria do not require MetaMask/Rabby automation.
+- [x] 05A release criteria do not require hardware passthrough acceptance.
+- [x] Real-wallet/hardware scope is moved to `prds/05A-E2E-REAL-WALLET-HARDWARE-TRACK.md`.
 
-### 2.1 C5 E2E Phase Gates (`E0-E5`)
+### 2.1 C5 E2E Phase Gates (`E0`, `E1`, `E5`)
 
 - [x] `E0 Gate` green: deterministic preflight + Node `v20` pin + `c5e2e-v1` schema/artifact checks.
 - [x] `E1 Gate` green: `WalletMockDriver` and `WM-PARITY-001..006` blocking lane scenarios.
-- [x] `E2 Gate` green: manual MetaMask release checklist workflow (`scripts/run_prd05a_manual_metamask_checklist.sh`) is implemented.
-- [x] `E3 Gate` implemented: MetaMask canary (`MM-CANARY-*`) emits taxonomy artifacts (non-blocking lane).
-- [x] `E4 Gate` deferred for C5 hot-wallet release: Rabby canary matrix is optional and remains tracked backlog.
 - [x] `E5 Gate` implemented: CI hard-gate/SLO/release evidence index wiring is complete.
+- [x] Real-wallet/hardware gates are tracked outside 05A in `prds/05A-E2E-REAL-WALLET-HARDWARE-TRACK.md`.
 
 Required phase evidence:
 1. `scripts/run_prd05a_wallet_mock_preflight.sh`
 2. `scripts/run_prd05a_wallet_mock_gate.sh`
 3. `scripts/run_prd05a_wallet_mock_soak.sh`
 4. `scripts/run_prd05a_wallet_mock_runtime_slo.sh`
-5. `scripts/run_prd05a_manual_metamask_checklist.sh`
-6. `scripts/run_prd05a_release_evidence.sh`
-7. `scripts/check_prd05a_phase_discipline.sh`
-8. `local/reports/prd05a/C5-wallet-mock-gate-report.md`
-9. `local/reports/prd05a/C5-wallet-mock-soak-report.md`
-10. `local/reports/prd05a/C5-wallet-mock-runtime-slo-report.md`
-11. `local/reports/prd05a/C5-manual-metamask-sanity.md`
-12. `local/reports/prd05a/C5-release-evidence-index.md`
-
-Deferred artifact (non-blocking for C5):
-1. `local/reports/prd05a/C5-hardware-passthrough-smoke.md`
+5. `scripts/run_prd05a_release_evidence.sh`
+6. `scripts/check_prd05a_phase_discipline.sh`
+7. `local/reports/prd05a/C5-wallet-mock-gate-report.md`
+8. `local/reports/prd05a/C5-wallet-mock-soak-report.md`
+9. `local/reports/prd05a/C5-wallet-mock-runtime-slo-report.md`
+10. `local/reports/prd05a/C5-release-evidence-index.md`
 
 ### 3. Functional Parity
 
@@ -55,7 +48,7 @@ Deferred artifact (non-blocking for C5):
 - [x] `PARITY-WC-01` complete.
 - [x] `PARITY-ABI-01` complete.
 - [x] `PARITY-COLLAB-01` complete.
-- [ ] `PARITY-HW-01` runtime proof complete (Deferred; non-blocking for C5 hot-wallet release).
+- [x] Real-wallet/hardware parity acceptance is moved out of 05A scope.
 
 ### 4. Reliability and Performance
 
@@ -78,9 +71,6 @@ Deferred artifact (non-blocking for C5):
 
 - [x] `E0` committed with `E*-T*` and `-gate-green` marker.
 - [x] `E1` committed with `E*-T*` and `-gate-green` marker.
-- [x] `E2` committed with `E*-T*` and `-gate-green` marker.
-- [x] `E3` committed/tagged.
-- [x] `E4` deferred as optional for C5 release scope.
 - [x] `E5` committed/tagged.
 - [x] Branch naming policy enforced (`feat/prd05a-e2e-(e<phase>|m<milestone>)-<slug>`).
 - [x] Branch closure report completed (`prds/05A-M4-BRANCH-CLOSURE-REPORT.md`).

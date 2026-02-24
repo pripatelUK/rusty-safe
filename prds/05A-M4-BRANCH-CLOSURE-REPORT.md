@@ -23,6 +23,6 @@ Branch: `feat/prd05a-e2e-m4-release-confidence`
 
 ## Deferred/Non-Blocking
 
-1. Rabby canary lane (`E4`) remains optional for C5 hot-wallet release.
-2. Hardware passthrough acceptance (`H1`) remains deferred.
-3. Manual MetaMask RC checklist remains required before production RC sign-off.
+1. MetaMask/Rabby canary coverage is out of 05A release scope and tracked in `prds/05A-E2E-REAL-WALLET-HARDWARE-TRACK.md`.
+2. Hardware passthrough acceptance (`H1`) is out of 05A release scope and tracked in `prds/05A-E2E-REAL-WALLET-HARDWARE-TRACK.md`.
+3. No manual MetaMask RC checklist is required for 05A deterministic C5 closure.

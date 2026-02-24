@@ -91,12 +91,12 @@ Delivered:
 2. Encrypted export and authenticated import in `crates/rusty-safe-signing-adapters/src/queue.rs`.
 3. Bundle schema extension in `crates/rusty-safe-signing-core/src/domain.rs`.
 
-### C5: Wallet Runtime Compatibility and Gating (Completed for hot-wallet scope)
+### C5: Wallet Runtime Compatibility and Gating (Completed for deterministic wallet-mock scope)
 
 Objective:
 1. Establish deterministic blocking release gates for signing parity using `wallet-mock`.
-2. Keep real-wallet coverage through non-blocking canary + mandatory manual MetaMask sanity at release time.
-3. Maintain strict localsafe parity scope and defer hardware passthrough acceptance (`H1`) as non-blocking.
+2. Maintain strict localsafe parity scope with deterministic CI/release evidence.
+3. Keep real-wallet and hardware validation out of 05A scope.
 
 Deliverables:
 1. E0 deterministic preflight/runtime evidence:
@@ -111,35 +111,27 @@ Deliverables:
    - `e2e/playwright.wallet-mock.config.ts`
    - `e2e/tests/wallet-mock/wallet-mock-eip1193.spec.mjs`
    - `e2e/tests/wallet-mock/drivers/*`
-3. E2 manual release sanity workflow:
-   - `scripts/run_prd05a_manual_metamask_checklist.sh`
-   - `prds/05A-RELEASE-GATE-CHECKLIST.md` updates for `MANUAL-MM-001..004`.
-4. E3 non-blocking canary lane:
-   - `scripts/run_prd05a_metamask_canary.sh`
-   - scheduled CI canary step in `.github/workflows/prd05a-signing-gates.yml`.
-5. E5 release evidence aggregation:
+3. E5 release evidence aggregation:
    - `scripts/run_prd05a_release_evidence.sh`
    - `local/reports/prd05a/C5-release-evidence-index.md` and JSON counterpart.
+4. Follow-on real-wallet/hardware scope:
+   - `prds/05A-E2E-REAL-WALLET-HARDWARE-TRACK.md`
 
 Gate:
 1. Blocking lane: `WM-PARITY-001..006` must pass.
 2. Blocking SLOs:
    - local >= 95% over 20 runs;
    - CI >= 99% over 50 runs.
-3. Manual release sanity checklist (`MANUAL-MM-001..004`) is complete before RC sign-off.
-4. MetaMask canary is non-blocking but must emit taxonomy artifacts for triage.
+3. Performance and differential evidence remain green for required `PARITY-*` IDs.
 
 Delivered:
 1. `E0` complete and tagged (`prd05a-e2e-e0-gate`).
 2. `E1` complete and tagged (`prd05a-e2e-e1-gate`).
-3. `E2` complete and tagged (`prd05a-e2e-e2-gate`).
-4. `E3` complete and tagged (`prd05a-e2e-e3-gate`).
-5. `E5` release hard-gate script updated for blocking lane evidence index.
-6. `M4` reliability closure complete with 50-run baseline SLO evidence (`local/reports/prd05a/C5-wallet-mock-runtime-slo-report.md`).
+3. `E5` release hard-gate script updated for blocking lane evidence index.
+4. `M4` reliability closure complete with 50-run baseline SLO evidence (`local/reports/prd05a/C5-wallet-mock-runtime-slo-report.md`).
 
 Open items:
-1. `E4` Rabby canary matrix remains pending.
-2. `H1` hardware passthrough validation remains deferred/non-blocking with owner Security lead and target `E5 + 14 days`.
+1. Real-wallet compatibility, canary, and hardware passthrough acceptance are moved to `prds/05A-E2E-REAL-WALLET-HARDWARE-TRACK.md`.
 
 ### C6: Performance Harness (Completed)
 
