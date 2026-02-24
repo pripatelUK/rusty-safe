@@ -1,10 +1,10 @@
 # PRD 05A Release Gate Checklist
 
-Status: Active  
+Status: Active
 Owner: Rusty Safe
 
 Authoritative C5 E2E execution plan:
-1. `prds/05A-E2E-WALLET-RUNTIME-PLAN.md` (`E0`, `E1`, `E5`).
+1. `prds/05A-E2E-WALLET-RUNTIME-PLAN.md` (`E0`, `E1`, `E5`, `E6`, `E7`, `E8`).
 
 ## Required Evidence
 
@@ -21,11 +21,17 @@ Authoritative C5 E2E execution plan:
 - [x] 05A release criteria do not require hardware passthrough acceptance.
 - [x] Real-wallet/hardware scope is moved to `prds/05A-E2E-REAL-WALLET-HARDWARE-TRACK.md`.
 
-### 2.1 C5 E2E Phase Gates (`E0`, `E1`, `E5`)
+### 2.1 C5 E2E Phase Gates (`E0`, `E1`, `E5`, `E6`, `E7`, `E8`)
 
 - [x] `E0 Gate` green: deterministic preflight + Node `v20` pin + `c5e2e-v1` schema/artifact checks.
 - [x] `E1 Gate` green: `WalletMockDriver` and `WM-PARITY-001..006` blocking lane scenarios.
 - [x] `E5 Gate` implemented: CI hard-gate/SLO/release evidence index wiring is complete.
+- [ ] `E6 Gate` green: seed/transcript determinism + strict state isolation + network policy checks.
+- [ ] `E7 Gate` green: replay coverage and flake-budget enforcement.
+- [ ] `E8 Gate` green: deterministic counterexample fuzz matrix + minimized artifacts + regression promotion flow.
+- [ ] `E8` PR blocking profile enforced as `10 seeds x 75 transitions`.
+- [ ] `E8` nightly profile enforced as `50 seeds x 200 transitions`.
+- [ ] New blocking-lane counterexample hard-fails until triaged/promoted or explicitly rejected with rationale.
 - [x] Real-wallet/hardware gates are tracked outside 05A in `prds/05A-E2E-REAL-WALLET-HARDWARE-TRACK.md`.
 
 Required phase evidence:
@@ -35,10 +41,20 @@ Required phase evidence:
 4. `scripts/run_prd05a_wallet_mock_runtime_slo.sh`
 5. `scripts/run_prd05a_release_evidence.sh`
 6. `scripts/check_prd05a_phase_discipline.sh`
-7. `local/reports/prd05a/C5-wallet-mock-gate-report.md`
-8. `local/reports/prd05a/C5-wallet-mock-soak-report.md`
-9. `local/reports/prd05a/C5-wallet-mock-runtime-slo-report.md`
-10. `local/reports/prd05a/C5-release-evidence-index.md`
+7. `scripts/run_prd05a_wallet_mock_determinism.sh`
+8. `scripts/run_prd05a_wallet_mock_replay.sh`
+9. `scripts/run_prd05a_wallet_mock_fuzz_gate.sh`
+10. `scripts/run_prd05a_wallet_mock_fuzz_soak.sh`
+11. `local/reports/prd05a/C5-wallet-mock-gate-report.md`
+12. `local/reports/prd05a/C5-wallet-mock-soak-report.md`
+13. `local/reports/prd05a/C5-wallet-mock-runtime-slo-report.md`
+14. `local/reports/prd05a/C5-wallet-mock-determinism-report.md`
+15. `local/reports/prd05a/C5-wallet-mock-replay-report.md`
+16. `local/reports/prd05a/C5-wallet-mock-fuzz-report.md`
+17. `local/reports/prd05a/C5-wallet-mock-fuzz-report.json`
+18. `local/reports/prd05a/fuzz-counterexamples/*`
+19. `local/reports/prd05a/C5-release-evidence-index.md`
+20. `e2e/tests/wallet-mock/scenarios/regressions/*` (promoted deterministic counterexamples)
 
 ### 3. Functional Parity
 
@@ -56,6 +72,11 @@ Required phase evidence:
 - [x] Blocking lane CI SLO met (`>=99%` over 50 runs).
 - [x] Blocking scenario p95 runtime <= 90s.
 - [x] Blocking PR gate p95 runtime <= 15 minutes.
+- [ ] Determinism transcript stability gate passed for fixed seed runs.
+- [ ] Harness failure budget <= 1% over 100-run soak.
+- [ ] Blocking fuzz seed matrix green with invariant suite version locked.
+- [ ] 100% accepted fuzz counterexamples promoted to deterministic regression scenarios.
+- [ ] Fuzz transcript hash uses canonical JSON contract (sorted keys, volatile fields removed).
 
 ### 5. CI Gates
 
@@ -72,6 +93,9 @@ Required phase evidence:
 - [x] `E0` committed with `E*-T*` and `-gate-green` marker.
 - [x] `E1` committed with `E*-T*` and `-gate-green` marker.
 - [x] `E5` committed/tagged.
+- [ ] `E6` committed/tagged.
+- [ ] `E7` committed/tagged.
+- [ ] `E8` committed/tagged.
 - [x] Branch naming policy enforced (`feat/prd05a-e2e-(e<phase>|m<milestone>)-<slug>`).
 - [x] Branch closure report completed (`prds/05A-M4-BRANCH-CLOSURE-REPORT.md`).
 
