@@ -17,7 +17,7 @@ Solution overview:
 2. Keep 05A scoped to deterministic parity and release confidence for build/sign/share flows only.
 3. Add explicit determinism contract gates (seed lock, scenario state isolation, and outbound-network guard).
 4. Add reproducible replay gates so every failing run can be deterministically re-executed from evidence.
-5. Add deterministic counterexample fuzzing as a wallet-mock blocking hardening gate that auto-promotes failures to permanent regressions.
+5. Defer wallet-mock counterexample fuzz hardening to dedicated follow-on plan `prds/05B-WALLET-MOCK-FUZZ-HARDENING-PLAN.md`.
 6. Move MetaMask/Rabby/hardware validation tracks into dedicated follow-on plan `prds/05A-E2E-REAL-WALLET-HARDWARE-TRACK.md`.
 7. Keep implementation staged with hard milestones, branch/commit discipline, and measurable SLOs.
 
@@ -30,7 +30,6 @@ Key innovations:
 | Reuse-first policy | Avoids reimplementing wallet harness internals without hard justification |
 | Artifact schema with explicit gate effect metadata | Makes triage and release decisions explicit and auditable |
 | Determinism + replay contract (seed + transcript hash) | Turns intermittent failures into reproducible engineering defects |
-| Counterexample fuzz gate with auto-promotion | Discovers unknown sequence bugs and converts them into permanent parity tests |
 
 ## 2. Scope and Guardrails
 
@@ -52,10 +51,6 @@ In scope:
    - deterministic seed injection and capture
    - scenario state-reset verification
    - outbound network policy enforcement for E2E runs
-5. Deterministic wallet-mock state-machine fuzzing for build/sign/share sequences:
-   - bounded seed-driven state transitions
-   - invariant assertions on tx hash/signature/export/import safety
-   - minimized counterexample capture and promotion to regression manifests
 
 Out of scope:
 1. MetaMask and Rabby automation requirements for 05A release.
@@ -63,12 +58,14 @@ Out of scope:
 3. Hardware passthrough acceptance (Ledger/Trezor) in 05A.
 4. New connector ecosystem expansion or non-parity features.
 5. Direct native HID browser integration in this wave.
+6. Wallet-mock counterexample fuzz hardening and promotion gates (tracked in `prds/05B-WALLET-MOCK-FUZZ-HARDENING-PLAN.md`).
 
 Anti-feature-creep policy:
 1. Every task must map to `PARITY-*` and `C5`.
 2. Non-parity additions require explicit PRD delta marked `parity-critical`.
 3. Deferred real-wallet/hardware work goes to `prds/05A-E2E-REAL-WALLET-HARDWARE-TRACK.md`.
 4. Test-harness improvements are allowed only if they reduce false negatives or improve reproducibility for existing `PARITY-*` flows.
+5. Fuzz hardening additions go only in `prds/05B-WALLET-MOCK-FUZZ-HARDENING-PLAN.md` and are non-blocking for 05A release.
 
 ## 3. Target End State (Definition of Done for C5)
 
@@ -87,9 +84,7 @@ Anti-feature-creep policy:
    - scenario isolation checks prove no cross-test state leakage.
 9. Replay contract is green:
    - every failed blocking run includes enough metadata to replay with one command.
-10. Counterexample fuzz contract is green:
-   - seeded fuzz gate finds zero untriaged counterexamples at release cut,
-   - any discovered counterexample is auto-promoted to a stable regression scenario before gate close.
+10. Fuzz hardening is explicitly deferred and tracked in `prds/05B-WALLET-MOCK-FUZZ-HARDENING-PLAN.md`.
 
 ## 4. Core Architecture
 
@@ -100,11 +95,6 @@ RustySafe Test Target (localhost)
           |
           v
 Scenario Runner (Playwright)
-          |
-          +--> Fuzz Explorer (E8)
-          |      - state-machine transitions
-          |      - invariant checks
-          |      - seed/minimized counterexample output
           |
           +--> Determinism Guard
           |      - seed injection (`PRD05A_E2E_SEED`)
@@ -125,7 +115,6 @@ Scenario Runner (Playwright)
                  - trace/screenshot/log references
                  - gate effect marker (`BLOCKING`)
                  - transcript hash + replay command
-                 - counterexample trace + promotion metadata
 ```
 
 Design principles:
@@ -135,17 +124,15 @@ Design principles:
 4. Reuse existing libraries first; reimplement only for proven parity-critical gaps.
 5. Keep scope strict to localsafe parity and avoid connector feature creep.
 6. A failing run without replay metadata is an invalid test run.
-7. Any fuzz-discovered parity violation must be converted into a deterministic regression before release.
 
 Data flow:
 1. Runner selects `gate_tier=blocking`.
-2. Runner optionally invokes Fuzz Explorer with seed + bounded transition budget.
-3. Determinism Guard applies seed, resets scenario state, and validates network policy.
-4. Control Plane boots selected driver and validates runtime profile.
-5. Scenario executes app action + EIP-1193 request path.
-6. Driver handles approval/rejection flow (or mock response in deterministic lane).
-7. Assertion Plane validates parity outcomes and state transitions.
-8. Evidence Plane writes artifacts with taxonomy, transcript hash, replay command, and counterexample metadata.
+2. Determinism Guard applies seed, resets scenario state, and validates network policy.
+3. Control Plane boots selected driver and validates runtime profile.
+4. Scenario executes app action + EIP-1193 request path.
+5. Driver handles approval/rejection flow (or mock response in deterministic lane).
+6. Assertion Plane validates parity outcomes and state transitions.
+7. Evidence Plane writes artifacts with taxonomy, transcript hash, and replay command.
 
 ## 5. Reuse-First Policy (Do Not Reimplement Without Justification)
 
@@ -190,9 +177,6 @@ Scenario manifest contract:
 9. `seed` (deterministic replay seed)
 10. `state_reset_mode` (`strict`)
 11. `network_policy` (`local-only|allowlist`)
-12. `fuzz_mode` (`off|state-machine`)
-13. `fuzz_transition_budget` (bounded integer; required when `fuzz_mode=state-machine`)
-14. `model_version` (state-machine model version for reproducibility)
 
 Evidence record contract:
 1. `schema_version` (`c5e2e-v1`)
@@ -210,19 +194,6 @@ Evidence record contract:
 13. `wasm_artifact_sha256`
 14. `state_reset_verified`
 15. `network_policy_violations`
-16. `counterexample_id` (nullable)
-17. `counterexample_trace_path` (nullable)
-18. `promotion_pr_reference` (nullable)
-
-E8 decision lock (implementation contract):
-1. Fuzz framework: `fast-check` state-machine model in `e2e/tests/wallet-mock/fuzz/`.
-2. PR blocking budget: `10 seeds x 75 transitions` per run.
-3. Nightly fuzz budget: `50 seeds x 200 transitions` per run.
-4. Transcript hashing: canonical JSON (sorted keys, no volatile fields such as timestamps/random IDs) before SHA-256.
-5. Promotion workflow: auto-generate deterministic regression manifest + require human-reviewed commit before close.
-6. Gate policy: new counterexample in blocking lane is hard-fail until triaged and promoted or explicitly rejected with rationale.
-7. Regression location: `e2e/tests/wallet-mock/scenarios/regressions/`.
-8. Artifact retention: keep all failing fuzz artifacts and keep passing artifacts for last 30 days.
 
 ## 7. Test Inventory (Parity-Aligned)
 
@@ -250,10 +221,8 @@ Blocking build/sign/share closure scenarios (priority add-on):
 6. `WM-BSS-006`: tampered bundle (MAC/auth mismatch) is rejected and quarantined.
 7. `WM-BSS-007`: interrupted flow resume (reload/reopen) preserves deterministic tx/message state.
 
-Blocking fuzz and promotion scenarios:
-1. `WM-FUZZ-001`: seeded state-machine fuzz for `create -> sign -> share -> import -> confirm -> execute` preserves hash/signature invariants.
-2. `WM-FUZZ-002`: fuzz-discovered tamper/import counterexample auto-emits minimized trace + seed and fails blocking gate.
-3. `WM-FUZZ-003`: accepted counterexample is promoted into deterministic scenario manifest before gate closure.
+Deferred scenarios:
+1. Wallet-mock fuzz/promotion scenarios are tracked in `prds/05B-WALLET-MOCK-FUZZ-HARDENING-PLAN.md`.
 
 ## 8. Environment and Configuration Contract
 
@@ -274,10 +243,9 @@ Required files:
 6. `scripts/run_prd05a_wallet_mock_runtime_slo.sh`
 7. `scripts/run_prd05a_wallet_mock_determinism.sh`
 8. `scripts/run_prd05a_wallet_mock_replay.sh`
-9. `scripts/run_prd05a_wallet_mock_fuzz_gate.sh`
-10. `scripts/run_prd05a_wallet_mock_fuzz_soak.sh`
-11. `e2e/tests/wallet-mock/fuzz/*.mjs`
-12. `e2e/tests/wallet-mock/scenarios/regressions/*.json`
+
+Deferred reference:
+1. `prds/05B-WALLET-MOCK-FUZZ-HARDENING-PLAN.md`
 
 Required environment variables:
 1. `PRD05A_NODE_BIN`
@@ -286,14 +254,6 @@ Required environment variables:
 4. `PRD05A_GATE_MODE` (`blocking`)
 5. `PRD05A_E2E_SEED`
 6. `PRD05A_NETWORK_POLICY` (`local-only|allowlist`)
-7. `PRD05A_FUZZ_SEED_SET` (`pr-blocking|nightly|custom`)
-8. `PRD05A_FUZZ_SEEDS` (comma-separated deterministic seeds; required when `PRD05A_FUZZ_SEED_SET=custom`)
-9. `PRD05A_FUZZ_TRANSITION_BUDGET` (bounded transition count per seed; required for `custom`, optional override otherwise)
-
-Default fuzz runtime profile:
-1. PR blocking gate defaults to `PRD05A_FUZZ_SEED_SET=pr-blocking` (canonical 10-seed set) and `PRD05A_FUZZ_TRANSITION_BUDGET=75`.
-2. Nightly fuzz soak defaults to `PRD05A_FUZZ_SEED_SET=nightly` (canonical 50-seed set) and `PRD05A_FUZZ_TRANSITION_BUDGET=200`.
-3. `custom` mode is allowed for local diagnostics but cannot replace required PR/nightly canonical profiles in CI.
 
 ## 9. Storage, Artifacts, and Reporting
 
@@ -305,18 +265,15 @@ Artifact locations:
 5. `local/reports/prd05a/C5-release-evidence-index.md`
 6. `local/reports/prd05a/C5-wallet-mock-determinism-report.md`
 7. `local/reports/prd05a/C5-wallet-mock-replay-report.md`
-8. `local/reports/prd05a/C5-wallet-mock-fuzz-report.md`
-9. `local/reports/prd05a/C5-wallet-mock-fuzz-report.json`
-10. `local/reports/prd05a/fuzz-counterexamples/*`
 
 Reporting requirements:
 1. Every run writes markdown summary and machine-readable JSON.
 2. Failed runs include taxonomy, reproducible command, and trace path.
 3. Release evidence index links all phase reports and lists open blockers.
 4. Determinism report must include seed, transcript hash, and state-reset verification result.
-5. Fuzz report must include seeds, transition budgets, invariant set version, discovered counterexamples, and promotion status.
+5. Fuzz hardening reports are deferred to `prds/05B-WALLET-MOCK-FUZZ-HARDENING-PLAN.md`.
 
-## 10. Implementation Roadmap (E0-E8)
+## 10. Implementation Roadmap (E0-E7)
 
 | Phase | Objective | Complexity | Branch | Status |
 |---|---|---|---|---|
@@ -325,12 +282,12 @@ Reporting requirements:
 | E5 | CI hard gates, SLO policy, release readiness | M | `feat/prd05a-e2e-e5-ci-release-gate` | Completed |
 | E6 | Determinism hardening (seed contract + state isolation + network policy) | M | `feat/prd05a-e2e-e6-determinism-hardening` | Planned |
 | E7 | Replay automation + flake-budget enforcement | M | `feat/prd05a-e2e-e7-replay-flake-budget` | Planned |
-| E8 | Counterexample fuzz gate + auto-promotion pipeline | M | `feat/prd05a-e2e-e8-counterexample-fuzz-gate` | Planned |
 
 Dependency order:
 1. Completed path: `E0 -> E1 -> E5`.
-2. Hardening path: `E6 -> E7 -> E8`.
-3. Real-wallet and hardware tracks execute outside 05A in `prds/05A-E2E-REAL-WALLET-HARDWARE-TRACK.md`.
+2. Hardening path: `E6 -> E7`.
+3. Fuzz hardening executes outside 05A in `prds/05B-WALLET-MOCK-FUZZ-HARDENING-PLAN.md`.
+4. Real-wallet and hardware tracks execute outside 05A in `prds/05A-E2E-REAL-WALLET-HARDWARE-TRACK.md`.
 
 ## 11. Detailed Task List (Structured and Measurable)
 
@@ -386,34 +343,17 @@ E7 Gate:
 2. `HARNESS_FAIL` rate <= 1% over 100-run soak.
 3. Mean time to reproduce failure <= 10 minutes using replay command.
 
-### E8 Tasks
-1. `E8-T1` implement wallet-mock state-machine model using `fast-check` for `create -> sign -> share -> import -> confirm -> execute` transitions.
-2. `E8-T2` encode invariant set for hash stability, signature validity/threshold monotonicity, tamper quarantine, and idempotent propose/confirm semantics.
-3. `E8-T3` implement deterministic counterexample minimization + artifact emission (`seed`, transition trace, transcript hash).
-4. `E8-T4` implement auto-promotion pipeline that converts accepted counterexamples into deterministic regression manifests under `e2e/tests/wallet-mock/scenarios/regressions/` and links promotion PR references.
-5. `E8-T5` wire blocking PR fuzz budget (`10x75`) and nightly extended fuzz soak (`50x200`) with explicit failure taxonomy.
-6. `E8-T6` enforce hard-fail policy for new blocking-lane counterexamples until promoted or explicitly rejected with rationale.
-
-E8 Gate:
-1. Blocking fuzz gate passes with canonical PR profile (`10 seeds x 75 transitions`).
-2. 100% of fuzz failures emit minimized counterexample artifacts with replay metadata.
-3. 100% of accepted counterexamples are promoted to deterministic regression scenarios before milestone closure.
-4. Nightly fuzz soak passes canonical profile (`50 seeds x 200 transitions`) with no untriaged counterexamples.
-
 ## 12. Success Criteria and Gates
 
 Functional criteria (blocking):
 1. 100% pass for `WM-PARITY-001..006`.
 2. 100% classification coverage for failed blocking runs.
 3. 100% pass for `WM-BSS-001..007` in blocking lane.
-4. Blocking fuzz profile (`10x75`) passes for `WM-FUZZ-001` invariant suite.
 
 Reliability criteria:
 1. Blocking local: >= 95% pass over 20 consecutive runs.
 2. Blocking CI: >= 99% pass over 50 scheduled runs.
 3. `HARNESS_FAIL` <= 1% over 100-run soak.
-4. Counterexample minimization success >= 99% for fuzz failures (artifact completeness and replayability).
-5. 100% of accepted counterexamples are promoted into deterministic regressions within 1 business day.
 
 Scope criteria:
 1. C5 is deterministic wallet-mock parity focused with no connector ecosystem expansion.
@@ -431,8 +371,6 @@ Determinism criteria:
 Operational criteria:
 1. Mean time to classify failure <= 10 minutes.
 2. Mean time to reproduce failure <= 10 minutes via recorded replay command/profile.
-3. Mean time to promote accepted counterexample to regression manifest <= 1 business day.
-4. New blocking-lane counterexample causes immediate hard-fail until triage/promotion is complete.
 
 ## 13. Failure Taxonomy and Recovery Strategy
 
@@ -455,8 +393,6 @@ Required commands:
 4. `scripts/run_prd05a_release_evidence.sh`
 5. `scripts/run_prd05a_wallet_mock_determinism.sh`
 6. `scripts/run_prd05a_wallet_mock_replay.sh`
-7. `scripts/run_prd05a_wallet_mock_fuzz_gate.sh`
-8. `scripts/run_prd05a_wallet_mock_fuzz_soak.sh`
 
 Command output contract:
 1. Exit code `0` only on blocking-gate success.
@@ -467,19 +403,14 @@ Command output contract:
    - `driver_mode`
    - `seed`
    - `transcript_sha256`
-   - `fuzz_profile`
-   - `invariant_set_version`
-   - `counterexample_id`
-   - `counterexample_trace_path`
-   - `promotion_status`
    - `taxonomy_summary`
    - `artifact_index`
 
 CI cadence contract:
-1. Pull request: blocking wallet-mock gate + 5-run mini soak + blocking fuzz gate (`10x75`).
+1. Pull request: blocking wallet-mock gate + 5-run mini soak.
 2. Daily scheduled: blocking soak.
 3. Weekly scheduled: 100-run soak with flake-budget evaluation.
-4. Nightly scheduled: deterministic fuzz soak with canonical nightly profile (`50x200`).
+4. Fuzz soak scheduling is tracked in `prds/05B-WALLET-MOCK-FUZZ-HARDENING-PLAN.md` and is non-blocking for 05A.
 
 ## 15. Risks, Trade-offs, and Mitigations
 
@@ -492,20 +423,17 @@ Mitigation: keep 05A to single blocking lane and move additional lanes to separa
 Risk: stricter determinism checks can block merges for harness defects unrelated to app logic.
 Mitigation: enforce clear taxonomy + replay evidence so harness failures are quickly isolated and fixed.
 
-Risk: fuzzing can produce noisy or low-signal failures without strong invariants/minimization.
-Mitigation: gate on minimized counterexamples only, version the invariant set, and require promotion/triage discipline.
-
 Trade-off:
 1. Blocking on deterministic lane improves reliability and velocity.
 2. Real-wallet/hardware confidence shifts to follow-on plan to prevent 05A release coupling.
 3. Strong determinism constraints increase short-term harness work but reduce long-term CI noise.
-4. Fuzz hardening adds implementation cost but yields compounding reliability via regression corpus growth.
+4. Fuzz hardening value is preserved but intentionally deferred to 05B to avoid over-coupling 05A release gates.
 
 ## 16. Branching, Commits, and Tags
 
 Branch policy:
-1. One branch per phase (`E0`, `E1`, `E5`, `E6`, `E7`, `E8`) for active 05A scope.
-2. Merge by dependency order for blocking path: `E0 -> E1 -> E5 -> E6 -> E7 -> E8`.
+1. One branch per phase (`E0`, `E1`, `E5`, `E6`, `E7`) for active 05A scope.
+2. Merge by dependency order for blocking path: `E0 -> E1 -> E5 -> E6 -> E7`.
 3. Branch names must match `feat/prd05a-e2e-e<phase>-<slug>`.
 
 Commit policy:
@@ -515,16 +443,16 @@ Commit policy:
 
 Tag policy:
 1. Tag each green phase: `prd05a-e2e-e<phase>-gate`.
-2. Final release candidate tag only after `E8` gate and checklist sign-off.
+2. Final release candidate tag only after `E7` gate and checklist sign-off.
 
 ## 17. Immediate Next Actions
 
 1. Keep `wallet-mock` as the only blocking lane.
 2. Complete determinism hardening (`E6-T1..T4`) before any additional test expansion.
 3. Complete replay/flake-budget automation (`E7-T1..T4`) so failures are reproducible by default.
-4. Complete counterexample fuzz gate (`E8-T1..T5`) and regression auto-promotion workflow.
-5. Keep scope lock to localsafe parity IDs and reject any non-parity additions in C5.
-6. Close remaining C5 release checklist items with explicit evidence updates.
+4. Keep scope lock to localsafe parity IDs and reject any non-parity additions in C5.
+5. Close remaining C5 release checklist items with explicit evidence updates.
+6. Start 05B fuzz hardening only after 05A gates are green.
 
 ## 18. Priority Backlog (Build, Sign, Share)
 
@@ -574,13 +502,12 @@ Priority model:
    - Keep localsafe fixture differential report green for mandatory `PARITY-*` flows.
 4. `P1-4` Replayability closure:
    - Ensure all blocking failures are reproducible via a single replay command from artifacts.
-5. `P1-5` Counterexample fuzz closure:
-   - Run deterministic state-machine fuzz gate and auto-promote accepted counterexamples into regression manifests.
 
 ### P2 (Deferred/Non-Blocking)
 
 1. `P2-1` Real-wallet compatibility and canary matrix in `prds/05A-E2E-REAL-WALLET-HARDWARE-TRACK.md`.
 2. `P2-2` Hardware passthrough acceptance (`H1`) in `prds/05A-E2E-REAL-WALLET-HARDWARE-TRACK.md`.
+3. `P2-3` Wallet-mock counterexample fuzz hardening in `prds/05B-WALLET-MOCK-FUZZ-HARDENING-PLAN.md`.
 
 ## 19. Milestone Execution Order (Now)
 
@@ -608,9 +535,6 @@ Priority model:
 6. `M6` Replay and flake-budget closure (`P1-4`, `E7-T1..T4`) - `Planned`:
    - Branch: `feat/prd05a-e2e-m6-replay-flake-budget`
    - Exit gate: replay coverage 100% and harness-fail budget <= 1% over 100-run soak.
-7. `M7` Counterexample fuzz closure (`P1-5`, `E8-T1..T5`) - `Planned`:
-   - Branch: `feat/prd05a-e2e-m7-counterexample-fuzz-gate`
-   - Exit gate: blocking fuzz seed matrix green, minimized counterexample artifacts complete, and accepted counterexamples promoted to deterministic regression scenarios.
 
 Commit and tag discipline:
 1. Commit at task boundaries with task IDs in commit subject/body.
@@ -621,7 +545,7 @@ Commit and tag discipline:
 
 1. Complete `M5` determinism contract closure for wallet-mock.
 2. Complete `M6` replay and flake-budget closure for wallet-mock.
-3. Complete `M7` counterexample fuzz closure for wallet-mock.
-4. Keep 05A scoped to deterministic wallet-mock release gating.
-5. Execute real-wallet compatibility plan in `prds/05A-E2E-REAL-WALLET-HARDWARE-TRACK.md` as non-blocking follow-on work.
-6. Execute deferred hardware passthrough track (`H1`) in `prds/05A-E2E-REAL-WALLET-HARDWARE-TRACK.md` as non-blocking follow-on work.
+3. Keep 05A scoped to deterministic wallet-mock release gating.
+4. Execute real-wallet compatibility plan in `prds/05A-E2E-REAL-WALLET-HARDWARE-TRACK.md` as non-blocking follow-on work.
+5. Execute deferred hardware passthrough track (`H1`) in `prds/05A-E2E-REAL-WALLET-HARDWARE-TRACK.md` as non-blocking follow-on work.
+6. Execute deferred wallet-mock fuzz hardening in `prds/05B-WALLET-MOCK-FUZZ-HARDENING-PLAN.md` as follow-on work.

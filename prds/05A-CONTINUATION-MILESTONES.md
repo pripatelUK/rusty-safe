@@ -97,7 +97,7 @@ Objective:
 1. Establish deterministic blocking release gates for signing parity using `wallet-mock`.
 2. Maintain strict localsafe parity scope with deterministic CI/release evidence.
 3. Keep real-wallet and hardware validation out of 05A scope.
-4. Add deterministic counterexample fuzzing to continuously discover and lock in parity regressions.
+4. Keep wallet-mock fuzz hardening out of 05A release gates and defer it to 05B.
 
 Deliverables:
 1. E0 deterministic preflight/runtime evidence:
@@ -117,12 +117,8 @@ Deliverables:
    - `local/reports/prd05a/C5-release-evidence-index.md` and JSON counterpart.
 4. Follow-on real-wallet/hardware scope:
    - `prds/05A-E2E-REAL-WALLET-HARDWARE-TRACK.md`
-5. E8 counterexample fuzz hardening:
-   - `scripts/run_prd05a_wallet_mock_fuzz_gate.sh`
-   - `scripts/run_prd05a_wallet_mock_fuzz_soak.sh`
-   - `e2e/tests/wallet-mock/fuzz/*`
-   - `e2e/tests/wallet-mock/scenarios/regressions/*`
-   - `local/reports/prd05a/C5-wallet-mock-fuzz-report.md`
+5. Follow-on wallet-mock fuzz hardening scope:
+   - `prds/05B-WALLET-MOCK-FUZZ-HARDENING-PLAN.md`
 
 Gate:
 1. Blocking lane: `WM-PARITY-001..006` must pass.
@@ -130,8 +126,7 @@ Gate:
    - local >= 95% over 20 runs;
    - CI >= 99% over 50 runs.
 3. Performance and differential evidence remain green for required `PARITY-*` IDs.
-4. Counterexample fuzz gate is green with deterministic seed matrix and promotion evidence.
-5. PR/nightly fuzz budgets are enforced as `10x75` and `50x200` respectively.
+4. Wallet-mock fuzz hardening remains explicitly non-blocking for 05A release.
 
 Delivered:
 1. `E0` complete and tagged (`prd05a-e2e-e0-gate`).
@@ -141,13 +136,13 @@ Delivered:
 5. Revision opened for determinism/replay hardening:
    - `E6` determinism contract
    - `E7` replay and flake-budget enforcement
-   - `E8` counterexample fuzz gate and regression auto-promotion
+   - wallet-mock fuzz hardening moved to follow-on plan `prds/05B-WALLET-MOCK-FUZZ-HARDENING-PLAN.md`
 
 Open items:
 1. Complete `E6` determinism hardening gates (`seed`, transcript hash stability, state isolation, network policy).
 2. Complete `E7` replay coverage + flake-budget enforcement.
-3. Complete `E8` counterexample fuzz gate and regression promotion gates.
-4. Real-wallet compatibility, canary, and hardware passthrough acceptance are moved to `prds/05A-E2E-REAL-WALLET-HARDWARE-TRACK.md`.
+3. Real-wallet compatibility, canary, and hardware passthrough acceptance are moved to `prds/05A-E2E-REAL-WALLET-HARDWARE-TRACK.md`.
+4. Wallet-mock fuzz hardening is moved to `prds/05B-WALLET-MOCK-FUZZ-HARDENING-PLAN.md`.
 
 ### C6: Performance Harness (Completed)
 
