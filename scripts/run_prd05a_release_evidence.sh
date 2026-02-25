@@ -27,6 +27,9 @@ scripts/run_prd05a_wallet_mock_gate.sh
 PRD05A_SOAK_RUNS="${PRD05A_SOAK_RUNS:-20}" \
 PRD05A_SOAK_MIN_PASSES="${PRD05A_SOAK_MIN_PASSES:-19}" \
 scripts/run_prd05a_wallet_mock_soak.sh custom
+scripts/run_prd05a_wallet_mock_runtime_slo.sh
+scripts/run_prd05a_wallet_mock_determinism.sh
+scripts/run_prd05a_wallet_mock_replay.sh
 scripts/run_prd05a_metamask_canary.sh --profile-check || true
 
 if [[ "${PRD05A_REQUIRE_MANUAL_SANITY:-0}" == "1" ]]; then
@@ -57,8 +60,11 @@ Schema: ${PRD05A_SCHEMA_VERSION}
 10. Wallet-mock preflight report: local/reports/prd05a/C5-e0-determinism-report.md
 11. Wallet-mock blocking gate report: local/reports/prd05a/C5-wallet-mock-gate-report.md
 12. Wallet-mock soak report: local/reports/prd05a/C5-wallet-mock-soak-report.md
-13. MetaMask canary report (non-blocking): local/reports/prd05a/C5-metamask-canary-report.md
-14. Manual MetaMask sanity checklist (required at RC): local/reports/prd05a/C5-manual-metamask-sanity.md
+13. Wallet-mock runtime SLO report: local/reports/prd05a/C5-wallet-mock-runtime-slo-report.md
+14. Wallet-mock determinism report: local/reports/prd05a/C5-wallet-mock-determinism-report.md
+15. Wallet-mock replay report: local/reports/prd05a/C5-wallet-mock-replay-report.md
+16. MetaMask canary report (non-blocking): local/reports/prd05a/C5-metamask-canary-report.md
+17. Manual MetaMask sanity checklist (required at RC): local/reports/prd05a/C5-manual-metamask-sanity.md
 
 ## Milestone Discipline
 
@@ -87,6 +93,12 @@ cat >"$summary_json" <<EOF
     "wallet_mock_gate_json": "local/reports/prd05a/C5-wallet-mock-gate.json",
     "wallet_mock_soak": "local/reports/prd05a/C5-wallet-mock-soak-report.md",
     "wallet_mock_soak_json": "local/reports/prd05a/C5-wallet-mock-soak-report.json",
+    "wallet_mock_runtime_slo": "local/reports/prd05a/C5-wallet-mock-runtime-slo-report.md",
+    "wallet_mock_runtime_slo_json": "local/reports/prd05a/C5-wallet-mock-runtime-slo-report.json",
+    "wallet_mock_determinism": "local/reports/prd05a/C5-wallet-mock-determinism-report.md",
+    "wallet_mock_determinism_json": "local/reports/prd05a/C5-wallet-mock-determinism-report.json",
+    "wallet_mock_replay": "local/reports/prd05a/C5-wallet-mock-replay-report.md",
+    "wallet_mock_replay_json": "local/reports/prd05a/C5-wallet-mock-replay-report.json",
     "metamask_canary": "local/reports/prd05a/C5-metamask-canary-report.md",
     "metamask_canary_json": "local/reports/prd05a/C5-metamask-canary-report.json",
     "manual_metamask_sanity": "local/reports/prd05a/C5-manual-metamask-sanity.md",

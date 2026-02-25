@@ -281,11 +281,11 @@ Reporting requirements:
 | E1 | Blocking wallet-mock parity suite | M | `feat/prd05a-e2e-e1-wallet-mock-gate` | Completed |
 | E5 | CI hard gates, SLO policy, release readiness | M | `feat/prd05a-e2e-e5-ci-release-gate` | Completed |
 | E6 | Determinism hardening (seed contract + state isolation + network policy) | M | `feat/prd05a-e2e-e6-determinism-hardening` | Completed 2026-02-25 |
-| E7 | Replay automation + flake-budget enforcement | M | `feat/prd05a-e2e-e7-replay-flake-budget` | Planned |
+| E7 | Replay automation + flake-budget enforcement | M | `feat/prd05a-e2e-e7-replay-flake-budget` | Completed 2026-02-25 |
 
 Dependency order:
-1. Completed path: `E0 -> E1 -> E5`.
-2. Hardening path: `E6 -> E7`.
+1. Completed path: `E0 -> E1 -> E5 -> E6 -> E7`.
+2. Hardening path: closed.
 3. Fuzz hardening executes outside 05A in `prds/05B-WALLET-MOCK-FUZZ-HARDENING-PLAN.md`.
 4. Real-wallet and hardware tracks execute outside 05A in `prds/05A-E2E-REAL-WALLET-HARDWARE-TRACK.md`.
 
@@ -536,19 +536,24 @@ Priority model:
      - `local/reports/prd05a/C5-wallet-mock-determinism-report.md`.
      - `local/reports/prd05a/C5-wallet-mock-determinism-report.json`.
      - `local/reports/prd05a/C5-wallet-mock-determinism.log`.
-6. `M6` Replay and flake-budget closure (`P1-4`, `E7-T1..T4`) - `Planned`:
+6. `M6` Replay and flake-budget closure (`P1-4`, `E7-T1..T4`) - `Completed 2026-02-25`:
    - Branch: `feat/prd05a-e2e-m6-replay-flake-budget`
    - Exit gate: replay coverage 100% and harness-fail budget <= 1% over 100-run soak.
+   - Evidence:
+     - `local/reports/prd05a/C5-wallet-mock-replay-report.md`.
+     - `local/reports/prd05a/C5-wallet-mock-replay-report.json`.
+     - `local/reports/prd05a/C5-wallet-mock-replay.log`.
+     - `local/reports/prd05a/C5-wallet-mock-soak-report.md` (30/30 pass extension, latest-100 harness budget window = 0%).
 
 Commit and tag discipline:
 1. Commit at task boundaries with task IDs in commit subject/body.
 2. Add one explicit `-gate-green` commit at each milestone close.
 3. Tag milestones as `prd05a-e2e-m<index>-gate`.
 
-## 20. Post-M4 Execution Order
+## 20. Post-M6 Execution Order
 
-1. Complete `M5` determinism contract closure for wallet-mock. `Completed 2026-02-25`.
-2. Complete `M6` replay and flake-budget closure for wallet-mock.
+1. `M5` determinism contract closure for wallet-mock is complete. `Completed 2026-02-25`.
+2. `M6` replay and flake-budget closure for wallet-mock is complete. `Completed 2026-02-25`.
 3. Keep 05A scoped to deterministic wallet-mock release gating.
 4. Execute real-wallet compatibility plan in `prds/05A-E2E-REAL-WALLET-HARDWARE-TRACK.md` as non-blocking follow-on work.
 5. Execute deferred hardware passthrough track (`H1`) in `prds/05A-E2E-REAL-WALLET-HARDWARE-TRACK.md` as non-blocking follow-on work.

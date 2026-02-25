@@ -91,7 +91,7 @@ Delivered:
 2. Encrypted export and authenticated import in `crates/rusty-safe-signing-adapters/src/queue.rs`.
 3. Bundle schema extension in `crates/rusty-safe-signing-core/src/domain.rs`.
 
-### C5: Wallet Runtime Compatibility and Gating (Baseline Complete, Hardening Active)
+### C5: Wallet Runtime Compatibility and Gating (Baseline and Hardening Complete)
 
 Objective:
 1. Establish deterministic blocking release gates for signing parity using `wallet-mock`.
@@ -137,13 +137,16 @@ Delivered:
    - `scripts/run_prd05a_wallet_mock_determinism.sh`
    - `local/reports/prd05a/C5-wallet-mock-determinism-report.md`
    - `local/reports/prd05a/C5-wallet-mock-determinism-report.json`
-6. `E7` replay and flake-budget enforcement remains active.
+6. `E7` replay and flake-budget enforcement completed:
+   - `scripts/run_prd05a_wallet_mock_replay.sh`
+   - `local/reports/prd05a/C5-wallet-mock-replay-report.md`
+   - `local/reports/prd05a/C5-wallet-mock-replay-report.json`
+   - `local/reports/prd05a/C5-wallet-mock-soak-report.md` (latest 100-run harness budget window satisfied).
 7. Wallet-mock fuzz hardening moved to follow-on plan `prds/05B-WALLET-MOCK-FUZZ-HARDENING-PLAN.md`.
 
 Open items:
-1. Complete `E7` replay coverage + flake-budget enforcement.
-2. Real-wallet compatibility, canary, and hardware passthrough acceptance are moved to `prds/05A-E2E-REAL-WALLET-HARDWARE-TRACK.md`.
-3. Wallet-mock fuzz hardening is moved to `prds/05B-WALLET-MOCK-FUZZ-HARDENING-PLAN.md`.
+1. Real-wallet compatibility, canary, and hardware passthrough acceptance are moved to `prds/05A-E2E-REAL-WALLET-HARDWARE-TRACK.md`.
+2. Wallet-mock fuzz hardening is moved to `prds/05B-WALLET-MOCK-FUZZ-HARDENING-PLAN.md`.
 
 ### C6: Performance Harness (Completed)
 
@@ -218,4 +221,6 @@ Gate:
 Delivered:
 1. End-to-end evidence runner `scripts/run_prd05a_release_evidence.sh`.
 2. Release evidence summary `local/reports/prd05a/C10-release-evidence-summary.md`.
-3. Milestone branch closure report `prds/05A-M4-BRANCH-CLOSURE-REPORT.md`.
+3. Milestone branch closure reports:
+   - `prds/05A-M4-BRANCH-CLOSURE-REPORT.md`
+   - `prds/05A-M6-BRANCH-CLOSURE-REPORT.md`
