@@ -280,7 +280,7 @@ Reporting requirements:
 | E0 | Deterministic runtime baseline and evidence schema | M | `feat/prd05a-e2e-e0-determinism` | Completed |
 | E1 | Blocking wallet-mock parity suite | M | `feat/prd05a-e2e-e1-wallet-mock-gate` | Completed |
 | E5 | CI hard gates, SLO policy, release readiness | M | `feat/prd05a-e2e-e5-ci-release-gate` | Completed |
-| E6 | Determinism hardening (seed contract + state isolation + network policy) | M | `feat/prd05a-e2e-e6-determinism-hardening` | Planned |
+| E6 | Determinism hardening (seed contract + state isolation + network policy) | M | `feat/prd05a-e2e-e6-determinism-hardening` | Completed 2026-02-25 |
 | E7 | Replay automation + flake-budget enforcement | M | `feat/prd05a-e2e-e7-replay-flake-budget` | Planned |
 
 Dependency order:
@@ -529,9 +529,13 @@ Priority model:
      - `local/reports/prd05a/C6-performance-report.md`.
      - `local/reports/prd05a/C9-differential-parity-report.md`.
      - `local/reports/prd05a/C5-release-evidence-index.md`.
-5. `M5` Determinism contract closure (`P0-7`, `E6-T1..T4`) - `Planned`:
+5. `M5` Determinism contract closure (`P0-7`, `E6-T1..T4`) - `Completed 2026-02-25`:
    - Branch: `feat/prd05a-e2e-m5-determinism-contract`
    - Exit gate: seed/transcript/state-reset/network-policy evidence all green.
+   - Evidence:
+     - `local/reports/prd05a/C5-wallet-mock-determinism-report.md`.
+     - `local/reports/prd05a/C5-wallet-mock-determinism-report.json`.
+     - `local/reports/prd05a/C5-wallet-mock-determinism.log`.
 6. `M6` Replay and flake-budget closure (`P1-4`, `E7-T1..T4`) - `Planned`:
    - Branch: `feat/prd05a-e2e-m6-replay-flake-budget`
    - Exit gate: replay coverage 100% and harness-fail budget <= 1% over 100-run soak.
@@ -543,7 +547,7 @@ Commit and tag discipline:
 
 ## 20. Post-M4 Execution Order
 
-1. Complete `M5` determinism contract closure for wallet-mock.
+1. Complete `M5` determinism contract closure for wallet-mock. `Completed 2026-02-25`.
 2. Complete `M6` replay and flake-budget closure for wallet-mock.
 3. Keep 05A scoped to deterministic wallet-mock release gating.
 4. Execute real-wallet compatibility plan in `prds/05A-E2E-REAL-WALLET-HARDWARE-TRACK.md` as non-blocking follow-on work.

@@ -133,16 +133,17 @@ Delivered:
 2. `E1` complete and tagged (`prd05a-e2e-e1-gate`).
 3. `E5` release hard-gate script updated for blocking lane evidence index.
 4. `M4` reliability closure complete with 50-run baseline SLO evidence (`local/reports/prd05a/C5-wallet-mock-runtime-slo-report.md`).
-5. Revision opened for determinism/replay hardening:
-   - `E6` determinism contract
-   - `E7` replay and flake-budget enforcement
-   - wallet-mock fuzz hardening moved to follow-on plan `prds/05B-WALLET-MOCK-FUZZ-HARDENING-PLAN.md`
+5. `E6` determinism contract closure completed:
+   - `scripts/run_prd05a_wallet_mock_determinism.sh`
+   - `local/reports/prd05a/C5-wallet-mock-determinism-report.md`
+   - `local/reports/prd05a/C5-wallet-mock-determinism-report.json`
+6. `E7` replay and flake-budget enforcement remains active.
+7. Wallet-mock fuzz hardening moved to follow-on plan `prds/05B-WALLET-MOCK-FUZZ-HARDENING-PLAN.md`.
 
 Open items:
-1. Complete `E6` determinism hardening gates (`seed`, transcript hash stability, state isolation, network policy).
-2. Complete `E7` replay coverage + flake-budget enforcement.
-3. Real-wallet compatibility, canary, and hardware passthrough acceptance are moved to `prds/05A-E2E-REAL-WALLET-HARDWARE-TRACK.md`.
-4. Wallet-mock fuzz hardening is moved to `prds/05B-WALLET-MOCK-FUZZ-HARDENING-PLAN.md`.
+1. Complete `E7` replay coverage + flake-budget enforcement.
+2. Real-wallet compatibility, canary, and hardware passthrough acceptance are moved to `prds/05A-E2E-REAL-WALLET-HARDWARE-TRACK.md`.
+3. Wallet-mock fuzz hardening is moved to `prds/05B-WALLET-MOCK-FUZZ-HARDENING-PLAN.md`.
 
 ### C6: Performance Harness (Completed)
 
